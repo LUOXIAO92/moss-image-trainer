@@ -1,0 +1,178 @@
+/* moved from style.css: L1-177 */
+/* =========================================================================
+ * MOSS-Image LoRA trainer — hand-written, zero-build UI
+ *
+ * Token layers:
+ *   1. primitive  raw color / space / type / radius values
+ *   2. semantic   purpose aliases (surface, text, status, chart series)
+ *   3. component  button, input, tab, panel, chart tokens
+ *
+ * Palette source: ui-ux-pro-max --domain color “developer tool dashboard dark”
+ * (#0F172A bg / #1B2336 card / #94A3B8 muted / green run accent), adjusted:
+ *   - controls need 3:1 non-text contrast → border-control #64748B
+ *   - white on #22C55E is 2.2:1 → primary foreground #052E16 (6.5:1)
+ *   - chart series stay distinguishable without hue (solid / dashed / dotted)
+ * ========================================================================= */
+
+/* ---------------------------------------------------------------- primitives */
+:root {
+  --slate-950: #020617;
+  --slate-925: #070d1a;
+  --slate-900: #0f172a;
+  --slate-875: #111b2e;
+  --slate-850: #151f33;
+  --slate-800: #1b2336;
+  --slate-750: #202b41;
+  --slate-700: #273349;
+  --slate-600: #334155;
+  --slate-500: #475569;
+  --slate-450: #52627a;
+  --slate-400: #64748b;
+  --slate-350: #7c8ba1;
+  --slate-300: #94a3b8;
+  --slate-200: #cbd5e1;
+  --slate-100: #e2e8f0;
+  --white: #f8fafc;
+
+  --green-300: #86efac;
+  --green-400: #4ade80;
+  --green-500: #22c55e;
+  --green-600: #16a34a;
+  --green-950: #052e16;
+
+  --red-300: #fca5a5;
+  --red-400: #f87171;
+  --red-500: #ef4444;
+  --red-600: #dc2626;
+  --red-950: #2b0a0a;
+
+  --amber-300: #fcd34d;
+  --amber-400: #fbbf24;
+  --amber-500: #f59e0b;
+  --amber-950: #2a1c05;
+
+  --sky-300: #7dd3fc;
+  --sky-400: #38bdf8;
+  --sky-500: #0ea5e9;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 12.5px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --text-2xl: 26px;
+
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 999px;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC",
+    "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "Cascadia Mono", "JetBrains Mono",
+    Consolas, "Liberation Mono", monospace;
+
+  --duration-fast: 120ms;
+  --duration-normal: 180ms;
+  --duration-slow: 240ms;
+  --ease-out: cubic-bezier(.2, .8, .2, 1);
+}
+
+/* ---------------------------------------------------------------- semantic */
+:root {
+  --color-bg: var(--slate-900);
+  --color-bg-deep: var(--slate-950);
+  --color-surface: var(--slate-800);
+  --color-surface-raised: var(--slate-750);
+  --color-surface-sunken: var(--slate-875);
+  --color-field: #0b1424;
+  --color-field-hover: #0e1a2c;
+  --color-text: var(--white);
+  --color-text-secondary: var(--slate-200);
+  --color-text-muted: var(--slate-300);
+  --color-text-faint: var(--slate-350);
+  --color-border-subtle: var(--slate-700);
+  --color-border: var(--slate-600);
+  --color-border-strong: var(--slate-500);
+  --color-border-control: var(--slate-400);
+  --color-control-hover: var(--slate-300);
+  --color-primary: var(--green-500);
+  --color-primary-hover: var(--green-400);
+  --color-primary-active: var(--green-600);
+  --color-primary-fg: var(--green-950);
+  --color-link: var(--sky-300);
+  --color-link-hover: #bae6fd;
+  --color-success: var(--green-400);
+  --color-success-solid: var(--green-500);
+  --color-warning: var(--amber-400);
+  --color-danger: var(--red-400);
+  --color-danger-solid: var(--red-500);
+  --color-danger-fg: var(--red-950);
+  --color-info: var(--sky-300);
+  --color-focus: var(--sky-300);
+  --color-focus-offset: var(--slate-900);
+  --color-selection: rgba(56, 189, 248, .28);
+
+  --color-chart-train: var(--sky-400);
+  --color-chart-eval: var(--amber-400);
+  --color-chart-avg: var(--green-400);
+  --color-chart-grid: rgba(148, 163, 184, .14);
+  --color-chart-axis: var(--slate-300);
+  --color-chart-crosshair: rgba(226, 232, 240, .38);
+
+  --shadow-sm: 0 1px 2px rgba(2, 6, 23, .45);
+  --shadow-popover: 0 18px 40px rgba(2, 6, 23, .65);
+
+  --z-header: 50;
+  --z-activity: 40;
+  --z-alert: 200;
+  --z-modal: 1000;
+
+  --header-h: 102px;
+  --content-max: 1560px;
+  --page-pad-x: 24px;
+}
+
+/* ---------------------------------------------------------------- components */
+:root {
+  --button-height: 36px;
+  --button-height-sm: 30px;
+  --button-height-xs: 24px;
+  --button-pad-x: 14px;
+  --button-radius: var(--radius-md);
+  --button-bg: var(--color-surface-raised);
+  --button-bg-hover: var(--slate-700);
+  --button-border: var(--color-border-strong);
+  --button-fg: var(--color-text);
+
+  --input-height: 38px;
+  --input-bg: var(--color-field);
+  --input-border: var(--color-border-control);
+  --input-radius: var(--radius-md);
+  --input-pad-x: 10px;
+
+  --panel-bg: var(--color-surface);
+  --panel-border: var(--color-border);
+  --panel-radius: var(--radius-lg);
+  --panel-pad: 18px;
+
+  --tab-height: 40px;
+  --tab-radius: var(--radius-md);
+
+  --chip-height: 26px;
+  --chip-radius: var(--radius-full);
+}
+

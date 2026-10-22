@@ -1,0 +1,12 @@
+torch>=2.9
+diffusers>=0.38
+transformers>=5.3
+safetensors>=0.6
+accelerate>=1.10
+peft>=0.18
+pillow>=10
+numpy
+pyyaml
+fastapi
+uvicorn
+bitsandbytes>=0.45

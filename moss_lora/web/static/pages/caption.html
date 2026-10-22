@@ -1,0 +1,210 @@
+<!-- ======================= 提示词生成 ======================= -->
+<section class="tabpane hidden" id="tab-caption" role="tabpanel" aria-labelledby="tab-link-caption" tabindex="0">
+  <header class="page-head">
+    <div class="page-title">
+      <p class="eyebrow" data-i18n="caption.eyebrow">数据准备</p>
+      <h1 data-i18n="nav.caption">提示词生成</h1>
+      <p class="page-desc"><span data-i18n="caption.descStart">给图片生成 caption sidecar：写在图片旁边的</span> <span class="mono">&lt;name&gt;_moss-image-trainer.json</span><span data-i18n="caption.descMid">，不改动原</span> <span class="mono">.txt</span><span data-i18n="caption.descEnd">。可选保留原 tag，或生成官方三档描述（long / medium / short）。</span></p>
+    </div>
+    <div class="page-actions">
+      <span class="chip chip-muted" id="caption-settings-state" data-i18n="common.saved">已保存</span>
+      <button class="btn btn-ghost btn-sm" id="btn-refresh-caption" type="button">
+        <svg aria-hidden="true"><use href="#i-refresh"></use></svg><span data-i18n="common.reload">重新加载</span>
+      </button>
+      <button class="btn btn-primary btn-sm" id="btn-save-caption" type="button">
+        <svg aria-hidden="true"><use href="#i-save"></use></svg><span data-i18n="caption.saveSettings">保存生成设置</span>
+      </button>
+    </div>
+  </header>
+
+  <section class="panel caption-job-panel" id="caption-job-panel" aria-labelledby="caption-job-title">
+    <header class="panel-head">
+      <div>
+        <h2 id="caption-job-title"><span data-i18n="caption.job.title">生成任务</span> <span class="chip chip-muted" id="caption-job-chip" data-i18n="common.idle">空闲</span></h2>
+        <p class="panel-desc" id="caption-job-desc" data-i18n="caption.job.desc">选数据集和风格后开始；已有风格默认跳过，需要重写时再勾覆盖。</p>
+      </div>
+      <div class="caption-job-actions">
+        <button class="btn btn-danger-ghost btn-sm hidden" id="btn-caption-stop" type="button" data-i18n="common.stop">停止</button>
+      </div>
+    </header>
+
+    <div class="caption-run-options">
+      <fieldset class="caption-choice-group">
+        <legend data-i18n="caption.datasets.legend">数据集</legend>
+        <div class="caption-choice-list">
+          <label class="caption-choice" for="caption-dataset-train">
+            <input id="caption-dataset-train" type="checkbox" checked>
+            <span class="caption-choice-copy">
+              <span class="caption-choice-title" data-i18n="caption.datasets.train">训练集</span>
+              <span class="caption-choice-meta mono" id="caption-dataset-train-meta" data-i18n="common.loadingShort">读取中…</span>
+            </span>
+          </label>
+          <label class="caption-choice" for="caption-dataset-reg">
+            <input id="caption-dataset-reg" type="checkbox" checked>
+            <span class="caption-choice-copy">
+              <span class="caption-choice-title" data-i18n="dataset.reg.title">正则集</span>
+              <span class="caption-choice-meta mono" id="caption-dataset-reg-meta" data-i18n="common.loadingShort">读取中…</span>
+            </span>
+          </label>
+        </div>
+      </fieldset>
+
+      <fieldset class="caption-choice-group">
+        <legend data-i18n="caption.styles.legend">风格</legend>
+        <div class="caption-choice-list">
+          <label class="caption-choice" for="caption-style-tag">
+            <input id="caption-style-tag" type="checkbox" checked>
+            <span class="caption-choice-copy">
+              <span class="caption-choice-title" data-i18n="caption.source.tag">tag + caption</span>
+              <span class="caption-choice-meta" data-i18n="caption.styles.tagMeta">保留原 tag，需要同名 .txt</span>
+            </span>
+          </label>
+          <label class="caption-choice" for="caption-style-official">
+            <input id="caption-style-official" type="checkbox" checked>
+            <span class="caption-choice-copy">
+              <span class="caption-choice-title" data-i18n="caption.styles.official">官方描述</span>
+              <span class="caption-choice-meta" data-i18n="caption.styles.officialMeta">long / medium / short，无视 .txt</span>
+            </span>
+          </label>
+        </div>
+      </fieldset>
+    </div>
+
+    <label class="caption-overwrite" for="caption-overwrite">
+      <input id="caption-overwrite" type="checkbox">
+      <span>
+        <strong data-i18n="caption.overwrite.title">覆盖已有风格</strong>
+        <span class="field-help" data-i18n="caption.overwrite.help">不勾选 = 已有风格跳过；勾选后只重写选中的风格，没选的风格不动。</span>
+      </span>
+    </label>
+
+    <div class="caption-run-actions">
+      <button class="btn btn-primary" id="btn-caption-start" type="button" aria-describedby="caption-start-hint" disabled>
+        <svg aria-hidden="true"><use href="#i-play"></use></svg><span data-i18n="caption.start">开始生成</span>
+      </button>
+      <span class="field-help warn-mark hidden" id="caption-start-hint" role="status" data-i18n="caption.selectDataset">至少选一个数据集</span>
+      <span class="caption-run-note" data-i18n="caption.runNote">选中的数据集会依次执行；结果写到图片旁的同名 sidecar。</span>
+    </div>
+
+    <div class="caption-job-live hidden" id="caption-job-live">
+      <div class="caption-progress-row">
+        <div class="progress" role="progressbar" aria-label="提示词生成进度" data-i18n-aria="caption.progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="caption-job-progress">
+          <div class="progress-bar" id="caption-job-bar"></div>
+        </div>
+        <span class="caption-job-count mono" id="caption-job-count">0 / 0</span>
+      </div>
+      <p class="caption-job-status mono" id="caption-job-status" data-i18n="caption.job.statusDefault">提示词生成 0 / 0 · -- img/s · 失败 0</p>
+      <p class="caption-job-current mono" id="caption-job-current" data-i18n="caption.job.waiting">当前：等待日志…</p>
+    </div>
+    <div class="caption-job-result hidden" id="caption-job-result">
+      <p class="caption-job-summary" id="caption-job-summary"></p>
+      <details class="caption-failures hidden" id="caption-failures">
+        <summary id="caption-failures-summary" data-i18n="caption.failures">失败详情</summary>
+        <ul id="caption-failure-list"></ul>
+        <p class="caption-failures-more hidden" id="caption-failures-more"></p>
+      </details>
+    </div>
+  </section>
+
+  <section class="panel caption-settings-panel" id="caption-settings-card">
+    <header class="panel-head">
+      <div>
+        <h2><span data-i18n="caption.params.title">生成参数</span> <span class="chip chip-muted">MOSS-Image</span></h2>
+        <p class="panel-desc"><span data-i18n="caption.params.descStart">只写</span> <span class="mono">&lt;name&gt;_moss-image-trainer.json</span> <span data-i18n="caption.params.descMid">sidecar，不改动原</span> <span class="mono">&lt;name&gt;.txt</span><span data-i18n="caption.params.descEnd">。</span></p>
+      </div>
+    </header>
+
+    <div class="form-grid caption-basic-grid">
+      <label class="field span2" for="set-caption-trigger">
+        <span class="field-label" data-i18n="caption.params.trigger">触发词</span>
+        <input id="set-caption-trigger" type="text" spellcheck="false" autocomplete="off" aria-describedby="set-caption-trigger-help set-caption-trigger-warning">
+        <span class="field-help" id="set-caption-trigger-help" data-i18n="caption.params.triggerHelp">每条 caption 的前缀，多个词用逗号分隔；留空则不添加前缀。</span>
+        <span class="field-help warn-mark hidden" id="set-caption-trigger-warning" data-i18n="caption.params.triggerWarning">触发词为空：生成的 caption 不会带角色前缀，训练时可能学不到角色特征。</span>
+      </label>
+
+      <label class="field" for="set-caption-workers">
+        <span class="field-label" data-i18n="caption.params.workers">并发</span>
+        <input id="set-caption-workers" type="number" min="1" max="32" step="1" inputmode="numeric" aria-describedby="set-caption-workers-help">
+        <span class="field-help" id="set-caption-workers-help" data-i18n="caption.params.workersHelp">同时请求数，默认 6。</span>
+      </label>
+      <label class="field" for="set-caption-retries">
+        <span class="field-label" data-i18n="caption.params.retries">重试</span>
+        <input id="set-caption-retries" type="number" min="1" max="10" step="1" inputmode="numeric" aria-describedby="set-caption-retries-help">
+        <span class="field-help" id="set-caption-retries-help" data-i18n="caption.params.retriesHelp">单张失败重试次数，默认 3。</span>
+      </label>
+    </div>
+
+    <div class="caption-service-block">
+      <div class="caption-service-head">
+        <span class="field-label" data-i18n="caption.params.service">视觉服务</span>
+        <span class="field-help" data-i18n="caption.params.serviceHelp">OpenAI 兼容服务；保存后下一次提示词生成任务生效。</span>
+      </div>
+      <div class="form-grid">
+        <label class="field span2" for="set-caption-base-url">
+          <span class="field-label"><span data-i18n="caption.params.baseUrl">服务地址</span> <em data-i18n="common.required">必填</em></span>
+          <input id="set-caption-base-url" type="text" spellcheck="false" autocomplete="off" placeholder="http://127.0.0.1:8080/v1" aria-describedby="set-caption-base-url-help">
+          <span class="field-help" id="set-caption-base-url-help"><span data-i18n="caption.params.example">例如</span> <span class="mono">http://127.0.0.1:8080/v1</span>。</span>
+        </label>
+        <div class="field">
+          <label class="field-label" for="set-caption-api-key">API Key</label>
+          <span class="input-row">
+            <input id="set-caption-api-key" type="text" spellcheck="false" autocomplete="off" placeholder="环境变量名或密钥" data-i18n-placeholder="caption.params.apiKeyPlaceholder" aria-describedby="set-caption-api-key-help caption-api-key-status">
+            <button class="btn btn-ghost btn-sm" id="btn-clear-caption-key" type="button" title="清空输入；保存后提交空值并清除密钥" data-i18n-title="caption.params.clearKeyTitle"><span data-i18n="caption.params.clearKey">清除密钥</span></button>
+          </span>
+          <span class="field-help" id="set-caption-api-key-help"><span data-i18n="caption.params.apiKeyHelpStart">填环境变量名（如</span> <span class="mono">VLM_API_KEY</span><span data-i18n="caption.params.apiKeyHelpEnd">）会保存；直接填密钥也能用，但不写进设置文件、重开就没了。</span></span>
+          <span class="field-help" id="caption-api-key-status" aria-live="polite" data-i18n="caption.params.notConfigured">未配置</span>
+        </div>
+        <label class="field" for="set-caption-model">
+          <span class="field-label" data-i18n="caption.params.model">模型名</span>
+          <input id="set-caption-model" type="text" spellcheck="false" autocomplete="off" aria-describedby="set-caption-model-help">
+          <span class="field-help" id="set-caption-model-help" data-i18n="caption.params.modelHelp">留空 = 用服务返回的第一个模型。</span>
+        </label>
+      </div>
+    </div>
+
+    <details class="advanced-layers caption-advanced" id="caption-advanced">
+      <summary><span data-i18n="caption.advanced.title">高级参数：采样 / 提示词模板</span><span class="mono muted" data-i18n="caption.advanced.default">留空 = 内置默认</span></summary>
+      <div class="advanced-body">
+        <div class="caption-sampling-grid">
+          <label class="field" for="set-caption-temperature">
+            <span class="field-label">temperature</span>
+            <input id="set-caption-temperature" type="number" min="0" max="2" step="0.05" inputmode="decimal" aria-describedby="set-caption-temperature-help">
+            <span class="field-help" id="set-caption-temperature-help" data-i18n="caption.params.temperatureHelp">默认 1.0。</span>
+          </label>
+          <label class="field" for="set-caption-top-p">
+            <span class="field-label">top_p</span>
+            <input id="set-caption-top-p" type="number" min="0.01" max="1" step="0.01" inputmode="decimal" aria-describedby="set-caption-top-p-help">
+            <span class="field-help" id="set-caption-top-p-help" data-i18n="caption.params.topPHelp">默认 0.95。</span>
+          </label>
+          <label class="field" for="set-caption-max-tokens">
+            <span class="field-label">max_tokens</span>
+            <input id="set-caption-max-tokens" type="number" min="256" max="32768" step="1" inputmode="numeric" aria-describedby="set-caption-max-tokens-help">
+            <span class="field-help" id="set-caption-max-tokens-help" data-i18n="caption.params.maxTokensHelp">默认 16384；给 thinking / CoT 留足余量。</span>
+          </label>
+          <label class="field checkbox-field" for="set-caption-thinking">
+            <input id="set-caption-thinking" type="checkbox">
+            <span class="field-label">thinking</span>
+            <span class="field-help" data-i18n="caption.params.thinkingHelp">默认开；对齐官方建议。</span>
+          </label>
+        </div>
+
+        <div class="caption-prompt-toolbar">
+          <span class="caption-subhead" data-i18n="caption.prompts.title">提示词模板</span>
+          <button class="btn btn-ghost btn-xs" id="btn-reset-caption-prompts" type="button" data-i18n="caption.prompts.reset">恢复默认提示词</button>
+        </div>
+        <div class="caption-prompt-grid">
+          <label class="field" for="set-caption-prompt-tags">
+            <span class="field-label" data-i18n="caption.prompts.tags">保留 tag 的提示词</span>
+            <textarea id="set-caption-prompt-tags" rows="12" spellcheck="false" placeholder="留空 = 使用内置默认模板" data-i18n-placeholder="caption.prompts.placeholder" aria-describedby="set-caption-prompt-tags-help"></textarea>
+            <span class="field-help" id="set-caption-prompt-tags-help" data-i18n="caption.prompts.help">留空 = 内置默认模板。</span>
+          </label>
+          <label class="field" for="set-caption-prompt-natural">
+            <span class="field-label" data-i18n="caption.prompts.natural">官方描述提示词</span>
+            <textarea id="set-caption-prompt-natural" rows="12" spellcheck="false" placeholder="留空 = 使用内置默认模板" data-i18n-placeholder="caption.prompts.placeholder" aria-describedby="set-caption-prompt-natural-help"></textarea>
+            <span class="field-help" id="set-caption-prompt-natural-help" data-i18n="caption.prompts.help">留空 = 内置默认模板。</span>
+          </label>
+        </div>
+      </div>
+    </details>
+  </section>
+</section>

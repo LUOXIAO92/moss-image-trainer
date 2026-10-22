@@ -1,0 +1,117 @@
+<!-- ======================= 设置 ======================= -->
+<section class="tabpane hidden" id="tab-settings" role="tabpanel" aria-labelledby="tab-link-settings" tabindex="0">
+  <header class="page-head">
+    <div class="page-title">
+      <p class="eyebrow" data-i18n="settings.eyebrow">产品设置</p>
+      <h1 data-i18n="nav.settings">设置</h1>
+      <p class="page-desc" data-i18n="settings.desc">这里保存本机的通用路径设置。模型文件在「训练设置 → 模型文件」里按工作区填写。</p>
+    </div>
+    <div class="page-actions">
+      <span class="chip chip-muted" id="settings-state" data-i18n="common.saved">已保存</span>
+      <button class="btn btn-ghost btn-sm" id="btn-refresh-settings" type="button">
+        <svg aria-hidden="true"><use href="#i-refresh"></use></svg><span data-i18n="common.reload">重新加载</span>
+      </button>
+      <button class="btn btn-primary btn-sm" id="btn-save-settings" type="button">
+        <svg aria-hidden="true"><use href="#i-save"></use></svg><span data-i18n="settings.save">保存设置</span>
+      </button>
+    </div>
+  </header>
+
+  <div class="callout callout-error hidden" id="settings-alert" role="alert" tabindex="-1">
+    <div class="callout-icon"><svg aria-hidden="true"><use href="#i-alert"></use></svg></div>
+    <div class="callout-body">
+      <strong id="settings-alert-title" data-i18n="settings.unsaved">设置未保存</strong>
+      <p id="settings-alert-text"></p>
+      <ul class="settings-error-list" id="settings-error-list"></ul>
+    </div>
+  </div>
+
+  <div class="settings-edit-grid is-single">
+    <section class="panel">
+      <header class="panel-head">
+        <div>
+          <h2 data-i18n="settings.paths.title">路径</h2>
+          <p class="panel-desc" data-i18n="settings.paths.desc">工作区根目录下每个子目录是一套配置 + 缓存 + 运行产物。</p>
+        </div>
+        <span class="chip chip-muted mono" id="settings-file-path">settings.yaml</span>
+      </header>
+
+      <div class="form-grid">
+        <div class="field span2">
+          <label class="field-label" for="set-workspaces-path" data-i18n="settings.paths.workspaces">工作区根目录</label>
+          <span class="input-row">
+            <input id="set-workspaces-path" type="text" spellcheck="false" autocomplete="off" aria-describedby="set-workspaces-status set-workspaces-help">
+            <button class="btn btn-ghost btn-sm" type="button" data-path-browse="set-workspaces-path" data-path-mode="dir" data-i18n="common.browse">浏览</button>
+          </span>
+          <span class="field-help" id="set-workspaces-status" data-i18n="common.checkingShort">检查中…</span>
+          <span class="field-help" id="set-workspaces-help" data-i18n="settings.paths.help">留空使用默认工作区根目录。</span>
+        </div>
+      </div>
+
+      <div class="callout callout-info settings-note">
+        <div class="callout-icon"><svg aria-hidden="true"><use href="#i-info"></use></svg></div>
+        <div class="callout-body">
+          <strong data-i18n="settings.models.title">模型文件不在设置页</strong>
+          <p data-i18n="settings.models.text">DiT、文本编码器、VAE 属于当前工作区，在训练设置页填写并随工作区保存；每个字段都有「探测」。</p>
+          <a class="btn btn-ghost btn-sm" href="#train" data-focus-field="cfg-model-dit" data-i18n="settings.models.go">去训练设置填写</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel settings-language-panel" id="settings-language-panel" aria-labelledby="settings-language-title">
+      <header class="panel-head">
+        <div>
+          <h2 id="settings-language-title" data-i18n="settings.language.title">界面语言</h2>
+          <p class="panel-desc" data-i18n="settings.language.desc">切换界面语言，或导入自己的语言包。缺失的文案会自动回退到简体中文。</p>
+        </div>
+        <a class="btn btn-ghost btn-sm" id="i18n-template-link" href="/api/i18n/template?base=zh" download>
+          <svg aria-hidden="true"><use href="#i-download"></use></svg><span data-i18n="settings.language.export">导出模板</span>
+        </a>
+      </header>
+
+      <div class="i18n-current-row">
+        <label class="field-inline" for="i18n-current-select">
+          <span data-i18n="settings.language.current">当前语言</span>
+          <select id="i18n-current-select" class="select-compact"></select>
+        </label>
+        <span class="chip chip-muted" id="i18n-current-chip">--</span>
+        <span class="field-help" id="i18n-language-summary"></span>
+      </div>
+
+      <div class="i18n-language-list" id="i18n-language-list"></div>
+
+      <details class="i18n-import">
+        <summary data-i18n="settings.language.importTitle">导入语言包</summary>
+        <div class="i18n-import-body">
+          <div class="i18n-import-grid">
+            <div class="field">
+              <label class="field-label" for="i18n-import-file" data-i18n="settings.language.chooseFile">选择 JSON 文件</label>
+              <div class="i18n-file-control">
+                <input id="i18n-import-file" class="i18n-file-input" type="file" accept=".json,application/json">
+                <button class="btn btn-ghost btn-sm" id="i18n-import-pick" type="button" aria-controls="i18n-import-file">
+                  <svg aria-hidden="true"><use href="#i-upload"></use></svg><span data-i18n="settings.language.pickFile">选择文件</span>
+                </button>
+                <span class="i18n-file-name" id="i18n-import-name" data-i18n-skip aria-live="polite">未选择文件</span>
+              </div>
+            </div>
+            <label class="field" for="i18n-import-code">
+              <span class="field-label" data-i18n="settings.language.code">语言代码</span>
+              <input id="i18n-import-code" type="text" autocomplete="off" spellcheck="false" placeholder="ja" aria-describedby="i18n-import-code-help">
+              <span class="field-help" id="i18n-import-code-help" data-i18n="settings.language.codeHint">可选；默认读取文件里的 $code。</span>
+            </label>
+          </div>
+          <label class="field" for="i18n-import-text">
+            <span class="field-label" data-i18n="settings.language.paste">或粘贴语言包 JSON</span>
+            <textarea id="i18n-import-text" rows="7" spellcheck="false" placeholder='{"$code":"ja","$name":"Japanese","nav.dashboard":"..."}'></textarea>
+          </label>
+          <div class="i18n-import-actions">
+            <button class="btn btn-primary btn-sm" id="i18n-import-btn" type="button">
+              <svg aria-hidden="true"><use href="#i-save"></use></svg><span data-i18n="settings.language.import">导入语言包</span>
+            </button>
+            <span class="field-help" id="i18n-import-hint" role="status"></span>
+          </div>
+        </div>
+      </details>
+    </section>
+  </div>
+</section>

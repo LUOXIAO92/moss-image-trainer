@@ -1,0 +1,30 @@
+/* moved from style.css: L876-904 */
+/* ---------------------------------------------------------------- callouts */
+.callout {
+  display: flex;
+  gap: 12px;
+  margin-bottom: var(--space-4);
+  padding: 12px 14px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+}
+.callout-icon { flex: 0 0 auto; color: var(--color-text-muted); }
+.callout-icon svg { width: 18px; height: 18px; }
+.callout-body { flex: 1 1 auto; min-width: 0; }
+.callout-body strong { display: block; margin-bottom: 2px; font-size: var(--text-sm); }
+.callout-body p { color: var(--color-text-muted); font-size: var(--text-xs); line-height: 1.55; overflow-wrap: anywhere; }
+.callout-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.callout-actions:empty { display: none; }
+.callout-error { border-color: rgba(248, 113, 113, .45); background: rgba(248, 113, 113, .065); }
+.callout-error .callout-icon { color: var(--color-danger); }
+.callout-error strong { color: var(--color-danger); }
+.callout-warn { border-color: rgba(251, 191, 36, .4); background: rgba(251, 191, 36, .055); }
+.callout-warn .callout-icon { color: var(--color-warning); }
+.callout-warn strong { color: var(--color-warning); }
+.callout-success { border-color: rgba(74, 222, 128, .38); background: rgba(34, 197, 94, .06); }
+.callout-success .callout-icon { color: var(--color-success); }
+.callout-success strong { color: var(--color-success); }
+.callout-info { border-color: rgba(125, 211, 252, .35); background: rgba(56, 189, 248, .06); }
+.callout-info .callout-icon { color: var(--color-info); }
+

@@ -1,0 +1,48 @@
+<!-- ======================= 导出 ======================= -->
+<section class="tabpane hidden" id="tab-export" role="tabpanel" aria-labelledby="tab-link-export" tabindex="0">
+  <header class="page-head export-page-head">
+    <div class="page-title"><h1 data-i18n="nav.export">导出</h1></div>
+  </header>
+
+  <section class="panel export-panel">
+    <div class="export-form" id="export-form">
+      <label class="field" for="export-run">
+        <span class="field-label">Run</span>
+        <select id="export-run"></select>
+      </label>
+      <div class="field export-format-field">
+        <span class="field-label" data-i18n="export.format">格式</span>
+        <div class="export-format-checks">
+          <label title="社区常用格式：ComfyUI / Stable Diffusion WebUI / Civitai 通用；键名形如 lora_unet_*.lora_down / lora_up / alpha" data-i18n-title="export.kohyaTitle"><input type="checkbox" id="export-format-kohya" checked> <span data-i18n="export.kohya">社区常用格式</span></label>
+          <label title="仅 Python / diffusers 使用，ComfyUI 读不了" data-i18n-title="export.diffusersTitle"><input type="checkbox" id="export-format-diffusers"> <span data-i18n="export.diffusers">diffusers</span></label>
+        </div>
+        <p class="export-format-note" data-i18n="export.formatNote">社区常用格式：ComfyUI / Stable Diffusion WebUI / Civitai 通用（默认）　diffusers：仅 Python / diffusers 使用</p>
+      </div>
+      <label class="export-state-option" title="同时复制训练状态文件" data-i18n-title="export.stateTitle"><input type="checkbox" id="export-with-state"> <span data-i18n="export.withState">含训练状态</span></label>
+      <span class="chip chip-muted" id="export-state" data-i18n="export.ready">就绪</span>
+    </div>
+    <div class="export-batch-bar" id="export-batch-bar">
+      <label class="export-dest-choice"><input type="radio" name="export-destination" id="export-dest-server" value="server" checked> <span data-i18n="export.serverPath">保存到服务器路径</span></label>
+      <label class="export-dest-choice"><input type="radio" name="export-destination" id="export-dest-browser" value="browser"> <span data-i18n="export.browserDownload">浏览器下载</span></label>
+      <span class="export-batch-sep" aria-hidden="true"></span>
+      <span class="export-range-group" id="export-range-group">
+        <span class="export-batch-label" data-i18n="export.from">从</span><input class="input-compact" id="export-range-from" type="number" min="0" step="1" aria-label="起始 step" data-i18n-aria="export.startStep">
+        <span class="export-batch-label" data-i18n="export.to">到</span><input class="input-compact" id="export-range-to" type="number" min="0" step="1" aria-label="结束 step" data-i18n-aria="export.endStep">
+        <span class="export-batch-label" data-i18n="export.every">每</span><input class="input-compact" id="export-range-every" type="number" min="1" step="1" aria-label="步长" data-i18n-aria="export.stepSize">
+        <span class="export-batch-label" data-i18n="export.stepUnit">步</span>
+      </span>
+      <span class="chip chip-muted" id="export-selected-count" data-i18n-skip data-i18n="export.selectedZero">已选 0 步</span>
+      <button class="btn btn-primary btn-sm" id="btn-export-batch" type="button" data-i18n="common.save">保存</button>
+    </div>
+    <div class="inline-error hidden" id="export-error" role="alert"></div>
+    <div class="table-wrap export-file-table">
+      <table class="table">
+        <thead><tr>
+          <th scope="col" class="export-check-col"><input type="checkbox" id="export-select-all" aria-label="全选 step" data-i18n-aria="export.selectAll"></th>
+          <th scope="col">step</th><th scope="col">train loss</th><th scope="col">eval loss</th><th scope="col" class="actions-col" data-i18n="common.actions">操作</th>
+        </tr></thead>
+        <tbody id="loras-body"><tr><td colspan="5" class="table-empty" data-i18n="common.loading">加载中…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+</section>

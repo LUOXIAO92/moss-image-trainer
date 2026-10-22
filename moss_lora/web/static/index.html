@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title data-i18n="app.title">MOSS-Image LoRA 训练台</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%230f172a'/%3E%3Cpath d='M4 17.5V6.5l5 5 3-5 3 5 5-5v11' fill='none' stroke='%2322c55e' stroke-width='1.7'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/header.css">
+<link rel="stylesheet" href="css/layout.css">
+<link rel="stylesheet" href="css/components.css">
+<link rel="stylesheet" href="css/progress.css">
+<link rel="stylesheet" href="css/status.css">
+<link rel="stylesheet" href="css/callouts.css">
+<link rel="stylesheet" href="css/alerts.css">
+<link rel="stylesheet" href="css/pages/dashboard.css">
+<link rel="stylesheet" href="css/charts.css">
+<link rel="stylesheet" href="css/pages/train.css">
+<link rel="stylesheet" href="css/logs.css">
+<link rel="stylesheet" href="css/pages/samples.css">
+<link rel="stylesheet" href="css/pages/dataset.css">
+<link rel="stylesheet" href="css/pages/cache.css">
+<link rel="stylesheet" href="css/tables.css">
+<link rel="stylesheet" href="css/pages/settings.css">
+<link rel="stylesheet" href="css/empty-states.css">
+<link rel="stylesheet" href="css/modal.css">
+<link rel="stylesheet" href="css/responsive.css">
+<link rel="stylesheet" href="css/validation.css">
+<link rel="stylesheet" href="css/pages/profiles.css">
+<link rel="stylesheet" href="css/pages/caption.css">
+<link rel="stylesheet" href="css/pages/environment.css">
+<link rel="stylesheet" href="css/pages/train-runs.css">
+<link rel="stylesheet" href="css/pages/train-config.css">
+<link rel="stylesheet" href="css/pages/monitor.css">
+<link rel="stylesheet" href="css/pages/samples-compare.css">
+<link rel="stylesheet" href="css/pages/export.css">
+<link rel="stylesheet" href="css/pages/workspace.css">
+</head>
+<body>
+
+<a class="skip-link" href="#main" data-i18n="common.skipToContent">跳到主要内容</a>
+
+<svg class="svg-sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-logo" viewBox="0 0 24 24">
+    <path d="M4 17.5V6.5l5 5 3-5 3 5 5-5v11" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="12" cy="17.5" r="1.8" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  </symbol>
+  <symbol id="i-dashboard" viewBox="0 0 24 24">
+    <rect x="3.5" y="3.5" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+    <rect x="13.5" y="3.5" width="7" height="4" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+    <rect x="13.5" y="10.5" width="7" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+    <rect x="3.5" y="13.5" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+  </symbol>
+  <symbol id="i-train" viewBox="0 0 24 24">
+    <path d="M4 6h6M4 12h5M4 18h7M14 6h6M14 12h6M14 18h3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+    <circle cx="11" cy="6" r="1.6" fill="currentColor"/>
+    <circle cx="12" cy="18" r="1.6" fill="currentColor"/>
+  </symbol>
+  <symbol id="i-dataset" viewBox="0 0 24 24">
+    <rect x="3.5" y="4.5" width="17" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/>
+    <circle cx="8.5" cy="9" r="1.4" fill="currentColor"/>
+    <path d="m5.5 17 4.5-4.5 3 3 2.5-2.5 3.5 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-cache" viewBox="0 0 24 24">
+    <ellipse cx="12" cy="5.5" rx="7.5" ry="2.8" fill="none" stroke="currentColor" stroke-width="1.6"/>
+    <path d="M4.5 5.5v6c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8v-6M4.5 11.5v6c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8v-6" fill="none" stroke="currentColor" stroke-width="1.6"/>
+  </symbol>
+  <symbol id="i-samples" viewBox="0 0 24 24">
+    <rect x="3.5" y="5.5" width="12" height="12" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.6"/>
+    <path d="M18.5 8.5h2v10a2 2 0 0 1-2 2h-10v-2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+    <circle cx="8" cy="9.5" r="1.3" fill="currentColor"/>
+    <path d="m5 15.5 3.5-3.5 2.5 2.5 1.5-1.5 2 2.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-export" viewBox="0 0 24 24">
+    <path d="M12 3.5v11M8 10.5l4 4 4-4M4.5 16.5v2a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24">
+    <path d="M12 16.5v-13M8 7.5l4-4 4 4M4.5 16.5v2a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-workspace" viewBox="0 0 24 24">
+    <path d="M3.5 6.5A1.5 1.5 0 0 1 5 5h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.6"/>
+    <path d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2M6 6l1.4 1.4M16.6 16.6 18 18M18 6l-1.4 1.4M7.4 16.6 6 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="i-caption" viewBox="0 0 24 24">
+    <path d="M4.5 5.5h9l6 6.5-6 6.5h-9z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+    <circle cx="8.5" cy="12" r="1.3" fill="currentColor"/>
+    <path d="M4.5 5.5v13" fill="none" stroke="currentColor" stroke-width="1.6"/>
+  </symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10-6.5z" fill="currentColor"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="1.5" fill="currentColor"/></symbol>
+  <symbol id="i-save" viewBox="0 0 24 24">
+    <path d="M5 4.5h11l3 3v12H5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+    <path d="M8 4.5v5h7v-5M8 19.5v-6h8v6" fill="none" stroke="currentColor" stroke-width="1.6"/>
+  </symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24">
+    <path d="M19 8.5A8 8 0 1 0 20 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+    <path d="M19 4.5v4h-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-scan" viewBox="0 0 24 24">
+    <path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16M4 12h16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24">
+    <path d="M12 4 3.5 19.5h17z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+    <path d="M12 9v5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+    <circle cx="12" cy="17" r="1" fill="currentColor"/>
+  </symbol>
+  <symbol id="i-info" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+    <path d="M12 10.5v6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+    <circle cx="12" cy="7.5" r="1" fill="currentColor"/>
+  </symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24">
+    <rect x="8.5" y="8.5" width="11" height="11" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.6"/>
+    <path d="M15.5 5.5h-9a2 2 0 0 0-2 2v9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="i-download" viewBox="0 0 24 24">
+    <path d="M12 4v11M8 11l4 4 4-4M5 20h14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+    <path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="i-language" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+    <path d="M3.8 12h16.4M12 3.5c2.3 2.2 3.6 5.2 3.6 8.5S14.3 18.3 12 20.5C9.7 18.3 8.4 15.3 8.4 12S9.7 5.7 12 3.5z" fill="none" stroke="currentColor" stroke-width="1.4"/>
+  </symbol>
+</svg>
+
+<div id="alert-region" class="alert-region" aria-label="通知" data-i18n-aria="common.notifications"></div>
+<div class="sr-only" id="activity-live" role="status" aria-live="polite" aria-atomic="true"></div>
+
+<header class="app-header">
+  <div class="header-main">
+    <a class="brand" href="#dashboard" aria-label="MOSS-Image LoRA 训练台，回到中控台" data-i18n-aria="app.brandHome">
+      <span class="brand-mark"><svg aria-hidden="true"><use href="#i-logo"></use></svg></span>
+      <span class="brand-copy">
+        <span class="brand-name">MOSS-Image</span>
+        <span class="brand-sub" data-i18n="app.brandSub">LoRA 训练台</span>
+      </span>
+    </a>
+
+    <a class="gpu-monitor" id="gpu-chip" href="#dashboard" title="GPU 占用" data-i18n-title="gpu.title">
+      <span class="gpu-pulse" aria-hidden="true"></span>
+      <span id="gpu-chip-text" class="mono">GPU --</span>
+    </a>
+
+    <div class="global-status">
+      <a class="chip chip-idle" id="job-chip" href="#dashboard" title="查看中控台任务状态" data-i18n-title="job.viewStatus">
+        <span class="chip-dot" aria-hidden="true"></span><span id="job-chip-text" data-i18n="common.idle">空闲</span>
+      </a>
+      <label class="language-picker" for="ui-language-select" title="界面语言" data-i18n-title="settings.language.current">
+        <svg aria-hidden="true"><use href="#i-language"></use></svg>
+        <span class="language-label" data-i18n="common.language">语言</span>
+        <select id="ui-language-select" class="select-compact" aria-label="界面语言" data-i18n-aria="settings.language.current"></select>
+      </label>
+    </div>
+
+    <nav class="tabs-shell" aria-label="主导航" data-i18n-aria="nav.main">
+      <div class="tabs" id="tabs" role="tablist" aria-label="工作区" data-i18n-aria="nav.workspace">
+        <a class="tab" id="tab-link-dashboard" role="tab" href="#dashboard" data-tab="dashboard"
+           aria-controls="tab-dashboard" aria-selected="false" tabindex="-1">
+          <svg aria-hidden="true"><use href="#i-dashboard"></use></svg><span data-i18n="nav.dashboard">中控台</span>
+        </a>
+        <a class="tab" id="tab-link-train" role="tab" href="#train" data-tab="train"
+           aria-controls="tab-train" aria-selected="false" tabindex="-1">
+          <svg aria-hidden="true"><use href="#i-train"></use></svg><span data-i18n="nav.train">训练设置</span>
+        </a>
+        <a class="tab" id="tab-link-dataset" role="tab" href="#dataset" data-tab="dataset"
+           aria-controls="tab-dataset" aria-selected="false" tabindex="-1">
+          <svg aria-hidden="true"><use href="#i-dataset"></use></svg><span data-i18n="nav.dataset">数据集</span>
+        </a>
+        <a class="tab" id="tab-link-cache" role="tab" href="#cache" data-tab="cache"
+           aria-controls="tab-cache" aria-selected="false" tabindex="-1">
+          <svg aria-hidden="true"><use href="#i-cache"></use></svg><span data-i18n="nav.cache">缓存</span>
+        </a>
+        <a class="tab" id="tab-link-samples" role="tab" href="#samples" data-tab="samples"
+           aria-controls="tab-samples" aria-selected="false" tabindex="-1">
+          <svg aria-hidden="true"><use href="#i-samples"></use></svg><span data-i18n="nav.samples">样图</span>
+        </a>
+        <a class="tab" id="tab-link-export" role="tab" href="#export" data-tab="export"
+           aria-controls="tab-export" aria-selected="false" tabindex="-1">
+          <svg aria-hidden="true"><use href="#i-export"></use></svg><span data-i18n="nav.export">导出</span>
+        </a>
+        <a class="tab" id="tab-link-workspace" role="tab" href="#workspace" data-tab="workspace"
+           aria-controls="tab-workspace" aria-selected="false" tabindex="-1">
+          <svg aria-hidden="true"><use href="#i-workspace"></use></svg><span data-i18n="nav.workspace">工作区</span>
+        </a>
+        <a class="tab" id="tab-link-settings" role="tab" href="#settings" data-tab="settings"
+           aria-controls="tab-settings" aria-selected="false" tabindex="-1">
+          <svg aria-hidden="true"><use href="#i-settings"></use></svg><span data-i18n="nav.settings">设置</span>
+        </a>
+        <a class="tab" id="tab-link-caption" role="tab" href="#caption" data-tab="caption"
+           aria-controls="tab-caption" aria-selected="false" tabindex="-1">
+          <svg aria-hidden="true"><use href="#i-caption"></use></svg><span data-i18n="nav.caption">提示词生成</span>
+        </a>
+      </div>
+    </nav>
+  </div>
+</header>
+
+<div class="activity hidden" id="activity" aria-label="任务状态" data-i18n-aria="job.status">
+  <div class="activity-main">
+    <span class="activity-spinner" aria-hidden="true"></span>
+    <span class="activity-text" id="activity-text" data-i18n="job.running">任务运行中</span>
+    <div class="progress progress-sm activity-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100"
+         aria-valuenow="0" id="activity-progress">
+      <div class="progress-bar" id="activity-bar"></div>
+    </div>
+    <span class="activity-meta mono" id="activity-meta"></span>
+  </div>
+  <div class="activity-actions">
+    <button class="btn btn-ghost btn-xs" id="activity-open" type="button" data-i18n="job.viewLog">查看日志</button>
+    <button class="btn btn-danger-ghost btn-xs" id="activity-stop" type="button" data-i18n="common.stop">停止</button>
+  </div>
+</div>
+
+<main id="main" tabindex="-1">
+  <!-- 页面片段由 js/core/fragments.js 启动时注入（static/pages/*.html） -->
+
+<dialog class="profile-dialog sample-compare-dialog" id="sample-compare-dialog" aria-labelledby="sample-compare-title">
+  <header class="modal-head">
+    <h2 id="sample-compare-title" data-i18n="dash.sampleDialog.title">同一步样图对比</h2>
+    <button class="btn btn-ghost btn-sm" id="sample-compare-close" type="button" data-i18n="common.close">关闭</button>
+  </header>
+  <div class="sample-compare-body" id="sample-compare-body"></div>
+</dialog>
+
+<dialog class="profile-dialog export-dir-dialog" id="export-dir-dialog" aria-labelledby="export-dir-title">
+  <header class="modal-head">
+    <h2 id="export-dir-title" data-i18n="export.dir.title">选择导出目录</h2>
+    <button class="btn btn-ghost btn-sm" id="export-dir-cancel-top" type="button" data-i18n="common.cancel">取消</button>
+  </header>
+  <div class="export-dir-body">
+    <label class="field" for="export-dir-path">
+      <span class="field-label" data-i18n="export.dir.currentPath">当前路径</span>
+      <input id="export-dir-path" type="text" spellcheck="false" autocomplete="off">
+    </label>
+    <p class="export-dir-notice hidden" id="export-dir-notice" data-i18n="export.dir.notice">该目录不存在，导出时创建</p>
+    <div class="export-dir-list" id="export-dir-list" role="listbox" aria-label="目录列表" data-i18n-aria="export.dir.list"></div>
+    <div class="export-dir-new">
+      <input id="export-dir-new-name" type="text" placeholder="新文件夹名称（可选）" data-i18n-placeholder="export.dir.newName" autocomplete="off">
+      <button class="btn btn-ghost btn-sm" id="btn-export-dir-new" type="button" data-i18n="export.dir.newFolder">新建文件夹</button>
+    </div>
+    <p class="export-dir-preview"><span data-i18n="export.dir.current">当前：</span><span class="mono" id="export-dir-preview">--</span></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="export-dir-cancel" type="button" data-i18n="common.cancel">取消</button>
+      <button class="btn btn-primary" id="export-dir-confirm" type="button" data-i18n="export.dir.confirm">保存到此处</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog class="profile-dialog path-browser-dialog" id="path-browser-dialog" aria-labelledby="path-browser-title">
+  <header class="modal-head">
+    <h2 id="path-browser-title" data-i18n="path.title">选择目录</h2>
+    <button class="btn btn-ghost btn-sm" id="path-browser-cancel-top" type="button" data-i18n="common.cancel">取消</button>
+  </header>
+  <div class="path-browser-body">
+    <label class="field" for="path-browser-path">
+      <span class="field-label" data-i18n="path.currentDir">当前目录</span>
+      <input id="path-browser-path" type="text" spellcheck="false" autocomplete="off">
+    </label>
+    <p class="export-dir-notice hidden" id="path-browser-notice" data-i18n="path.notice">该目录不存在</p>
+    <div class="export-dir-list" id="path-browser-list" role="listbox" aria-label="路径列表" data-i18n-aria="path.list"></div>
+    <p class="export-dir-preview"><span data-i18n="path.selected">已选：</span><span class="mono" id="path-browser-selected">--</span></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="path-browser-cancel" type="button" data-i18n="common.cancel">取消</button>
+      <button class="btn btn-primary" id="path-browser-confirm" type="button" data-i18n="common.select">选择</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog class="profile-dialog workspace-confirm-dialog" id="workspace-confirm-dialog" aria-labelledby="workspace-confirm-title">
+  <header class="modal-head">
+    <h2 id="workspace-confirm-title" data-i18n="workspace.confirm.title">确认删除</h2>
+    <button class="btn btn-ghost btn-sm" id="workspace-confirm-cancel-top" type="button" data-i18n="common.cancel">取消</button>
+  </header>
+  <div class="workspace-confirm-body">
+    <p id="workspace-confirm-text"></p>
+    <label class="field hidden" id="workspace-confirm-name-row" for="workspace-confirm-name">
+      <span class="field-label" data-i18n="workspace.confirm.typeName">输入工作区名确认</span>
+      <input id="workspace-confirm-name" type="text" autocomplete="off" spellcheck="false">
+    </label>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="workspace-confirm-cancel" type="button" data-i18n="common.cancel">取消</button>
+      <button class="btn btn-danger" id="workspace-confirm-delete" type="button" data-i18n="common.delete">删除</button>
+    </div>
+  </div>
+</dialog>
+
+</main>
+
+<dialog class="profile-dialog" id="profile-dialog" aria-labelledby="profile-dialog-title">
+  <form id="profile-form" method="dialog">
+    <header class="modal-head">
+      <h2 id="profile-dialog-title" data-i18n="train.profile.new">新建工作区</h2>
+      <button class="btn btn-ghost btn-sm" id="profile-dialog-close" type="button" aria-label="关闭" data-i18n-aria="common.close">
+        <svg aria-hidden="true"><use href="#i-x"></use></svg><span data-i18n="common.close">关闭</span>
+      </button>
+    </header>
+    <p class="profile-dialog-desc" id="profile-dialog-desc"></p>
+    <label class="field" for="profile-name-input">
+      <span class="field-label" data-i18n="profile.name">工作区名称</span>
+      <input id="profile-name-input" type="text" spellcheck="false" autocomplete="off" placeholder="demo">
+    </label>
+    <p class="field-help"><span data-i18n="profile.nameHelp">只允许字母、数字、点、下划线、短横线；自动创建</span> <span class="mono">workspaces/&lt;name&gt;/workspace.yaml</span>。</p>
+    <div class="inline-error hidden" id="profile-dialog-error" role="alert"></div>
+    <div class="dialog-actions">
+      <button class="btn btn-ghost" id="profile-dialog-cancel" type="button" data-i18n="common.cancel">取消</button>
+      <button class="btn btn-primary" id="profile-dialog-confirm" type="submit" data-i18n="common.create">创建</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="profile-dialog onboarding-dialog" id="onboarding-dialog" aria-labelledby="onboarding-title">
+  <header class="modal-head">
+    <h2 id="onboarding-title" data-i18n="onboarding.title">首次使用</h2>
+    <button class="btn btn-ghost btn-sm" id="onboarding-close" type="button" aria-label="关闭" data-i18n-aria="common.close">
+      <svg aria-hidden="true"><use href="#i-x"></use></svg><span data-i18n="common.close">关闭</span>
+    </button>
+  </header>
+  <p class="profile-dialog-desc" data-i18n="onboarding.desc">按顺序完成五步，训练按钮会在缺项时带你回到对应位置。</p>
+  <ol class="onboarding-steps">
+    <li><b data-i18n="nav.workspace">工作区</b><span data-i18n="onboarding.workspaceText">先新建一个工作区；配置、缓存、runs、logs 都会放进去。</span></li>
+    <li><b data-i18n="train.model.legend">模型文件</b><span data-i18n="onboarding.modelsText">在训练设置页填写 DiT、文本编码器目录、VAE；三个字段都可探测。</span></li>
+    <li><b data-i18n="nav.dataset">数据集</b><span data-i18n="onboarding.datasetText">到数据集页扫描任意本地目录，路径会写回当前 profile。</span></li>
+    <li><b data-i18n="nav.cache">缓存</b><span data-i18n="onboarding.cacheText">构建 latent 索引（index.json）；样图预览可再编码 preview.safetensors，不影响训练。</span></li>
+    <li><b data-i18n="nav.train">训练</b><span data-i18n="onboarding.trainText">选择 profile，预检通过后开始训练。</span></li>
+  </ol>
+  <div class="dialog-actions">
+    <button class="btn btn-ghost" id="onboarding-later" type="button" data-i18n="onboarding.later">先看看</button>
+    <button class="btn btn-primary" id="onboarding-start" type="button" data-i18n="onboarding.start">开始配置</button>
+  </div>
+</dialog>
+
+<dialog class="profile-dialog config-dialog" id="config-dialog" aria-labelledby="config-dialog-title">
+  <header class="modal-head">
+    <h2 id="config-dialog-title" data-i18n="configDialog.title">新建训练配置</h2>
+    <button class="btn btn-ghost btn-sm" id="config-dialog-close" type="button" aria-label="关闭" data-i18n-aria="common.close" data-i18n="common.close">关闭</button>
+  </header>
+  <p class="profile-dialog-desc" id="config-dialog-desc" data-i18n="configDialog.desc">配置只覆盖训练相关字段；模型、数据集与缓存路径仍使用 workspace.yaml。</p>
+  <form id="config-dialog-form">
+    <label class="field" for="config-name-input">
+      <span class="field-label" data-i18n="configDialog.name">配置名称</span>
+      <input id="config-name-input" type="text" spellcheck="false" autocomplete="off" placeholder="例如 r16-nf4ffn" data-i18n-placeholder="configDialog.namePlaceholder">
+      <span class="field-help" data-i18n="configDialog.nameHelp">字母、数字、点、下划线、短横线。</span>
+    </label>
+    <label class="field" id="config-source-row" for="config-source-select">
+      <span class="field-label" data-i18n="configDialog.source">初始内容</span>
+      <select id="config-source-select">
+        <option value="current" data-i18n="configDialog.sourceCurrent">从当前表单复制</option>
+        <option value="workspace" data-i18n="configDialog.sourceWorkspace">从 workspace.yaml 默认配置复制</option>
+      </select>
+    </label>
+    <div class="inline-error hidden" id="config-dialog-error" role="alert"></div>
+    <div class="dialog-actions">
+      <button class="btn btn-ghost" id="config-dialog-cancel" type="button" data-i18n="common.cancel">取消</button>
+      <button class="btn btn-primary" id="config-dialog-confirm" type="submit" data-i18n="common.create">创建</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="profile-dialog run-config-dialog" id="run-config-dialog" aria-labelledby="run-config-title">
+  <header class="modal-head">
+    <h2 id="run-config-title" data-i18n="runConfig.title">Run 配置</h2>
+    <button class="btn btn-ghost btn-sm" id="run-config-close" type="button" aria-label="关闭" data-i18n-aria="common.close">
+      <svg aria-hidden="true"><use href="#i-x"></use></svg><span data-i18n="common.close">关闭</span>
+    </button>
+  </header>
+  <p class="profile-dialog-desc" id="run-config-meta" data-i18n="runConfig.snapshot">历史快照</p>
+  <pre class="run-config-preview mono" id="run-config-yaml"></pre>
+  <div class="inline-error hidden" id="run-config-error" role="alert"></div>
+  <div class="dialog-actions">
+    <button class="btn btn-ghost" id="run-config-cancel" type="button" data-i18n="common.cancel">取消</button>
+    <button class="btn" id="run-config-load" type="button" data-i18n="runConfig.load">载入配置</button>
+    <button class="btn btn-primary" id="run-config-start" type="button" data-i18n="runConfig.start">基于此配置新建 run</button>
+  </div>
+</dialog>
+
+<div class="modal hidden" id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+  <div class="modal-inner" role="document">
+    <header class="modal-head">
+      <h2 id="modal-title" data-i18n="samplePreview.title">样图预览</h2>
+      <button class="btn btn-ghost btn-sm" id="modal-close" type="button" aria-label="关闭预览" data-i18n-aria="samplePreview.closeAria">
+        <svg aria-hidden="true"><use href="#i-x"></use></svg><span data-i18n="common.close">关闭</span>
+      </button>
+    </header>
+    <img id="modal-img" alt="">
+    <p class="modal-cap mono" id="modal-cap"></p>
+  </div>
+</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,183 @@
+<!-- ======================= 中控台 ======================= -->
+<section class="tabpane hidden" id="tab-dashboard" role="tabpanel" aria-labelledby="tab-link-dashboard" tabindex="0">
+  <header class="page-head">
+    <div class="page-title">
+      <p class="eyebrow" data-i18n="dash.eyebrow">训练监控</p>
+      <h1 data-i18n="dash.title">中控台</h1>
+      <p class="page-desc" data-i18n="dash.desc">查看损失趋势、验证差距、样图与任务日志。</p>
+    </div>
+    <div class="page-actions dash-header-actions">
+      <label class="field-inline" for="dash-workspace-select">
+        <span data-i18n="dash.workspace">工作区</span>
+        <select id="dash-workspace-select" class="select-compact" aria-label="选择工作区" data-i18n-aria="dash.selectWorkspace"></select>
+      </label>
+      <label class="field-inline" for="dash-run">
+        <span data-i18n="dash.run">运行记录</span>
+        <select id="dash-run" class="select-compact"></select>
+      </label>
+      <button class="btn btn-ghost btn-sm" id="dash-refresh" type="button" aria-label="刷新中控台" data-i18n-aria="dash.refreshAria">
+        <svg aria-hidden="true"><use href="#i-refresh"></use></svg><span data-i18n="common.refresh">刷新</span>
+      </button>
+    </div>
+  </header>
+
+  <section class="panel dash-train-panel" id="dash-train-panel" aria-labelledby="dash-train-title">
+    <header class="panel-head">
+      <div>
+        <h2 id="dash-train-title" data-i18n="dash.train.title">训练任务</h2>
+        <p class="panel-desc" data-i18n="dash.train.desc">选择实验配置；开始前会套用这份 YAML，再运行预检并启动训练。</p>
+      </div>
+    </header>
+    <div class="dash-train-controls">
+      <label class="field-inline dash-experiment-field" for="dash-config-select">
+        <span data-i18n="dash.train.experiment">实验</span>
+        <select id="dash-config-select" class="select-compact" aria-label="选择实验配置" data-i18n-aria="dash.train.selectConfig"></select>
+      </label>
+      <label class="baseline-toggle" for="cfg-run-baseline" title="先运行一次无 LoRA 基线采样到 baseline/，再串行开始训练" data-i18n-title="dash.train.baselineTitle">
+        <input id="cfg-run-baseline" type="checkbox">
+        <span data-i18n="dash.train.baseline">先跑无 LoRA 基线</span>
+      </label>
+      <label class="field-inline" for="set-allocator" title="CUDA 分配器；训练进程启动时生效" data-i18n-title="dash.train.allocatorTitle">
+        <span data-i18n="dash.train.allocator">分配器</span>
+        <select id="set-allocator" class="select-compact">
+          <option value="off" data-i18n="common.none">无</option>
+          <option value="expandable" selected>expandable</option>
+          <option value="async">cudaMallocAsync</option>
+        </select>
+      </label>
+      <label class="field-inline" for="set-gc-threshold" title="GC 回收阈值；仅 expandable 使用，0–0.99，训练进程启动时生效" data-i18n-title="dash.train.gcTitle">
+        <span data-i18n="dash.train.gc">GC 阈值</span>
+        <input id="set-gc-threshold" class="input-compact" type="number" min="0" max="0.99" step="0.01" value="0.9" inputmode="decimal" placeholder="0.9">
+      </label>
+      <div class="dash-train-actions">
+        <button class="btn btn-primary btn-sm" id="btn-start" type="button">
+          <svg aria-hidden="true"><use href="#i-play"></use></svg><span id="btn-start-text" data-i18n="dash.train.start">开始训练</span>
+        </button>
+        <button class="btn btn-danger-ghost btn-sm" id="btn-stop" type="button" disabled>
+          <svg aria-hidden="true"><use href="#i-stop"></use></svg><span data-i18n="common.stop">停止</span>
+        </button>
+      </div>
+    </div>
+    <p class="dash-config-line" id="dash-config-line">
+      <span class="dash-config-label" data-i18n="dash.train.currentConfig">当前配置</span>
+      <span class="mono" id="dash-config-path">workspace.yaml</span>
+      <span class="mono muted" id="dash-config-summary">--</span>
+    </p>
+    <p class="dash-config-empty hidden" id="dash-config-empty" role="status">
+      <svg aria-hidden="true"><use href="#i-alert"></use></svg>
+      <span data-i18n="dash.train.noConfig">这个工作区还没有训练配置，请先到训练设置页保存一份</span>
+    </p>
+  </section>
+
+  <section class="panel monitor-panel" id="monitor-panel" aria-labelledby="monitor-title">
+    <header class="monitor-head">
+      <div class="monitor-row monitor-row-main">
+        <div class="monitor-title">
+          <h2 id="monitor-title" data-i18n="dash.monitor.title">监视面板</h2>
+        </div>
+        <div class="monitor-run-field">
+          <label class="field-inline" for="dash-smooth"><span data-i18n="dash.monitor.smooth">平滑窗口</span><input id="dash-smooth" class="input-compact" type="number" min="1" step="1" value="6" aria-label="滑动平均窗口步数" data-i18n-aria="dash.monitor.smoothAria"></label>
+          <div class="compare-dropdown" id="compare-dropdown">
+            <button class="btn btn-ghost btn-sm compare-toggle" id="btn-compare-toggle" type="button" aria-haspopup="true" aria-expanded="false"><span data-i18n="dash.monitor.compare">对比 run</span> <span class="chip chip-muted" id="compare-count">0</span></button>
+            <div class="compare-menu hidden" id="compare-menu" role="menu" aria-label="选择对比 run" data-i18n-aria="dash.monitor.compareAria"></div>
+          </div>
+          <button class="btn btn-ghost btn-sm" id="btn-reset-layout" type="button" data-i18n="dash.monitor.reset">重置布局</button>
+        </div>
+      </div>
+      <div class="monitor-row monitor-row-settings" id="chart-controls">
+        <span class="chart-controls-label" data-i18n="dash.monitor.cards">卡片</span>
+        <label class="metric-toggle"><input type="checkbox" data-metric="loss" checked> loss</label>
+        <label class="metric-toggle"><input type="checkbox" data-metric="lr" checked> learning rate</label>
+        <label class="metric-toggle"><input type="checkbox" data-metric="sec" checked> s/step</label>
+        <label class="metric-toggle"><input type="checkbox" data-metric="vram" checked> gpu</label>
+        <span class="toolbar-note mono" id="dash-updated">--</span>
+      </div>
+    </header>
+    <div class="widget-grid" id="widget-grid">
+      <article class="widget-card" id="widget-loss" data-widget="loss">
+        <header class="widget-head">
+          <span class="widget-title">loss</span>
+          <div class="widget-settings" aria-label="loss Y 轴范围" data-i18n-aria="dash.widget.rangeAria">
+            <span>Y</span><input class="input-compact" id="loss-y-min" type="text" inputmode="decimal" placeholder="自动" data-i18n-placeholder="common.auto" aria-label="loss Y 最小值" data-i18n-aria="dash.widget.yMinAria">
+            <span>–</span><input class="input-compact" id="loss-y-max" type="text" inputmode="decimal" placeholder="自动" data-i18n-placeholder="common.auto" aria-label="loss Y 最大值" data-i18n-aria="dash.widget.yMaxAria">
+          </div>
+          <button class="widget-close" type="button" data-close-widget="loss" aria-label="关闭 loss 卡片" data-i18n-aria="dash.widget.closeAria">×</button>
+          <span class="widget-drag" title="拖拽移动" data-i18n-title="dash.widget.drag">⠿</span>
+        </header>
+        <div class="widget-toolstrip">
+          <div class="chart-legend" id="dash-legend" role="group" aria-label="曲线显示开关" data-i18n-aria="dash.chart.legendAria">
+            <button class="legend-toggle is-on" type="button" data-series="train" aria-pressed="true"><span class="legend-line legend-train" aria-hidden="true"></span><span data-i18n="dash.chart.rawLoss">原始损失</span></button>
+            <button class="legend-toggle is-on" type="button" data-series="eval" aria-pressed="true"><span class="legend-line legend-eval" aria-hidden="true"></span><span data-i18n="dash.chart.eval">验证</span></button>
+            <button class="legend-toggle is-on" type="button" data-series="avg" aria-pressed="true"><span class="legend-line legend-avg" aria-hidden="true"></span><span data-i18n="dash.chart.average">滑动平均</span></button>
+          </div>
+        </div>
+        <div class="chart-wrap" id="dash-chart-wrap" tabindex="0" role="img" aria-label="损失曲线。使用左右方向键查看每一步的读数。" data-i18n-aria="dash.chart.aria">
+          <canvas id="dash-chart"></canvas>
+          <div class="chart-empty hidden" id="dash-empty"><svg aria-hidden="true"><use href="#i-dashboard"></use></svg><strong data-i18n="dash.chart.emptyTitle">还没有可绘制的指标</strong><p data-i18n="dash.chart.emptyText">先完成一次训练；或者切换到一个有 metrics.jsonl 的运行记录。</p><a class="btn btn-primary btn-sm" href="#train" data-i18n="dash.chart.goTrain">去训练设置</a></div>
+          <div class="chart-tooltip hidden" id="dash-tooltip" role="tooltip"></div>
+        </div>
+        <div class="widget-foot"><div class="compare-legend" id="dash-compare-legend" aria-label="对比 run 图例" data-i18n-aria="dash.monitor.compareLegendAria"></div></div>
+        <p class="sr-only" id="dash-readout" aria-live="polite"></p>
+        <span class="widget-resize" title="拖拽调整大小" data-i18n-title="dash.widget.resize"></span>
+      </article>
+    </div>
+  </section>
+
+  <div class="kpi-grid" id="dash-kpis">
+    <article class="kpi"><header><span data-i18n="dash.kpi.step">训练进度</span><span class="kpi-trend" id="dash-step-trend"></span></header><p class="kpi-value mono" id="dash-step">--</p><div class="progress progress-xs" role="progressbar" aria-label="训练进度" data-i18n-aria="dash.kpi.step" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="dash-progress"><div class="progress-bar" id="dash-progress-bar"></div></div><p class="kpi-sub" id="dash-step-sub" data-i18n-skip data-i18n="dash.kpi.waiting">等待训练数据</p></article>
+    <article class="kpi"><header><span data-i18n="dash.kpi.trainLoss">训练损失</span><span class="kpi-trend" id="dash-train-trend"></span></header><p class="kpi-value mono" id="dash-train">--</p><p class="kpi-sub" id="dash-train-sub" data-i18n-skip data-i18n="dash.kpi.latestPoint">最近一个记录点</p></article>
+    <article class="kpi"><header><span data-i18n="dash.kpi.evalLoss">验证损失</span><span class="kpi-trend" id="dash-eval-trend"></span></header><p class="kpi-value mono" id="dash-eval">--</p><p class="kpi-sub" id="dash-eval-sub" data-i18n-skip data-i18n="dash.kpi.noEval">未启用或尚无验证</p></article>
+    <article class="kpi"><header><span data-i18n="dash.kpi.gap">泛化差距</span><span class="kpi-trend" id="dash-gap-trend"></span></header><p class="kpi-value mono" id="dash-gap">--</p><p class="kpi-sub" id="dash-gap-sub" data-i18n-skip data-i18n="dash.kpi.gapFormula">验证损失 − 训练损失</p></article>
+    <article class="kpi"><header><span data-i18n="dash.kpi.speed">训练速度</span><span class="kpi-trend"></span></header><p class="kpi-value mono" id="dash-speed">--</p><p class="kpi-sub" id="dash-speed-sub" data-i18n-skip data-i18n="dash.kpi.latestPoint">最近一个记录点</p></article>
+    <article class="kpi"><header><span data-i18n="dash.kpi.peak">显存峰值</span><span class="kpi-trend"></span></header><p class="kpi-value mono" id="dash-peak">--</p><p class="kpi-sub" id="dash-peak-sub">GPU --</p></article>
+  </div>
+
+  <section class="panel sample-compare-panel" id="sample-compare-panel">
+    <header class="panel-head sample-compare-head">
+      <div>
+        <h2><span data-i18n="dash.samples.title">对比样图网格</span> <span class="chip chip-muted" id="sample-compare-count">--</span></h2>
+      </div>
+      <div class="sample-compare-actions">
+        <div class="sample-run-picker">
+          <button class="btn btn-ghost btn-sm compare-toggle" id="btn-sample-runs" type="button" aria-haspopup="true" aria-expanded="false"><span data-i18n="dash.samples.compare">对比 run（样图）</span> <span class="chip chip-muted" id="sample-run-count">0</span></button>
+          <div class="compare-menu sample-run-menu hidden" id="sample-run-menu" role="menu" aria-label="选择样图对比 run" data-i18n-aria="dash.samples.compareAria"></div>
+        </div>
+        <button class="btn btn-ghost btn-sm" id="btn-sample-collapse" type="button" aria-expanded="true" data-i18n="dash.samples.collapse">收起</button>
+      </div>
+    </header>
+    <div class="sample-compare-scroll" id="sample-compare-grid"></div>
+  </section>
+
+  <div class="run-log-row">
+  <aside class="panel run-panel">
+    <header class="panel-head"><h2 data-i18n="dash.runPanel.title">这次运行</h2><span class="chip chip-muted" id="dash-run-status">--</span></header>
+    <dl class="run-facts">
+      <div><dt data-i18n="dash.runPanel.name">运行名</dt><dd class="mono" id="dash-run-name">--</dd></div>
+      <div><dt data-i18n="dash.runPanel.output">输出目录</dt><dd class="mono wrap" id="dash-run-path">--</dd></div>
+      <div><dt data-i18n="dash.runPanel.updated">最近更新</dt><dd id="dash-last-update">--</dd></div>
+      <div><dt data-i18n="dash.runPanel.points">记录点</dt><dd><span class="mono" id="dash-points">--</span></dd></div>
+      <div><dt data-i18n="dash.runPanel.samples">样图</dt><dd><span class="mono" id="dash-samples-count">--</span> <span data-i18n="common.imagesUnit">张</span></dd></div>
+      <div><dt>GPU</dt><dd id="dash-gpu-line">--</dd></div>
+    </dl>
+  </aside>
+
+  <section class="panel log-panel">
+    <header class="panel-head">
+      <div>
+        <h2 data-i18n="dash.log.title">任务日志</h2>
+        <p class="panel-desc"><span data-i18n="dash.log.desc">训练与缓存子进程的原始输出（SSE）；同时写入工作区</span> <span class="mono">logs/</span>。</p>
+      </div>
+      <div class="log-tools">
+        <span class="mono muted small" id="log-count" data-i18n-skip data-i18n="dash.log.lines">0 行</span>
+        <button class="btn btn-ghost btn-xs" id="btn-read-log" type="button" data-i18n="dash.log.readFile">读取日志文件</button>
+        <button class="btn btn-ghost btn-xs" id="btn-pause-log" type="button" aria-pressed="false" data-i18n="dash.log.pause">暂停滚动</button>
+        <button class="btn btn-ghost btn-xs" id="btn-copy-log" type="button" data-i18n="common.copy">复制</button>
+        <button class="btn btn-ghost btn-xs" id="btn-clear-log" type="button" data-i18n="dash.log.clear">清空</button>
+      </div>
+    </header>
+    <div class="log" id="log" role="log" aria-live="off" aria-label="任务日志" data-i18n-aria="dash.log.title" tabindex="0"></div>
+    <button class="log-jump hidden" id="log-jump" type="button" data-i18n="dash.log.jump">跳到最新 ↓</button>
+  </section>
+  </div>
+
+</section>

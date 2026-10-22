@@ -1,0 +1,178 @@
+<!-- ======================= 数据集 ======================= -->
+<section class="tabpane hidden" id="tab-dataset" role="tabpanel" aria-labelledby="tab-link-dataset" tabindex="0">
+  <header class="page-head">
+    <div class="page-title">
+      <p class="eyebrow" data-i18n="dataset.eyebrow">输入</p>
+      <h1 data-i18n="nav.dataset">数据集</h1>
+      <p class="page-desc" data-i18n="dataset.desc">训练集与正则集分开配置和扫描；图片与提示词统计会同步到训练配置。</p>
+    </div>
+  </header>
+
+  <div class="dataset-cards">
+    <section class="panel dataset-card" id="ds-main-card">
+      <header class="panel-head">
+        <div>
+          <h2 data-i18n="dataset.train.title">训练数据集</h2>
+          <p class="panel-desc"><span data-i18n="dataset.train.desc">扫描训练图片与提示词；路径写入</span> <span class="mono">dataset.path</span>。</p>
+        </div>
+      </header>
+
+      <div class="dataset-config-fields">
+        <div class="form-grid">
+          <div class="field span2">
+            <label class="field-label" for="cfg-dataset-path"><span data-i18n="dataset.path">数据集路径</span> <em data-i18n="common.required">必填</em></label>
+            <span class="input-row">
+              <input id="cfg-dataset-path" type="text" spellcheck="false" autocomplete="off" aria-describedby="cfg-dataset-help" placeholder="任意本地数据集目录" data-i18n-placeholder="dataset.pathPlaceholder">
+              <button class="btn btn-ghost btn-sm" type="button" data-path-browse="cfg-dataset-path" data-path-mode="dir" data-i18n="common.browse">浏览</button>
+              <button class="btn btn-primary btn-sm" id="btn-scan" type="button">
+                <svg aria-hidden="true"><use href="#i-scan"></use></svg><span data-i18n="dataset.scan">扫描数据集</span>
+              </button>
+            </span>
+            <span class="field-help" id="cfg-dataset-help" data-i18n="dataset.pathHelp">扫描结果会写回这里；支持任意本地目录。</span>
+          </div>
+          <div class="field span2">
+            <label class="field-label" for="cfg-cache-dir" data-i18n="dataset.cacheDir">缓存目录</label>
+            <span class="input-row">
+              <input id="cfg-cache-dir" type="text" spellcheck="false" autocomplete="off" aria-describedby="cfg-cache-help cfg-cache-effective">
+              <button class="btn btn-ghost btn-sm" type="button" data-path-browse="cfg-cache-dir" data-path-mode="dir" data-i18n="common.browse">浏览</button>
+            </span>
+            <span class="field-help" id="cfg-cache-help"><span data-i18n="dataset.cacheHelp">留空使用工作区缓存目录</span> <span class="mono">train_cache</span></span>
+            <span class="field-help mono" id="cfg-cache-effective" data-i18n-skip data-i18n="dataset.effective">生效：--</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout callout-error hidden" id="ds-error" role="alert">
+        <div class="callout-icon"><svg aria-hidden="true"><use href="#i-alert"></use></svg></div>
+        <div class="callout-body">
+          <strong data-i18n="dataset.scanFailed">扫描失败</strong>
+          <p id="ds-error-text"></p>
+          <div class="callout-actions">
+            <button class="btn btn-ghost btn-sm" id="btn-ds-retry" type="button" data-i18n="common.retry">重试</button>
+          </div>
+        </div>
+      </div>
+      <div class="callout callout-success hidden" id="ds-sync" role="status">
+        <div class="callout-icon"><svg aria-hidden="true"><use href="#i-check"></use></svg></div>
+        <div class="callout-body">
+          <strong id="ds-sync-title" data-i18n="dataset.synced">已写入并保存</strong>
+          <p id="ds-sync-text"></p>
+          <div class="callout-actions">
+            <a class="btn btn-ghost btn-sm" href="#train" data-i18n="dash.chart.goTrain">去训练设置</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="summary-grid dataset-stats">
+        <article class="summary-card">
+          <span class="summary-label" data-i18n="common.images">图片</span>
+          <b class="mono" id="ds-images">--</b>
+          <span class="summary-sub" id="ds-images-sub" data-i18n-skip data-i18n="dataset.notScanned">尚未扫描</span>
+        </article>
+        <article class="summary-card">
+          <span class="summary-label" data-i18n="common.captions">提示词</span>
+          <b class="mono" id="ds-captions">--</b>
+          <div class="progress progress-xs" role="progressbar" aria-label="提示词覆盖率" data-i18n-aria="dataset.captionCoverage" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="ds-caption-progress">
+            <div class="progress-bar" id="ds-caption-bar"></div>
+          </div>
+          <span class="summary-sub" id="ds-captions-sub">--</span>
+          <span class="summary-sub summary-styles" id="ds-caption-styles" data-i18n-skip data-i18n="dataset.captionStyles">tag + caption -- · 官方描述 --</span>
+        </article>
+      </div>
+
+      <details class="dataset-rules">
+        <summary data-i18n="dataset.rules.title">命名规则</summary>
+        <ul>
+          <li><b data-i18n="dataset.rules.imageFormat">图片格式</b><span data-i18n="dataset.rules.imageFormatText">PNG / JPG / JPEG / WebP，递归扫描所有子目录。</span></li>
+          <li><b data-i18n="common.captions">提示词</b><span><span data-i18n="dataset.rules.captionText">同名</span> <span class="mono">.txt</span> <span data-i18n="common.or">或</span> <span class="mono">.caption</span><span data-i18n="dataset.rules.captionTail">；UTF-8，可留空。</span></span></li>
+          <li><b data-i18n="dataset.rules.generated">生成结果</b><span><span data-i18n="dataset.rules.generatedStart">优先读取同名</span> <span class="mono">_moss-image-trainer.json</span><span data-i18n="dataset.rules.generatedMid">，其次</span> <span class="mono">.txt</span> / <span class="mono">metadata.jsonl</span> <span data-i18n="dataset.rules.generatedTail">/ 默认 caption。</span></span></li>
+          <li><b data-i18n="dataset.rules.repeats">重复次数</b><span><span data-i18n="dataset.rules.repeatsStart">目录名前缀</span> <code class="mono">&lt;数字&gt;_&lt;名称&gt;</code><span data-i18n="dataset.rules.repeatsMid">，例如</span> <span class="mono">3_body</span> <span data-i18n="dataset.rules.repeatsTail">= 每张重复 3 次。</span></span></li>
+          <li><b data-i18n="dataset.reg.title">正则集</b><span data-i18n="dataset.rules.regText">规则与训练集相同；但正则图不参与触发词（trigger words）。</span></li>
+        </ul>
+      </details>
+
+      <div class="dataset-section-head">
+        <h3 data-i18n="dataset.thumbs">缩略图</h3>
+        <span class="mono muted" id="ds-thumb-note" data-i18n-skip data-i18n="dataset.thumbNote">最多展示 24 张，按需生成 384px 缩略图。</span>
+      </div>
+      <div class="thumb-grid" id="ds-thumbs"></div>
+      <div class="empty-inline" id="ds-thumbs-empty">
+        <p data-i18n="dataset.emptyPreview">扫描后在这里预览数据集。</p>
+      </div>
+    </section>
+
+    <section class="panel dataset-card" id="ds-reg-card">
+      <header class="panel-head">
+        <div>
+          <h2><span data-i18n="dataset.reg.title">正则集</span> <span class="chip chip-muted" data-i18n="common.optional">可选</span></h2>
+          <p class="panel-desc"><span data-i18n="dataset.reg.desc">正则图片同样扫描；路径写入</span> <span class="mono">dataset.reg_path</span>。</p>
+        </div>
+        <span class="chip chip-muted" id="ds-reg-state" data-i18n-skip data-i18n="dataset.reg.notConfigured">未配置</span>
+      </header>
+
+      <div class="dataset-config-fields">
+        <div class="form-grid">
+          <div class="field span2">
+            <label class="field-label" for="cfg-reg-path"><span data-i18n="dataset.reg.path">正则集目录</span> <em data-i18n="common.optional">可选</em></label>
+            <span class="input-row">
+              <input id="cfg-reg-path" type="text" spellcheck="false" autocomplete="off" aria-describedby="cfg-reg-path-help" placeholder="空 = 不用正则集" data-i18n-placeholder="dataset.reg.pathPlaceholder">
+              <button class="btn btn-ghost btn-sm" type="button" data-path-browse="cfg-reg-path" data-path-mode="dir" data-i18n="common.browse">浏览</button>
+              <button class="btn btn-sm" id="btn-ds-reg-scan" type="button">
+                <svg aria-hidden="true"><use href="#i-scan"></use></svg><span data-i18n="dataset.reg.scan">扫描正则集</span>
+              </button>
+            </span>
+            <span class="field-help" id="cfg-reg-path-help" data-i18n="dataset.reg.pathHelp">“不是这个角色”的正则图目录；目录名可用 &lt;n&gt;_名称 控制重复次数。</span>
+          </div>
+          <div class="field span2">
+            <label class="field-label" for="cfg-cache-reg-dir" data-i18n="dataset.reg.cacheDir">正则集缓存目录</label>
+            <span class="input-row">
+              <input id="cfg-cache-reg-dir" type="text" spellcheck="false" autocomplete="off" aria-describedby="cfg-cache-reg-help cfg-cache-reg-effective">
+              <button class="btn btn-ghost btn-sm" type="button" data-path-browse="cfg-cache-reg-dir" data-path-mode="dir" data-i18n="common.browse">浏览</button>
+            </span>
+            <span class="field-help" id="cfg-cache-reg-help"><span data-i18n="dataset.cacheHelp">留空使用工作区缓存目录</span> <span class="mono">reg_cache</span></span>
+            <span class="field-help mono" id="cfg-cache-reg-effective" data-i18n-skip data-i18n="dataset.effective">生效：--</span>
+          </div>
+          <label class="field span2" for="cfg-reg-caption">
+            <span class="field-label" data-i18n="dataset.reg.caption">正则默认提示词</span>
+            <input id="cfg-reg-caption" type="text" spellcheck="false" autocomplete="off" aria-describedby="cfg-reg-caption-help" placeholder="可选；正则图没有 .txt 时使用" data-i18n-placeholder="dataset.reg.captionPlaceholder">
+            <span class="field-help" id="cfg-reg-caption-help" data-i18n="dataset.reg.captionHelp">可留空；有同名提示词文件时仍优先用文件。</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="callout callout-error hidden" id="ds-reg-error" role="alert">
+        <div class="callout-icon"><svg aria-hidden="true"><use href="#i-alert"></use></svg></div>
+        <div class="callout-body">
+          <strong data-i18n="dataset.reg.scanFailed">正则集扫描失败</strong>
+          <p id="ds-reg-error-text"></p>
+        </div>
+      </div>
+
+      <div class="summary-grid dataset-stats">
+        <article class="summary-card">
+          <span class="summary-label" data-i18n="common.images">图片</span>
+          <b class="mono" id="ds-reg-images">--</b>
+          <span class="summary-sub" id="ds-reg-images-sub" data-i18n-skip data-i18n="dataset.notScanned">尚未扫描</span>
+        </article>
+        <article class="summary-card">
+          <span class="summary-label" data-i18n="common.captions">提示词</span>
+          <b class="mono" id="ds-reg-captions">--</b>
+          <div class="progress progress-xs" role="progressbar" aria-label="正则集提示词覆盖率" data-i18n-aria="dataset.reg.captionCoverage" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="ds-reg-caption-progress">
+            <div class="progress-bar" id="ds-reg-caption-bar"></div>
+          </div>
+          <span class="summary-sub" id="ds-reg-captions-sub">--</span>
+          <span class="summary-sub summary-styles" id="ds-reg-caption-styles" data-i18n-skip data-i18n="dataset.captionStyles">tag + caption -- · 官方描述 --</span>
+        </article>
+      </div>
+
+      <div class="dataset-section-head">
+        <h3 data-i18n="dataset.thumbs">缩略图</h3>
+        <span class="mono muted" id="ds-reg-thumb-note" data-i18n-skip data-i18n="dataset.thumbNote">最多展示 24 张，按需生成 384px 缩略图。</span>
+      </div>
+      <div class="thumb-grid" id="ds-reg-thumbs"></div>
+      <div class="empty-inline" id="ds-reg-empty">
+        <p data-i18n="dataset.reg.empty">未配置正则集（可选）。</p>
+      </div>
+    </section>
+  </div>
+</section>

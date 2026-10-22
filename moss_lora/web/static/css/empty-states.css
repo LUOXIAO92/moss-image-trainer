@@ -1,0 +1,27 @@
+/* moved from style.css: L1855-1880 */
+/* ---------------------------------------------------------------- empty states */
+.empty-state,
+.empty-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 44px 20px;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-sunken);
+  text-align: center;
+}
+.empty-block { padding: 32px 16px; border-style: dashed; background: transparent; }
+.empty-state svg,
+.empty-block svg { width: 30px; height: 30px; color: var(--color-text-faint); }
+.empty-state strong,
+.empty-block strong { font-size: var(--text-sm); font-weight: 600; }
+.empty-state p,
+.empty-block p { max-width: 54ch; color: var(--color-text-muted); font-size: var(--text-xs); line-height: 1.55; }
+.empty-state .btn,
+.empty-block .btn { margin-top: 6px; }
+.empty-inline { padding: 14px 2px; color: var(--color-text-muted); font-size: var(--text-xs); }
+.empty-inline p { margin-bottom: 6px; }
+

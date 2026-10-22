@@ -1,0 +1,152 @@
+# moved from app.py: L1380-1401, L2584-2699
+"""Dataset scans, cached thumbnails and the sample-image listing."""
+
+from __future__ import annotations
+
+import hashlib
+import os
+import re
+import uuid
+
+from fastapi import HTTPException
+from fastapi.responses import FileResponse
+
+from ..deps import ROOT, _rel
+from .workspace import (_resolve_workspace, _workspace_dir, _workspace_root,
+                        _workspace_runs_dir)
+
+
+def dataset_info(path: str, max_area: int = 1024 * 1024, bucket_step: int = 64,
+                source: str = "tag_caption"):
+    from ...data import MOSS_CAPTION_SOURCES, assign_buckets, scan, summarise
+
+    if max_area <= 0 or bucket_step <= 0:
+        raise HTTPException(400, "max_area 和 bucket_step 必须大于 0")
+    if source not in MOSS_CAPTION_SOURCES:
+        raise HTTPException(400, f"unknown caption source {source}")
+    try:
+        items = assign_buckets(
+            scan(path, moss_caption_source=source), area=max_area, step=bucket_step
+        )
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+    info = summarise(items)
+    info["path"] = os.path.abspath(os.path.expanduser(path))
+    info["source"] = source
+    info["max_area"] = max_area
+    info["bucket_step"] = bucket_step
+    info["thumbnails"] = [i.image for i in items[:24]]
+    return info
+
+def _thumb_cache_dir(full: str, workspace: str = "") -> str:
+    """Return the cache directory owned by the image's workspace/run.
+
+    Sample images live under ``<workspace>/runs/<run>/...``; their thumbnails
+    belong next to the run so deleting a run also deletes its cache.  Dataset
+    previews and baseline images use the workspace-level ``.thumbs``.
+    """
+    requested = _resolve_workspace(workspace)
+    root = os.path.realpath(_workspace_root())
+    real = os.path.realpath(full)
+    try:
+        rel_root = os.path.relpath(real, root)
+    except ValueError:
+        rel_root = ".."
+    if rel_root != ".." and not rel_root.startswith(".." + os.sep):
+        parts = rel_root.split(os.sep)
+        if parts and os.path.isdir(os.path.join(root, parts[0])):
+            requested = parts[0]
+    ws_dir = os.path.realpath(_workspace_dir(requested))
+    runs_dir = os.path.realpath(os.path.join(ws_dir, "runs"))
+    if real == runs_dir or real.startswith(runs_dir + os.sep):
+        # Mirror /api/samples: the run is derived from the image's directory,
+        # not the filename, so direct sample files and samples/ subdirs agree.
+        rel = os.path.relpath(os.path.dirname(real), runs_dir)
+        parts = [] if rel == "." else rel.split(os.sep)
+        if "samples" in parts:
+            run_parts = parts[:parts.index("samples")]
+        elif len(parts) > 1:
+            run_parts = parts[:-1]
+        else:
+            run_parts = parts
+        run_parts = [part for part in run_parts if part not in ("", ".", "..")]
+        if run_parts:
+            return os.path.join(runs_dir, *run_parts, ".thumbs")
+    return os.path.join(ws_dir, ".thumbs")
+
+def thumb_response(path: str, w: int = 384, workspace: str = ""):
+    """Small cached WebP thumbnail; the original is only loaded in the modal."""
+    full = path if os.path.isabs(path) else os.path.abspath(os.path.join(ROOT, path))
+    image_ext = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
+    if not os.path.isfile(full) or os.path.splitext(full)[1].lower() not in image_ext:
+        raise HTTPException(404, "not found")
+    width = max(64, min(1024, int(w)))
+    try:
+        from PIL import Image, ImageOps
+
+        stat = os.stat(full)
+        key = hashlib.sha1(
+            f"{full}:{stat.st_mtime_ns}:{stat.st_size}:{width}".encode()
+        ).hexdigest()
+        thumb_dir = _thumb_cache_dir(full, workspace)
+        os.makedirs(thumb_dir, exist_ok=True)
+        out = os.path.join(thumb_dir, f"{key}.webp")
+        if not os.path.exists(out):
+            with Image.open(full) as image:
+                image = ImageOps.exif_transpose(image)
+                image.thumbnail((width, width), Image.Resampling.LANCZOS)
+                if image.mode not in ("RGB", "RGBA"):
+                    image = image.convert("RGB")
+                tmp = f"{out}.{uuid.uuid4().hex[:6]}.tmp"
+                image.save(tmp, "WEBP", quality=82, method=4)
+                os.replace(tmp, out)
+        # the on-disk key covers mtime, but the URL only has the path: after a
+        # re-render the browser would serve the old picture for a day
+        return FileResponse(out, media_type="image/webp",
+                            headers={"Cache-Control": "no-cache"})
+    except Exception as exc:
+        raise HTTPException(404, f"thumbnail failed: {exc}")
+
+def samples_list(dir: str = "", workspace: str = ""):
+    scope = _resolve_workspace(workspace)
+    base_default = _workspace_runs_dir(scope)
+    if dir:
+        if os.path.isabs(dir):
+            roots = [dir]
+        else:
+            roots = [os.path.abspath(os.path.join(_workspace_dir(scope), dir))]
+    else:
+        roots = [base_default]
+    out = []
+    seen: set[str] = set()
+    for base in roots:
+        if not os.path.isdir(base):
+            continue
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = [name for name in dirnames if not name.startswith(".")]
+            for filename in sorted(filenames):
+                if not filename.endswith(".png"):
+                    continue
+                path = os.path.join(dirpath, filename)
+                real = os.path.realpath(path)
+                if real in seen:
+                    continue
+                seen.add(real)
+                rel = os.path.relpath(dirpath, base)
+                parts = [] if rel == "." else rel.split(os.sep)
+                if "samples" in parts:
+                    run_parts = parts[:parts.index("samples")]
+                else:
+                    run_parts = parts[:-1] if len(parts) > 1 else parts
+                run = "/".join(run_parts) if run_parts else os.path.basename(base)
+                match = re.search(r"step[_-]?(\d+)", filename)
+                out.append({
+                    "path": _rel(path),
+                    "run": f"{scope}/{run}",
+                    "workspace": scope,
+                    "step": int(match.group(1)) if match else None,
+                    "mtime": os.path.getmtime(path),
+                })
+    # no cap: with several runs the grid needs every sample (was [:60], which
+    # silently hid whole runs once the newest one filled the budget)
+    return sorted(out, key=lambda x: -x["mtime"])

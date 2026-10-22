@@ -1,0 +1,157 @@
+<!-- ======================= 缓存 ======================= -->
+<section class="tabpane hidden" id="tab-cache" role="tabpanel" aria-labelledby="tab-link-cache" tabindex="0">
+  <header class="page-head">
+    <div class="page-title">
+      <p class="eyebrow" data-i18n="cache.eyebrow">训练前置</p>
+      <h1 data-i18n="nav.cache">缓存</h1>
+    </div>
+    <div class="page-actions">
+      <span class="status-pill" id="cache-ready-pill"><span class="status-icon" aria-hidden="true"></span><span id="cache-ready-text" data-i18n="common.checking">检查中</span></span>
+      <button class="btn btn-ghost btn-sm" id="btn-cache-refresh" type="button">
+        <svg aria-hidden="true"><use href="#i-refresh"></use></svg><span data-i18n="cache.refresh">刷新状态</span>
+      </button>
+    </div>
+  </header>
+
+  <div class="cache-grid">
+    <section class="panel">
+      <header class="panel-head">
+        <div class="panel-title-row">
+          <h2 data-i18n="cache.readyTitle">就绪检查</h2>
+        </div>
+      </header>
+
+      <div class="callout callout-warn hidden" id="cache-legacy-warning" role="alert">
+        <div class="callout-icon"><svg aria-hidden="true"><use href="#i-alert"></use></svg></div>
+        <div class="callout-body">
+          <strong data-i18n="cache.legacy.title">索引过旧，需要重建缓存</strong>
+          <p data-i18n="cache.legacy.text">训练集与正则集混在一起，无法区分；请勾上 latent 缓存和文本编码，点「开始缓存」重建。</p>
+        </div>
+      </div>
+
+      <div class="check-list">
+        <div class="check-row" id="cache-check-index">
+          <span class="check-icon" aria-hidden="true"></span>
+          <div class="check-copy">
+            <strong data-i18n="cache.latentIndex">latent 索引</strong>
+            <span class="mono wrap">index.json</span>
+          </div>
+          <span class="check-state" data-i18n="common.checking">检查中</span>
+        </div>
+        <div class="check-row" id="cache-check-preview">
+          <span class="check-icon" aria-hidden="true"></span>
+          <div class="check-copy">
+            <strong data-i18n="cache.previewEmbed">样图文本嵌入</strong>
+            <span class="mono wrap" data-i18n="cache.previewEmbedDetail">preview.safetensors（仅样图预览，缺失不影响训练）</span>
+          </div>
+          <span class="check-state" data-i18n="common.checking">检查中</span>
+        </div>
+        <div class="check-row is-info" id="cache-check-train">
+          <span class="check-icon is-info" aria-hidden="true"></span>
+          <div class="check-copy">
+            <strong data-i18n="cache.trainCache">训练集缓存</strong>
+            <span class="mono wrap" id="cache-train-path">--</span>
+            <span class="check-hint hidden" id="cache-missing-text-hint" data-i18n="cache.missingText">只做了 latent；勾上「文本编码」补一遍。</span>
+          </div>
+          <span class="check-state mono" id="cache-train-count">--</span>
+        </div>
+        <div class="check-row is-info" id="cache-check-reg">
+          <span class="check-icon is-info" aria-hidden="true"></span>
+          <div class="check-copy">
+            <strong data-i18n="cache.regCache">正则集缓存</strong>
+            <span class="mono wrap" id="cache-reg-path">--</span>
+          </div>
+          <span class="check-state mono" id="cache-reg-count">--</span>
+        </div>
+      </div>
+
+      <div class="cache-source-row">
+        <div class="cache-source-copy">
+          <strong data-i18n="cache.textEncode">文本编码</strong>
+          <span class="field-help" data-i18n="cache.textEncodeHelp">训练时文本编码读哪一份 caption；只影响文本嵌入，不影响 latent。</span>
+        </div>
+        <label class="cache-source-control" for="cfg-caption-source">
+          <span data-i18n="cache.captionSource">训练用 caption</span>
+          <select id="cfg-caption-source" class="select-compact" aria-describedby="cfg-caption-source-help">
+            <option value="tag_caption" data-i18n="caption.source.tag">tag + caption</option>
+            <option value="official_long" data-i18n="caption.source.long">官方描述 · 长</option>
+            <option value="official_medium" data-i18n="caption.source.medium">官方描述 · 中</option>
+            <option value="official_short" data-i18n="caption.source.short">官方描述 · 短</option>
+          </select>
+        </label>
+        <span class="field-help cache-source-hint" id="cfg-caption-source-help" data-i18n="cache.captionSourceHelp">改了来源要重新跑文本编码，latent 缓存不用动。</span>
+      </div>
+
+      <div class="cache-run-options">
+        <label class="cache-part" for="cache-part-latent">
+          <input id="cache-part-latent" type="checkbox" checked>
+          <span class="cache-part-copy">
+            <strong data-i18n="cache.latentPart">latent 缓存</strong>
+            <span class="field-help" data-i18n="cache.latentPartHelp">每个样本的 VAE latent</span>
+          </span>
+        </label>
+        <label class="cache-part" for="cache-part-text">
+          <input id="cache-part-text" type="checkbox" checked>
+          <span class="cache-part-copy">
+            <strong data-i18n="cache.textEncode">文本编码</strong>
+            <span class="field-help" data-i18n="cache.textPartHelp">caption → 文本嵌入</span>
+          </span>
+        </label>
+      </div>
+      <div class="cache-run-actions">
+        <button class="btn btn-primary" id="btn-cache-start" type="button" aria-describedby="cache-start-hint" disabled>
+          <svg aria-hidden="true"><use href="#i-play"></use></svg><span data-i18n="cache.start">开始缓存</span>
+        </button>
+        <span class="field-help warn-mark hidden" id="cache-start-hint" role="status" data-i18n="cache.selectOne">至少勾一个</span>
+      </div>
+      <p class="field-help cache-help">
+        <span data-i18n="cache.help">每条样本一个缓存文件：训练集写入 train_cache，正则集写入 reg_cache；latent 与文本嵌入共用同一个逐样本文件。</span>
+      </p>
+    </section>
+
+    <section class="panel">
+      <header class="panel-head">
+        <div>
+          <h2 data-i18n="cache.job.title">缓存任务</h2>
+          <p class="panel-desc" id="cache-job-desc" data-i18n="cache.job.idleDesc">没有运行中的缓存任务。</p>
+        </div>
+        <button class="btn btn-danger-ghost btn-xs hidden" id="cache-stop" type="button" data-i18n="cache.job.stop">停止任务</button>
+      </header>
+      <div class="cache-job">
+        <div class="cache-job-head">
+          <span class="mono" id="cache-job-label" data-i18n="common.idle">空闲</span>
+          <span class="mono muted" id="cache-job-meta">--</span>
+        </div>
+        <div class="cache-stage-list">
+          <div class="cache-stage" id="cache-stage-latent">
+            <div class="cache-stage-head">
+              <span class="cache-stage-name" data-i18n="cache.latentPart">latent 缓存</span>
+              <span class="mono cache-stage-count" id="cache-latent-count">0 / 0</span>
+            </div>
+            <div class="progress progress-sm" role="progressbar" aria-label="latent 缓存进度" data-i18n-aria="cache.latentProgress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="cache-latent-progress">
+              <div class="progress-bar" id="cache-latent-bar"></div>
+            </div>
+          </div>
+          <div class="cache-stage" id="cache-stage-text">
+            <div class="cache-stage-head">
+              <span class="cache-stage-name" data-i18n="cache.textEncode">文本编码</span>
+              <span class="mono cache-stage-count" id="cache-text-count">0 / 0</span>
+            </div>
+            <div class="progress progress-sm" role="progressbar" aria-label="文本编码进度" data-i18n-aria="cache.textProgress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="cache-text-progress">
+              <div class="progress-bar" id="cache-text-bar"></div>
+            </div>
+          </div>
+        </div>
+        <p class="cache-last-line mono" id="cache-last-line" data-i18n="cache.waiting">等待任务输出…</p>
+        <div class="cache-job-actions">
+          <a class="btn btn-ghost btn-xs" href="#dashboard" data-i18n="cache.openLog">打开完整日志</a>
+        </div>
+      </div>
+      <div class="next-step" id="cache-next">
+        <span class="next-step-label" data-i18n="common.nextStep">下一步</span>
+        <p data-i18n="cache.nextStep">检查缓存路径；需要时勾上 latent 缓存或文本编码，点「开始缓存」。</p>
+        <a class="btn btn-ghost btn-sm" href="#train" data-i18n="cache.backToTrain">回到训练设置</a>
+      </div>
+    </section>
+  </div>
+</section>

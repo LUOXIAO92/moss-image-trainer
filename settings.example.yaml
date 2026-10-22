@@ -1,0 +1,37 @@
+# settings.yaml 是「这台机器」的本地配置，已被 .gitignore 忽略。
+# 程序首次运行时会自动把本文件复制为 settings.yaml；本文件本身不会被读取。
+# 模型文件的三个路径在「训练设置 → 模型文件」中按工作区填写，不在这里。
+
+paths:
+  # 工作区根目录：每个工作区是这里的一个子目录。
+  workspaces: workspaces
+
+runtime:
+  # PyTorch 的缓存分配器长训时容易攒碎片，这里选一种缓解机制：
+  #   expandable        —— expandable_segments + 按阈值回收（默认，推荐）
+  #   async             —— backend:cudaMallocAsync，交给 CUDA 流式分配器
+  #   off               —— 不设置，沿用 PyTorch 默认分配器
+  # 文本编码（encode-text）不受这里影响，固定用默认分配器。
+  allocator: expandable
+  # 仅 expandable 模式使用：显存占用超过该比例时触发回收（0~0.99）
+  gc_threshold: 0.9
+
+caption:
+  # 触发词：每条 caption 的前缀，例如 "<TRIGGER>, vtuber"
+  trigger: ""
+  # 生成哪些风格（tag_caption / official）在「提示词生成」页按任务勾选，不在这里配
+  # 本地视觉服务（OpenAI 兼容接口）
+  base_url: ""
+  # 只存环境变量名（如 VLM_API_KEY）：设置页直接填密钥可用，但不写进文件
+  api_key: ""
+  model: ""
+  workers: 6
+  retries: 3
+  # 采样参数默认对齐官方建议：thinking 开、temperature 1、top_p 0.95
+  temperature: 1.0
+  top_p: 0.95
+  max_tokens: 16384
+  thinking: true
+  # 自定义提示词；留空 = 用内置默认模板（保留 tag 的模板用 {tags} 占位符）
+  prompt_tags: ""
+  prompt_natural: ""

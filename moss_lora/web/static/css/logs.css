@@ -1,0 +1,47 @@
+/* moved from style.css: L1317-1362 */
+/* ---------------------------------------------------------------- logs */
+.log-tools { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 3px; }
+.log {
+  height: 280px;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--slate-925);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overscroll-behavior: contain;
+}
+.log:focus-visible { outline-offset: -2px; }
+.log:empty::before {
+  content: "还没有任务日志。启动训练或缓存任务后，SSE 输出会出现在这里。";
+  display: block;
+  padding: 4px 2px;
+  color: var(--color-text-faint);
+}
+.log .line { min-height: 1.6em; }
+.log .line.err { color: var(--color-danger); }
+.log .line.sys { color: var(--color-info); }
+.log .line.ok { color: var(--color-success); }
+.log .line.dim { color: var(--color-text-faint); }
+.log-jump {
+  position: sticky;
+  bottom: 8px;
+  float: right;
+  margin-top: -38px;
+  margin-right: 8px;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-full);
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  font-size: var(--text-2xs);
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+}
+

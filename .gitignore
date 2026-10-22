@@ -1,0 +1,32 @@
+# ---- 本机环境 / 可重建 ----
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# ---- 本机配置（不含 example 模板）----
+settings.yaml
+/i18n/
+
+# ---- 私人数据、本机环境、个人记录：一律不进仓库 ----
+datasets*/
+workspaces/
+third_party/
+experiments/
+caption.sh
+tests/.sanitize-local.txt
+logs/
+.dsh/
+.agents/
+.run/
+.tmp/
+.vscode/
+
+# ---- 训练/采样产物 ----
+output/
+runs/
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.bin

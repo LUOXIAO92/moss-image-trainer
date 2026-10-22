@@ -1,0 +1,68 @@
+<!-- ======================= 工作区 ======================= -->
+<section class="tabpane hidden" id="tab-workspace" role="tabpanel" aria-labelledby="tab-link-workspace" tabindex="0">
+  <header class="page-head">
+    <div class="page-title">
+      <p class="eyebrow" data-i18n="workspace.eyebrow">存储管理</p>
+      <h1 data-i18n="nav.workspace">工作区</h1>
+      <p class="page-desc" data-i18n="workspace.desc">工作区就是 workspaces/ 下的一个文件夹；直接删掉文件夹也可以，下次使用会自动重建。</p>
+    </div>
+    <div class="page-actions">
+      <button class="btn btn-ghost btn-sm" id="btn-workspace-refresh" type="button"><svg aria-hidden="true"><use href="#i-refresh"></use></svg><span data-i18n="common.refresh">刷新</span></button>
+      <button class="btn btn-ghost btn-sm" id="btn-workspace-open" type="button"><svg aria-hidden="true"><use href="#i-copy"></use></svg><span data-i18n="workspace.openPath">打开路径</span></button>
+      <button class="btn btn-danger-ghost btn-sm" id="btn-workspace-delete-cache" type="button" data-i18n="workspace.clearCache">清空缓存（训练集 + 正则集）</button>
+      <button class="btn btn-danger-ghost btn-sm" id="btn-workspace-delete-baseline" type="button" data-i18n="workspace.deleteBaseline">删除基线</button>
+      <button class="btn btn-danger-ghost btn-sm" id="btn-workspace-delete" type="button" data-i18n="workspace.deleteWorkspace">删除整个工作区</button>
+    </div>
+  </header>
+
+  <div class="empty-state workspace-page-empty hidden" id="workspace-page-empty">
+    <svg aria-hidden="true"><use href="#i-workspace"></use></svg>
+    <h2 data-i18n="workspace.emptyTitle">还没有工作区</h2>
+    <p data-i18n="workspace.emptyText">在训练设置页新建工作区后再回来管理。</p>
+  </div>
+
+  <div class="workspace-layout" id="workspace-layout">
+    <aside class="panel workspace-list-panel">
+      <header class="panel-head">
+        <div>
+          <h2 data-i18n="workspace.listTitle">工作区列表</h2>
+          <p class="panel-desc" data-i18n="workspace.listDesc">名称、总大小和路径。</p>
+        </div>
+      </header>
+      <div class="workspace-list" id="workspace-list"></div>
+    </aside>
+
+    <div class="workspace-main">
+      <section class="panel workspace-usage-panel">
+        <header class="panel-head">
+          <div>
+            <h2><span data-i18n="workspace.usageTitle">容量明细</span> <span class="mono muted" id="workspace-usage-name"></span></h2>
+            <p class="panel-desc mono wrap" id="workspace-usage-path">--</p>
+          </div>
+          <span class="chip chip-muted" id="workspace-usage-total">--</span>
+        </header>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th scope="col" data-i18n="workspace.part">部分</th><th scope="col" class="num" data-i18n="common.size">大小</th><th scope="col" class="num" data-i18n="common.fileCount">文件数</th></tr></thead>
+            <tbody id="workspace-usage-body"><tr><td colspan="3" class="table-empty" data-i18n="workspace.selectPrompt">选择工作区后显示。</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel workspace-runs-panel">
+        <header class="panel-head">
+          <div>
+            <h2 data-i18n="workspace.runsTitle">运行产物</h2>
+            <p class="panel-desc" data-i18n="workspace.runsDesc">删除单个 run 会移除它的 checkpoint、样图和指标，不可恢复。</p>
+          </div>
+        </header>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th scope="col">Run</th><th scope="col" class="num" data-i18n="common.size">大小</th><th scope="col" class="num" data-i18n="common.fileCount">文件数</th><th scope="col" class="actions-col" data-i18n="common.actions">操作</th></tr></thead>
+            <tbody id="workspace-runs-body"><tr><td colspan="4" class="table-empty" data-i18n="workspace.selectPrompt">选择工作区后显示。</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </div>
+</section>

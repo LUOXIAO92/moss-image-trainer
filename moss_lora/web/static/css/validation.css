@@ -1,0 +1,33 @@
+/* moved from style.css: L2090-2121 */
+/* field-level validation + YAML gutter highlight */
+.field-error {
+  color: var(--color-danger);
+  font-size: var(--text-2xs);
+  line-height: 1.45;
+}
+.form-error-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.gutter-error { color: var(--color-danger); font-weight: 700; }
+#yaml-error { cursor: pointer; }
+body.modal-open { overflow: hidden; }
+.sample-card.is-broken { background: var(--color-surface-sunken); }
+.sample-card.is-broken img { display: none; }
+.sample-card.is-broken::after {
+  content: "样图加载失败";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--color-text-muted);
+  font-size: var(--text-2xs);
+}
+

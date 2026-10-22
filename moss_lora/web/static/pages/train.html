@@ -1,0 +1,386 @@
+<!-- ======================= 训练 ======================= -->
+<section class="tabpane hidden" id="tab-train" role="tabpanel" aria-labelledby="tab-link-train" tabindex="0">
+  <header class="page-head">
+    <div class="page-title">
+      <p class="eyebrow" data-i18n="train.eyebrow">主流程 · 无需编辑 YAML</p>
+      <h1 data-i18n="train.title">训练设置</h1>
+      <p class="page-desc" data-i18n="train.desc">填写表单并通过预检；在「中控台」开始训练。YAML 只作为预览和高级出口。</p>
+    </div>
+    <div class="page-actions">
+      <span class="chip" id="config-state" data-i18n="common.saved">已保存</span>
+    </div>
+  </header>
+
+  <div class="profile-bar" id="profile-bar">
+    <div class="profile-main">
+      <label class="field-inline" for="profile-select">
+        <span data-i18n="common.workspace">工作区</span>
+        <select id="profile-select" class="select-compact" aria-label="选择工作区" data-i18n-aria="common.selectWorkspace"></select>
+      </label>
+      <span class="mono muted wrap" id="profile-path">workspaces/…</span>
+      <span class="chip chip-muted" id="profile-dirty" data-i18n="common.saved">已保存</span>
+    </div>
+    <div class="profile-actions">
+      <button class="btn btn-ghost btn-sm" id="btn-profile-new" type="button" data-i18n="train.profile.new">新建工作区</button>
+      <button class="btn btn-ghost btn-sm" id="btn-profile-saveas" type="button" data-i18n="common.saveAs">另存为</button>
+    </div>
+    <p class="profile-note"><span data-i18n="train.profile.note">配置、缓存、runs、logs 都在</span> <span class="mono" id="profile-output-hint">workspaces/&lt;workspace&gt;/</span> <span data-i18n="train.profile.noteTail">内；run-id 由后端生成。</span></p>
+  </div>
+
+  <div class="config-bar" id="config-bar">
+    <div class="config-main">
+      <label class="field-inline" for="config-select">
+        <span data-i18n="train.config">配置</span>
+        <select id="config-select" class="select-compact" aria-label="选择配置" data-i18n-aria="train.selectConfig"></select>
+      </label>
+      <span class="chip chip-muted" id="config-summary">--</span>
+    </div>
+    <div class="config-actions">
+      <button class="btn btn-ghost btn-sm" id="btn-config-new" type="button" data-i18n="common.new">新建</button>
+      <button class="btn btn-sm" id="btn-config-save" type="button" data-i18n="common.save">保存</button>
+      <button class="btn btn-ghost btn-sm" id="btn-config-saveas" type="button" data-i18n="common.saveAs">另存为</button>
+      <button class="btn btn-ghost btn-sm" id="btn-config-rename" type="button" data-i18n="common.rename">重命名</button>
+      <button class="btn btn-danger-ghost btn-sm" id="btn-config-delete" type="button" data-i18n="common.delete">删除</button>
+    </div>
+  </div>
+
+  <section class="panel setup-panel hidden" id="setup-panel" aria-labelledby="setup-title">
+    <header class="panel-head">
+      <div>
+        <h2 id="setup-title" data-i18n="train.setup.title">首次使用检查</h2>
+        <p class="panel-desc" data-i18n="train.setup.desc">模型文件、数据集、缓存逐项检查；缺什么就从这里跳过去。</p>
+      </div>
+      <div class="setup-head-actions">
+        <span class="chip chip-muted" id="setup-summary" data-i18n="common.checking">检查中</span>
+        <button class="btn btn-ghost btn-xs" id="btn-setup-refresh" type="button" data-i18n="train.setup.refresh">重新检查</button>
+      </div>
+    </header>
+    <div class="setup-grid" id="setup-items"></div>
+  </section>
+
+  <div class="callout callout-info hidden" id="workspace-empty-notice" role="status">
+    <div class="callout-icon"><svg aria-hidden="true"><use href="#i-info"></use></svg></div>
+    <div class="callout-body">
+      <strong data-i18n="train.empty.title">还没有工作区，先新建</strong>
+      <p data-i18n="train.empty.desc">新建一个工作区即可开始。</p>
+      <div class="callout-actions"><button class="btn btn-primary btn-sm" id="btn-empty-new" type="button" data-i18n="train.profile.new">新建工作区</button></div>
+    </div>
+  </div>
+
+  <div id="train-preflight" class="callout callout-warn hidden" role="alert">
+    <div class="callout-icon"><svg aria-hidden="true"><use href="#i-alert"></use></svg></div>
+    <div class="callout-body">
+      <strong id="train-preflight-title" data-i18n="train.preflight.title">预检未通过</strong>
+      <p id="train-preflight-text"></p>
+      <div class="callout-actions" id="train-preflight-actions"></div>
+    </div>
+  </div>
+
+  <div class="train-grid">
+    <section class="panel config-panel">
+      <header class="panel-head panel-head-stack">
+        <div class="panel-title-row">
+          <h2 id="config-form-title" data-i18n="train.config">配置</h2>
+          <span class="chip chip-muted" id="config-dirty" data-i18n="common.unmodified">未修改</span>
+        </div>
+        <p class="panel-desc"><span data-i18n="train.configFile">配置文件</span> <span class="mono" id="config-path">configs/&lt;config&gt;.yaml</span></p>
+      </header>
+
+      <div id="form-errors" class="form-errors hidden" role="alert" tabindex="-1" aria-labelledby="form-errors-title">
+        <strong id="form-errors-title" data-i18n="train.formErrors">配置有需要修复的地方</strong>
+        <ul id="form-errors-list"></ul>
+      </div>
+
+      <form id="config-form" novalidate>
+        <fieldset class="form-section">
+          <legend data-i18n="train.model.legend">模型文件</legend>
+          <div class="form-grid">
+            <div class="field span2">
+              <label class="field-label" for="cfg-model-dit"><span data-i18n="train.model.dit">DiT 权重</span> <em data-i18n="common.required">必填</em></label>
+              <span class="input-row">
+                <input id="cfg-model-dit" type="text" spellcheck="false" autocomplete="off" aria-describedby="cfg-model-dit-help cfg-model-dit-status" placeholder="绝对路径" data-i18n-placeholder="common.absolutePath" data-i18n-placeholder="common.absolutePath" data-i18n-placeholder="common.absolutePath">
+                <button class="btn btn-ghost btn-sm" type="button" data-path-browse="cfg-model-dit" data-path-mode="file" data-i18n="common.browse">浏览</button>
+                <button class="btn btn-ghost btn-sm" id="btn-probe-model-dit" type="button" data-model-probe="dit" data-i18n="train.model.probe">探测</button>
+              </span>
+              <span class="field-help" id="cfg-model-dit-help" data-i18n="train.model.ditHelp">MOSS-Image DiT 的 .safetensors 文件。</span>
+              <span class="model-status" id="cfg-model-dit-status" aria-live="polite" data-i18n="train.model.notProbed">未探测</span>
+            </div>
+            <div class="field span2">
+              <label class="field-label" for="cfg-model-te"><span data-i18n="train.model.textEncoder">文本编码器</span> <em data-i18n="common.optional">可选</em></label>
+              <span class="input-row">
+                <input id="cfg-model-te" type="text" spellcheck="false" autocomplete="off" aria-describedby="cfg-model-te-help cfg-model-te-status" placeholder="HF 目录或单个 .safetensors" data-i18n-placeholder="train.model.tePlaceholder">
+                <button class="btn btn-ghost btn-sm" type="button" data-path-browse="cfg-model-te" data-path-mode="either" data-i18n="common.browse">浏览</button>
+                <button class="btn btn-ghost btn-sm" id="btn-probe-model-te" type="button" data-model-probe="text_encoder" data-i18n="train.model.probe">探测</button>
+              </span>
+              <span class="field-help" id="cfg-model-te-help" data-i18n="train.model.teHelp">本地 Qwen3.5-9B 目录，或单个 .safetensors（ComfyUI int8 包可直接使用）</span>
+              <span class="model-status" id="cfg-model-te-status" aria-live="polite" data-i18n="train.model.notProbed">未探测</span>
+            </div>
+            <div class="field span2">
+              <label class="field-label" for="cfg-model-te-config" data-i18n="train.model.teConfig">文本编码器配置目录</label>
+              <span class="input-row">
+                <input id="cfg-model-te-config" type="text" spellcheck="false" autocomplete="off" aria-describedby="cfg-model-te-config-help" placeholder="可选；留空使用内置配置" data-i18n-placeholder="train.model.teConfigPlaceholder">
+                <button class="btn btn-ghost btn-sm" type="button" data-path-browse="cfg-model-te-config" data-path-mode="dir" data-i18n="common.browse">浏览</button>
+              </span>
+              <span class="field-help" id="cfg-model-te-config-help" data-i18n="train.model.teConfigHelp">可选；留空则使用内置分词器与文本塔配置（无需外部 HF 目录）</span>
+            </div>
+            <div class="field span2">
+              <label class="field-label" for="cfg-model-vae"><span data-i18n="train.model.vae">VAE 权重</span> <em data-i18n="common.required">必填</em></label>
+              <span class="input-row">
+                <input id="cfg-model-vae" type="text" spellcheck="false" autocomplete="off" aria-describedby="cfg-model-vae-help cfg-model-vae-status" placeholder="绝对路径" data-i18n-placeholder="common.absolutePath">
+                <button class="btn btn-ghost btn-sm" type="button" data-path-browse="cfg-model-vae" data-path-mode="file" data-i18n="common.browse">浏览</button>
+                <button class="btn btn-ghost btn-sm" id="btn-probe-model-vae" type="button" data-model-probe="vae" data-i18n="train.model.probe">探测</button>
+              </span>
+              <span class="field-help" id="cfg-model-vae-help" data-i18n="train.model.vaeHelp">FLUX.2 VAE 的 .safetensors 文件。</span>
+              <span class="model-status" id="cfg-model-vae-status" aria-live="polite" data-i18n="train.model.notProbed">未探测</span>
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset class="form-section">
+          <legend data-i18n="train.params.legend">训练参数</legend>
+          <div class="form-grid form-grid-3">
+            <label class="field" for="cfg-steps">
+              <span class="field-label" data-i18n="train.params.steps">总步数</span>
+              <input id="cfg-steps" type="number" min="1" step="1" inputmode="numeric">
+            </label>
+            <label class="field" for="cfg-lr">
+              <span class="field-label" data-i18n="train.params.lr">学习率</span>
+              <input id="cfg-lr" type="text" inputmode="decimal" spellcheck="false" autocomplete="off" placeholder="5e-5" aria-describedby="cfg-lr-help">
+              <span class="field-help" id="cfg-lr-help" data-i18n="train.params.lrHelp">支持 5e-5 / 1e-2 / 0.00005；按输入原样保留，不做数值重排。</span>
+            </label>
+            <label class="field" for="cfg-batch">
+              <span class="field-label" data-i18n="train.params.batch">批大小</span>
+              <input id="cfg-batch" type="number" min="1" step="1" inputmode="numeric">
+            </label>
+            <label class="field" for="cfg-grad-accum">
+              <span class="field-label" data-i18n="train.params.accum">梯度累积</span>
+              <input id="cfg-grad-accum" type="number" min="1" step="1" inputmode="numeric">
+            </label>
+            <label class="field" for="cfg-rank">
+              <span class="field-label" data-i18n="train.params.rank">秩 rank</span>
+              <input id="cfg-rank" type="number" min="1" step="1" inputmode="numeric">
+            </label>
+            <label class="field" for="cfg-alpha">
+              <span class="field-label" data-i18n="train.params.alpha">缩放 alpha</span>
+              <input id="cfg-alpha" type="number" min="1" step="1" inputmode="numeric">
+            </label>
+            <label class="field" for="cfg-seed-dit">
+              <span class="field-label" data-i18n="train.params.seed">训练种子</span>
+              <input id="cfg-seed-dit" type="number" min="0" step="1" inputmode="numeric" aria-describedby="cfg-seed-dit-help">
+              <span class="field-help" id="cfg-seed-dit-help" data-i18n="train.params.seedHelp">固定种子可让同配置的训练结果可复现</span>
+            </label>
+            <label class="field" for="cfg-optimizer">
+              <span class="field-label" data-i18n="train.params.optimizer">优化器</span>
+              <select id="cfg-optimizer">
+                <option value="adamw">adamw</option>
+                <option value="adamw8bit">adamw8bit</option>
+                <option value="adafactor">adafactor</option>
+              </select>
+            </label>
+            <label class="field" for="cfg-lr-scheduler">
+              <span class="field-label" data-i18n="train.params.scheduler">学习率调度</span>
+              <select id="cfg-lr-scheduler" aria-describedby="cfg-lr-scheduler-help">
+                <option value="constant" data-i18n="train.params.schedulerConstant">constant（恒定）</option>
+                <option value="cosine" data-i18n="train.params.schedulerCosine">cosine（余弦衰减）</option>
+              </select>
+              <span class="field-help" id="cfg-lr-scheduler-help" data-i18n="train.params.schedulerHelp">warmup 后按所选策略；当前生效值见下方。</span>
+            </label>
+            <label class="field" for="cfg-warmup">
+              <span class="field-label">warmup</span>
+              <input id="cfg-warmup" type="text" inputmode="decimal" spellcheck="false" autocomplete="off" placeholder="50 或 0.05" data-i18n-placeholder="train.params.warmupPlaceholder" aria-describedby="cfg-warmup-help">
+              <span class="field-help" id="cfg-warmup-help" data-i18n="train.params.warmupHelp">整数 = 步数；0&lt;值&lt;1 = 占总步数比例（如 0.05 → 2000 步的 100 步）。</span>
+              <span class="field-help warmup-conversion mono" id="warmup-conversion" data-i18n="train.params.warmupExample">0.05 → 100 步 / 2000 步</span>
+            </label>
+            <label class="field" for="cfg-vram-preset">
+              <span class="field-label" data-i18n="train.params.vramProfile">显存档位</span>
+              <select id="cfg-vram-preset">
+                <option value="auto" data-i18n="common.auto">自动</option>
+                <option value="32">32 GB</option>
+                <option value="24">24 GB</option>
+                <option value="16">16 GB</option>
+                <option value="12">12 GB</option>
+                <option value="8">8 GB</option>
+                <option value="6">6 GB</option>
+              </select>
+            </label>
+            <label class="field" for="cfg-grad-ckpt">
+              <span class="field-label" data-i18n="train.params.checkpointing">梯度检查点</span>
+              <select id="cfg-grad-ckpt" aria-describedby="cfg-grad-ckpt-help">
+                <option value="auto" title="随显存档位自动决定" data-i18n-title="train.params.checkpointAutoTitle" data-i18n="common.auto">自动</option>
+                <option value="true" title="强制开启梯度检查点" data-i18n-title="train.params.checkpointOnTitle" data-i18n="common.on">开启</option>
+                <option value="false" title="关闭梯度检查点" data-i18n-title="train.params.checkpointOffTitle" data-i18n="common.off">关闭</option>
+              </select>
+              <span class="field-help" id="cfg-grad-ckpt-help" data-i18n="train.params.checkpointHelp">自动：随显存档位决定</span>
+            </label>
+            <label class="field" for="cfg-quantize-dit">
+              <span class="field-label" data-i18n="train.params.quantize">DiT 量化</span>
+              <select id="cfg-quantize-dit" aria-describedby="cfg-quantize-dit-help">
+                <option value="none" data-i18n="train.params.quantizeNone">不量化（bf16）</option>
+                <option value="ffn" data-i18n="train.params.quantizeFfn">只量化 FFN（省显存，速度略降）</option>
+                <option value="all" data-i18n="train.params.quantizeAll">全部量化（qkvo + FFN，最省显存）</option>
+              </select>
+              <span class="field-help" id="cfg-quantize-dit-help" data-i18n="train.params.quantizeHelp">量化只影响训练显存/速度，不改变导出的 LoRA 格式。</span>
+            </label>
+          </div>
+          <p class="field-help lr-effective" id="lr-effective" data-i18n="train.params.effectiveDefault">调度：constant · warmup 50 步 · 峰值学习率 5.00e-5</p>
+        </fieldset>
+
+        <details class="advanced-layers" id="advanced-layers">
+          <summary><span data-i18n="train.advanced.title">高级配置：Attention / 数据集 / LoRA</span><span class="mono muted" id="layer-summary" data-i18n="train.advanced.layerSummaryDefault">全部 42 层 · 全部模块</span></summary>
+          <div class="advanced-body">
+            <div class="advanced-group" data-advanced-group="attention">
+              <div class="form-grid">
+                <label class="field" for="cfg-attention">
+                  <span class="field-label" data-i18n="train.advanced.attention">Attention backend</span>
+                  <select id="cfg-attention" aria-describedby="cfg-attention-help">
+                    <option value="auto" data-i18n="train.advanced.attentionAuto">auto（默认）</option>
+                    <option value="flash">flash（FlashAttention-2）</option>
+                    <option value="sdpa">sdpa</option>
+                  </select>
+                  <span class="field-help" id="cfg-attention-help" data-i18n="train.advanced.attentionHelp">auto：装了 FlashAttention-2 就用 flash，没有就回退 SDPA。</span>
+                </label>
+                <label class="field" for="cfg-bin-tokens">
+                  <span class="field-label" data-i18n="train.advanced.binSize">bin size（token）</span>
+                  <input id="cfg-bin-tokens" type="number" min="0" step="1" inputmode="numeric" placeholder="留空 = 自动" data-i18n-placeholder="train.advanced.binPlaceholder" aria-describedby="cfg-bin-tokens-help">
+                  <span class="field-help" id="cfg-bin-tokens-help" data-i18n="train.advanced.binHelp">每步的 token 预算。留空 = 自动（约 3 张满尺寸图，1M 面积上限时为 13312）。</span>
+                </label>
+              </div>
+            </div>
+            <div class="layer-rows" id="layer-rows"></div>
+            <p class="field-help layer-help"><span data-i18n="train.advanced.layersHelpStart">每行填写一个层区间（如</span> <span class="mono">0-7</span>、<span class="mono">3</span>、<span class="mono">0-3,8-11</span><span data-i18n="train.advanced.layersHelpMid">），行尾勾选该行要打的模块。最终展开为</span> <span class="mono">lora.layers</span> + <span class="mono">lora.targets</span><span data-i18n="train.advanced.layersHelpEnd">。</span></p>
+            <button class="btn btn-ghost btn-sm layer-add" id="btn-add-layer-row" type="button" data-i18n="train.advanced.addLayer">+ 添加层区间</button>
+            <p class="advanced-warning hidden" id="layer-warning" role="alert"></p>
+          </div>
+        </details>
+
+        <fieldset class="form-section">
+          <legend data-i18n="train.export.legend">导出格式</legend>
+          <div class="module-grid" id="export-formats">
+            <label><input type="checkbox" id="cfg-export-kohya" checked> <span data-i18n="train.export.kohya">社区常用格式（默认；ComfyUI / Stable Diffusion WebUI / Civitai 通用）</span></label>
+            <label><input type="checkbox" id="cfg-export-diffusers"> <span data-i18n="train.export.diffusers">diffusers（仅 Python / diffusers 使用）</span></label>
+          </div>
+          <p class="field-help" data-i18n="train.export.help">训练结束自动导出选中的格式；社区常用格式是 ComfyUI 通用 LoRA 映射真正认的格式。</p>
+        </fieldset>
+
+        <fieldset class="form-section">
+          <legend data-i18n="train.intervals.legend">保存与采样间隔</legend>
+          <div class="form-grid form-grid-3">
+            <label class="field" for="cfg-save-every">
+              <span class="field-label" data-i18n="train.intervals.save">保存间隔</span>
+              <input id="cfg-save-every" type="number" min="0" step="1" inputmode="numeric" aria-describedby="cfg-save-help">
+              <span class="field-help" id="cfg-save-help" data-i18n="train.intervals.saveHelp">0 = 只在结束时保存</span>
+            </label>
+            <label class="field" for="cfg-sample-every">
+              <span class="field-label" data-i18n="train.intervals.sample">采样间隔</span>
+              <input id="cfg-sample-every" type="number" min="0" step="1" inputmode="numeric" aria-describedby="cfg-sample-help">
+              <span class="field-help" id="cfg-sample-help" data-i18n="train.intervals.sampleHelp">0 = 不生成样图</span>
+            </label>
+            <label class="field" for="cfg-eval-every">
+              <span class="field-label" data-i18n="train.intervals.eval">验证间隔</span>
+              <input id="cfg-eval-every" type="number" min="0" step="1" inputmode="numeric" aria-describedby="cfg-eval-help">
+              <span class="field-help" id="cfg-eval-help" data-i18n="train.intervals.evalHelp">0 = 不计算验证损失</span>
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset class="form-section">
+          <legend data-i18n="train.state.legend">训练状态</legend>
+          <div class="save-state-row" id="save-state-row">
+            <label class="checkbox-field" for="cfg-save-state">
+              <input id="cfg-save-state" type="checkbox">
+              <span class="field-label" data-i18n="train.state.save">保存训练状态</span>
+            </label>
+            <select id="cfg-save-state-strategy" class="save-state-strategy" disabled title="关闭后 checkpoint 只能当权重用，不能精确续训" data-i18n-title="train.state.disabledTitle">
+              <option value="last" data-i18n="train.state.last">保存最后（滚动一份）</option>
+              <option value="all" data-i18n="train.state.all">全量保存（每步一份）</option>
+            </select>
+            <span class="field-help" data-i18n="train.state.help">关闭后 checkpoint 只能当权重用，不能精确续训。</span>
+          </div>
+        </fieldset>
+
+        <fieldset class="form-section">
+          <legend data-i18n="train.preview.legend">采样</legend>
+          <div class="form-grid">
+            <label class="field span2" for="cfg-prompts">
+              <span class="field-label"><span data-i18n="train.preview.prompts">提示词</span> <em data-i18n="train.preview.eachLine">每行一条</em></span>
+              <textarea id="cfg-prompts" rows="5" spellcheck="false" aria-describedby="cfg-prompts-help"></textarea>
+              <span class="field-help" id="cfg-prompts-help" data-i18n="train.preview.promptsHelp">编码文本时会把提示词写入 preview.safetensors；样图预览依赖它，训练只依赖 latent 索引。</span>
+            </label>
+            <label class="field" for="cfg-preview-steps">
+              <span class="field-label" data-i18n="train.preview.steps">采样步数</span>
+              <input id="cfg-preview-steps" type="number" min="1" step="1" inputmode="numeric" placeholder="50" aria-describedby="cfg-preview-steps-help">
+              <span class="field-help" id="cfg-preview-steps-help" data-i18n="train.preview.stepsHelp">留空使用 50；官方推荐 ≥ 50。</span>
+            </label>
+            <label class="field" for="cfg-preview-guidance">
+              <span class="field-label" data-i18n="train.preview.guidance">引导强度 guidance</span>
+              <input id="cfg-preview-guidance" type="number" min="0" step="0.1" inputmode="decimal" placeholder="3.0" aria-describedby="cfg-preview-guidance-help">
+              <span class="field-help" id="cfg-preview-guidance-help" data-i18n="train.preview.guidanceHelp">留空使用 3.0；官方推荐 3.0–6.0。</span>
+            </label>
+            <label class="field" for="cfg-preview-shift">
+              <span class="field-label">Shift</span>
+              <input id="cfg-preview-shift" type="number" min="0" step="0.1" inputmode="decimal" placeholder="5.0" aria-describedby="cfg-preview-shift-help">
+              <span class="field-help" id="cfg-preview-shift-help" data-i18n="train.preview.shiftHelp">留空使用 5.0。</span>
+            </label>
+            <label class="field" for="cfg-preview-seed">
+              <span class="field-label" data-i18n="train.preview.seed">采样种子</span>
+              <input id="cfg-preview-seed" type="number" step="1" inputmode="numeric" placeholder="42" aria-describedby="cfg-preview-seed-help">
+              <span class="field-help" id="cfg-preview-seed-help" data-i18n="train.preview.seedHelp">留空使用 42；-1 = 每次任务随机，不影响训练种子。</span>
+            </label>
+            <label class="field" for="cfg-preview-width">
+              <span class="field-label" data-i18n="train.preview.width">样图宽度</span>
+              <input id="cfg-preview-width" type="number" min="64" step="16" inputmode="numeric" placeholder="1024" aria-describedby="cfg-preview-size-help">
+              <span class="field-help" id="cfg-preview-size-help" data-i18n="train.preview.sizeHelp">留空使用 1024；宽高必须是 16 的倍数。</span>
+            </label>
+            <label class="field" for="cfg-preview-height">
+              <span class="field-label" data-i18n="train.preview.height">样图高度</span>
+              <input id="cfg-preview-height" type="number" min="64" step="16" inputmode="numeric" placeholder="1024" aria-describedby="cfg-preview-size-help">
+            </label>
+            <label class="field span2" for="cfg-preview-uncond">
+              <span class="field-label">Uncond skip layers</span>
+              <input id="cfg-preview-uncond" type="text" spellcheck="false" autocomplete="off" placeholder="22" aria-describedby="cfg-preview-uncond-help">
+              <span class="field-help" id="cfg-preview-uncond-help" data-i18n="train.preview.uncondHelp">留空使用 [22]；官方推荐 22 / 24 / 26，多个层用逗号分隔。</span>
+            </label>
+            <label class="field span2" for="cfg-preview-negative">
+              <span class="field-label" data-i18n="train.preview.negative">负面提示词</span>
+              <textarea id="cfg-preview-negative" rows="3" spellcheck="false" aria-describedby="cfg-preview-negative-help"></textarea>
+              <span class="field-help" id="cfg-preview-negative-help" data-i18n="train.preview.negativeHelp">全局负面词，写入 preview.safetensors；当前版本不做逐 prompt 覆盖。</span>
+            </label>
+          </div>
+        </fieldset>
+      </form>
+
+      <details class="yaml-details" id="yaml-details">
+        <summary>
+          <span class="yaml-summary-title" data-i18n="train.yaml.title">YAML 只读预览</span>
+          <span class="chip chip-muted" id="yaml-mode-chip" data-i18n="train.yaml.readonly">只读预览</span>
+          <span class="yaml-summary-meta mono" id="yaml-line-count" data-i18n-skip data-i18n="dash.log.lines">0 行</span>
+        </summary>
+        <div class="yaml-body">
+          <div class="yaml-toolbar">
+            <span class="toolbar-spacer"></span>
+            <button class="btn btn-ghost btn-xs" id="btn-yaml-copy" type="button">
+              <svg aria-hidden="true"><use href="#i-copy"></use></svg><span data-i18n="common.copy">复制</span>
+            </button>
+            <button class="btn btn-ghost btn-xs" id="btn-yaml-download" type="button">
+              <svg aria-hidden="true"><use href="#i-download"></use></svg><span data-i18n="train.yaml.export">导出 YAML</span>
+            </button>
+          </div>
+          <p class="yaml-note" id="yaml-note" data-i18n="train.yaml.note">只读预览。表单修改会立即反映到这里；需要修改请用表单，或导出 YAML。</p>
+          <div class="yaml-editor" id="yaml-editor">
+            <pre class="yaml-gutter" id="yaml-gutter" aria-hidden="true">1</pre>
+            <textarea id="yaml" class="yaml" spellcheck="false" wrap="off" readonly aria-label="YAML 只读预览" data-i18n-aria="train.yaml.title"></textarea>
+          </div>
+          <div class="inline-error hidden" id="yaml-error" role="alert"></div>
+        </div>
+      </details>
+
+      <div class="config-footer">
+        <p class="config-footer-note" data-i18n="train.preflight.desc">预检会检查 YAML、模型路径、缓存就绪与输出目录；通过后到「中控台」开始训练。</p>
+        <div class="config-footer-actions">
+          <button class="btn" id="btn-preflight" type="button" aria-label="运行启动预检" data-i18n-aria="train.preflight.runAria"><span data-i18n="train.preflight.run">运行预检</span></button>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</section>

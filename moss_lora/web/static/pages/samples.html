@@ -1,0 +1,28 @@
+<!-- ======================= 样图 ======================= -->
+<section class="tabpane hidden" id="tab-samples" role="tabpanel" aria-labelledby="tab-link-samples" tabindex="0">
+  <header class="page-head">
+    <div class="page-title">
+      <p class="eyebrow" data-i18n="samples.eyebrow">产出</p>
+      <h1 data-i18n="nav.samples">样图</h1>
+      <p class="page-desc" data-i18n="samples.desc">先按运行记录分组，再按 step 分组；点击查看原图。</p>
+    </div>
+    <div class="page-actions">
+      <label class="field-inline" for="samples-filter">
+        <span data-i18n="samples.run">运行</span>
+        <select id="samples-filter" class="select-compact"></select>
+      </label>
+      <span class="chip chip-muted" id="samples-count">--</span>
+      <button class="btn btn-ghost btn-sm" id="btn-refresh-samples" type="button">
+        <svg aria-hidden="true"><use href="#i-refresh"></use></svg><span data-i18n="common.refresh">刷新</span>
+      </button>
+    </div>
+  </header>
+
+  <div id="samples-groups" class="sample-groups"></div>
+  <div class="empty-state" id="samples-empty">
+    <svg aria-hidden="true"><use href="#i-samples"></use></svg>
+    <strong data-i18n="samples.emptyTitle">还没有样图</strong>
+    <p data-i18n="samples.emptyText">启动训练后，每“采样间隔”步会生成一批样图；也可以在训练设置页调整采样参数。</p>
+    <a class="btn btn-primary btn-sm" href="#train" data-i18n="dash.chart.goTrain">去训练设置</a>
+  </div>
+</section>
