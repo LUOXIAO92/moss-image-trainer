@@ -187,12 +187,21 @@ class LatentCodec:
         return ((latents - mean) / std).to(self.dtype)
 
     @torch.no_grad()
-    def decode(self, latents: torch.Tensor) -> torch.Tensor:
+    def decode(self, latents: torch.Tensor, chunk: int = 1) -> torch.Tensor:
         mean = self.mean.to(latents.device, latents.dtype)
         std = self.std.to(latents.device, latents.dtype)
         device = next(self.vae.parameters()).device
         z = unpack_latents(latents * std + mean)
-        return self.vae.decode(z.to(device=device, dtype=self.vae.dtype)).sample
+        # The fp32 decoder holds several full resolution feature maps per sample,
+        # so a three image preview costs ~9 GiB more than one image does. Decode
+        # one sample at a time: same output, flat peak.
+        if chunk <= 0 or z.shape[0] <= chunk:
+            return self.vae.decode(z.to(device=device, dtype=self.vae.dtype)).sample
+        parts = [
+            self.vae.decode(z[i:i + chunk].to(device=device, dtype=self.vae.dtype)).sample
+            for i in range(0, z.shape[0], chunk)
+        ]
+        return torch.cat(parts, dim=0)
 
 
 # ---------------------------------------------------------------------------

@@ -189,7 +189,8 @@ class Config:
     vram: VramConfig = field(default_factory=VramConfig)
     export: ExportConfig = field(default_factory=ExportConfig)
     preview: PreviewConfig = field(default_factory=PreviewConfig)
-    output_dir: str = "output"
+    # 与文档、WebUI 生成的新工作区以及 runs/ 现有产物保持一致
+    output_dir: str = "runs"
 
     # -- conversion ------------------------------------------------------
     def to_dict(self) -> dict:
