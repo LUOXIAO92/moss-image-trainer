@@ -9,14 +9,25 @@ import sys
 from .config import Config, apply_preset
 
 
+def _cli_path(value: str) -> str:
+    """Resolve a command line path against the current directory.
+
+    YAML values resolve against the workspace; values typed on the command
+    line mean what they mean in a shell. Without this, ``--cache-dir
+    workspaces/x/train_cache`` resolves inside the workspace and looks for
+    ``<ws>/workspaces/x/train_cache``.
+    """
+    return os.path.abspath(os.path.expanduser(os.path.expandvars(value)))
+
+
 def _load(args) -> Config:
     config = Config.load(args.config) if getattr(args, "config", None) else Config()
     if getattr(args, "dataset", None):
-        config.dataset.path = args.dataset
+        config.dataset.path = _cli_path(args.dataset)
     if getattr(args, "cache_dir", None):
-        config.cache.dir = args.cache_dir
+        config.cache.dir = _cli_path(args.cache_dir)
     if getattr(args, "output_dir", None):
-        config.output_dir = args.output_dir
+        config.output_dir = _cli_path(args.output_dir)
     if getattr(args, "preset", None):
         config.vram.preset = args.preset
     apply_preset(config)
@@ -448,8 +459,8 @@ def build_parser():
     common = dict()
     p_cache = sub.add_parser("cache", help="build the latent + text embedding cache")
     p_cache.add_argument("--config")
-    p_cache.add_argument("--dataset")
-    p_cache.add_argument("--cache-dir", dest="cache_dir")
+    p_cache.add_argument("--dataset", help="dataset directory (relative to the current directory)")
+    p_cache.add_argument("--cache-dir", dest="cache_dir", help="cache directory (relative to the current directory)")
     p_cache.add_argument("--preset")
     p_cache.add_argument("--latents-only", action="store_true")
     p_cache.add_argument("--text-only", action="store_true")
@@ -460,7 +471,7 @@ def build_parser():
 
     p_info = sub.add_parser("info", help="describe a dataset")
     p_info.add_argument("--config")
-    p_info.add_argument("--dataset")
+    p_info.add_argument("--dataset", help="dataset directory (relative to the current directory)")
     p_info.add_argument("--preset")
     p_info.set_defaults(func=cmd_info)
 
@@ -551,9 +562,9 @@ def build_parser():
 
     p_train = sub.add_parser("train", help="train a LoRA on a built cache")
     p_train.add_argument("--config")
-    p_train.add_argument("--dataset")
-    p_train.add_argument("--cache-dir", dest="cache_dir")
-    p_train.add_argument("--output-dir", dest="output_dir")
+    p_train.add_argument("--dataset", help="dataset directory (relative to the current directory)")
+    p_train.add_argument("--cache-dir", dest="cache_dir", help="cache directory (relative to the current directory)")
+    p_train.add_argument("--output-dir", dest="output_dir", help="run output directory (relative to the current directory)")
     p_train.add_argument("--preset")
     p_train.add_argument("--steps", type=int)
     p_train.add_argument("--name", help="output name (avoid clobbering a real run with a smoke test)")
