@@ -82,13 +82,12 @@ export function renderConfigList() {
 }
 
 function dashboardConfigEntries() {
-  return (state.configs || [])
-    .filter((entry) => {
-      const name = String(entry?.name || '');
-      return name && name !== 'default' && !name.endsWith('-render');
-    })
-    .sort((a, b) => (Number(b.mtime) || 0) - (Number(a.mtime) || 0)
-      || String(a.name || '').localeCompare(String(b.name || '')));
+  // Same entries, same order as the train tab: one workspace must not present
+  // two different config lists depending on which page you are looking at.
+  return (state.configs || []).filter((entry) => {
+    const name = String(entry?.name || '');
+    return name && name !== 'default';
+  });
 }
 
 function workspaceDefaultConfigReady() {
