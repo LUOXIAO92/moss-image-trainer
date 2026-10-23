@@ -325,8 +325,9 @@ class CacheBuilder:
                     done += len(batch)
                     rate = done / max(time.time() - start, 1e-6)
                     beat.update(done, rate)
-                    if done % 40 < batch_size or done == len(pending):
-                        self.log(f"latents {done}/{len(pending)}  {rate:.2f} img/s")
+                    # 每批报一次，和 encode-text 的节奏一致；按 40 张节流会让
+                    # 日志看起来像卡住，也让两个阶段的时间线对不上
+                    self.log(f"latents {done}/{len(pending)}  {rate:.2f} img/s")
         finally:
             executor.shutdown(wait=False)
         del codec
