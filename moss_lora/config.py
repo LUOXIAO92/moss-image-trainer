@@ -204,16 +204,11 @@ class Config:
 
         with open(path) as f:
             config = cls.from_dict(yaml.safe_load(f) or {})
-        # 工作区里的配置（workspace.yaml 和 configs/*.yaml）把 cache/output 存成
-        # 相对路径，整个工作区目录可以随便搬；其它位置的配置文件按进程 cwd 解析。
+        # 运行目录里的配置把 cache/output 存成相对路径，整个工作区目录可以随便搬；
+        # 其它位置的配置按进程 cwd 解析。
         absolute = os.path.abspath(path)
         parent = os.path.dirname(absolute)
-        if os.path.basename(absolute) == "workspace.yaml":
-            config._base_dir = parent
-        elif os.path.basename(parent) == "configs":
-            # <workspaces>/<name>/configs/<config>.yaml -> resolve against <name>
-            config._base_dir = os.path.dirname(parent)
-        elif os.path.basename(os.path.dirname(parent)) == "runs":
+        if os.path.basename(os.path.dirname(parent)) == "runs":
             # <workspaces>/<name>/runs/<run>/config.yaml -> resolve against <name>
             config._base_dir = os.path.dirname(os.path.dirname(parent))
         elif os.path.basename(parent) == "logs":
@@ -230,9 +225,9 @@ class Config:
     def resolve_paths(self) -> "Config":
         """Expand ``${MODELS}``/``~`` once, in place.
 
-        A config loaded from a workspace resolves relative cache/output/dataset
-        paths against the workspace directory; one loaded from anywhere else
-        keeps the process cwd behaviour.
+        A config loaded from a run directory resolves relative cache/output/dataset
+        paths against the workspace; one loaded from anywhere else keeps the
+        process cwd behaviour.
         """
         base = str(getattr(self, "_base_dir", "") or "")
 

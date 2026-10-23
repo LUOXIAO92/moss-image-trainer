@@ -41,27 +41,13 @@ the model loaded — and a heartbeat can exist without a job record, because
 
 ## Which config a run used
 
-Two questions look alike and must not share an answer:
+A run has one config: `workspaces/<workspace>/runs/<run>/config.yaml`. It is the
+complete config, not an overlay, and training, caching and export all start from
+it. While the run trains, writes to it are refused; once the run has ended they
+are allowed, and whoever edits it owns the change.
 
-| question | source |
-|---|---|
-| what will the next run use | `workspaces/<workspace>/configs/<config>.yaml`, the file you edit |
-| what did this run use | `workspaces/<workspace>/runs/<run>/config.yaml` |
-
-The trainer writes the second one in its constructor, before it loads a weight,
-and nothing else writes it. It holds the config as it actually ran: presets
-applied, command-line overrides applied, paths resolved, preview seeds fixed.
-
-Readers take it and only it. A run without the file has no config, and the
-panel says so. Earlier versions guessed from the run's name — a same-named file
-in `logs/` or `configs/`, then the workspace defaults — which labelled a
-command-line run with whichever file happened to share its name. A run named
-`foo` trained from `bar.yaml` came out as `foo.yaml`; a run named after nothing
-inherited `workspace.yaml`.
-
-The upshot is that how the config file was written stops mattering. Saved in
-the WebUI or edited by hand, the file is the input; the run directory keeps the
-record of what was used.
+A new run starts from the defaults, or from a copy of another run's config.
+Nothing else seeds it.
 
 ## Cache builds
 

@@ -43,21 +43,23 @@ The repository isolates dependencies in `.venv` at the project root. Both the CL
 
 ## Quick Start
 
-In the WebUI, run `./run.sh --port 7869` and open `http://127.0.0.1:7869`. Create a workspace in the **Workspace** tab, set `<MODELS_DIR>` and `<DATASET_DIR>` in **Training settings**, then run latent caching, text embedding caching, and training in order.
+In the WebUI, run `./run.sh --port 7869` and open `http://127.0.0.1:7869`. Create a workspace in the **Workspace** tab, create a run in **Training settings**, fill in `<MODELS_DIR>` and `<DATASET_DIR>`, then run latent caching, text embedding caching, and training in order.
 
-From the CLI, run the three stages against `workspaces/<WORKSPACE>/workspace.yaml`:
+From the CLI, run the three stages against one run's config:
 
 ```bash
 WS=workspaces/<WORKSPACE>
+RUN=<run>
+CONFIG="$WS/runs/$RUN/config.yaml"
 
 # 1. Encode image latents to disk (writes to $WS/train_cache)
-.venv/bin/python -m moss_lora.cli cache --config "$WS/workspace.yaml"
+.venv/bin/python -m moss_lora.cli cache --config "$CONFIG"
 
 # 2. Encode text embeddings to disk (local Qwen3.5-9B)
-.venv/bin/python -m moss_lora.cli encode-text --config "$WS/workspace.yaml"
+.venv/bin/python -m moss_lora.cli encode-text --config "$CONFIG"
 
 # 3. Run LoRA training (writes to $WS/runs/<name>)
-.venv/bin/python -m moss_lora.cli train --config "$WS/workspace.yaml"
+.venv/bin/python -m moss_lora.cli train --config "$CONFIG"
 ```
 
 The dataset scanner recursively finds `.jpg`, `.jpeg`, `.png`, `.webp`, and `.bmp` images and pairs each image with its sidecar JSON, matching `.txt`/`.caption` file, or `metadata.jsonl` entry. Subdirectories prefixed like `3_concept` repeat their images 3 times per epoch.
@@ -66,19 +68,19 @@ Common helper subcommands:
 
 ```bash
 # Inspect dataset statistics and caption coverage
-.venv/bin/python -m moss_lora.cli info --config "$WS/workspace.yaml"
+.venv/bin/python -m moss_lora.cli info --config "$CONFIG"
 
 # Plan dtype, quantization, and block swap for a VRAM budget (GB) and write back
-.venv/bin/python -m moss_lora.cli plan --vram 12 --config "$WS/workspace.yaml" --write "$WS/workspace.yaml"
+.venv/bin/python -m moss_lora.cli plan --vram 12 --config "$CONFIG" --write "$CONFIG"
 
 # Generate LoRA-off baseline images or render previews for a specific step checkpoint
-.venv/bin/python -m moss_lora.cli baseline --config "$WS/workspace.yaml"
-.venv/bin/python -m moss_lora.cli preview --config "$WS/workspace.yaml" --step 500
+.venv/bin/python -m moss_lora.cli baseline --config "$CONFIG"
+.venv/bin/python -m moss_lora.cli preview --config "$CONFIG" --step 500
 
 # Encode custom prompts and sample with a specific checkpoint
-.venv/bin/python -m moss_lora.cli encode-prompt --config "$WS/workspace.yaml" \
+.venv/bin/python -m moss_lora.cli encode-prompt --config "$CONFIG" \
     --out "$WS/custom_prompts.safetensors" --prompt "a portrait in soft daylight"
-.venv/bin/python -m moss_lora.cli sample --config "$WS/workspace.yaml" \
+.venv/bin/python -m moss_lora.cli sample --config "$CONFIG" \
     --checkpoint "$WS/runs/<name>/checkpoints/<ckpt>.safetensors" \
     --embeds "$WS/custom_prompts.safetensors" --out "$WS/samples"
 
@@ -86,7 +88,7 @@ Common helper subcommands:
 .venv/bin/python -m moss_lora.cli queue --workspace "$WS"
 
 # Start a run that survives an SSH disconnect, then read it the way the dashboard does
-.venv/bin/python -m moss_lora.cli train --config "$WS/workspace.yaml" --detach
+.venv/bin/python -m moss_lora.cli train --config "$CONFIG" --detach
 .venv/bin/python -m moss_lora.cli status
 .venv/bin/python -m moss_lora.cli status --workspace my-lora --live --json
 ```
@@ -95,11 +97,11 @@ Common helper subcommands:
 
 ## Configuration
 
-Configuration splits into machine-level `settings.yaml` and workspace-level `workspace.yaml`.
+Configuration splits into machine-level `settings.yaml` and per-run configs.
 
 `settings.yaml` holds local machine settings (`.gitignore` excludes it, and the first launch copies it from [settings.example.yaml](<settings.example.yaml>)). It configures the workspaces root `paths.workspaces`, CUDA allocator settings `runtime` (`allocator: expandable|async|off` and `gc_threshold`), UI language `ui.language`, and the caption service `caption` (`base_url`, environment variable name `api_key`, model name, concurrency, and prompt templates). Plaintext API keys entered in the Settings tab stay in process memory and never touch disk.
 
-`workspace.yaml` lives at `workspaces/<WORKSPACE>/workspace.yaml` and defines models, datasets, caches, LoRA rank and alpha, training hyperparameters, VRAM preset, and preview prompts. Relative paths (such as `cache.dir` and `output_dir`) resolve against the workspace directory, so moving a workspace directory keeps its paths valid:
+Each run carries a complete config at `workspaces/<WORKSPACE>/runs/<RUN>/config.yaml`; it defines models, datasets, caches, LoRA rank and alpha, training hyperparameters, VRAM preset, and preview prompts. Relative paths (such as `cache.dir` and `output_dir`) resolve against the workspace directory, so moving a workspace directory keeps its paths valid. The file is frozen while its run trains; editing it afterwards is allowed. Create a run in the WebUI to get one, or copy an existing run with the run dialog:
 
 ```yaml
 name: my-lora
@@ -200,14 +202,14 @@ Drop the `.safetensors` file into `<COMFYUI_DIR>/models/loras/` and connect a `L
 ```bash
 # Export a single step checkpoint in both kohya and diffusers formats
 .venv/bin/python -m moss_lora.cli export \
-    --config "workspaces/<WORKSPACE>/workspace.yaml" \
+    --config "workspaces/<WORKSPACE>/runs/<RUN>/config.yaml" \
     --checkpoint 1000 \
     --formats kohya,diffusers \
     --out "workspaces/<WORKSPACE>/exports"
 
 # Batch-export a step range and package as a zip archive
 .venv/bin/python -m moss_lora.cli export-batch \
-    --config "workspaces/<WORKSPACE>/workspace.yaml" \
+    --config "workspaces/<WORKSPACE>/runs/<RUN>/config.yaml" \
     --steps 250-1000:250 \
     --formats kohya \
     --out "workspaces/<WORKSPACE>/exports" \

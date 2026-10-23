@@ -14,7 +14,8 @@ Consult these public upstream sources:
 Use these placeholders in all documentation and configuration examples to keep files portable across machines:
 - `<MODELS_DIR>`: local model root directory containing `moss-image` weights under `diffusion_models`, `text_encoders`, and `vae`
 - `<DATASET_DIR>`: local training or regularization dataset directory
-- `<WORKSPACE>`: workspace name mapping to `workspaces/<WORKSPACE>/workspace.yaml`
+- `<WORKSPACE>`: workspace name mapping to `workspaces/<WORKSPACE>/`
+- `<RUN>`: run name mapping to `workspaces/<WORKSPACE>/runs/<RUN>/config.yaml`
 - `<ckpt>`: checkpoint filename produced by training
 - `<VLM_ENDPOINT>`: local vision-language endpoint URL for caption generation
 
@@ -68,12 +69,12 @@ Isolate trainer dependencies inside the project virtual environment so host envi
 - Install or update packages only inside `./.venv` (created via `./setup.sh`) or a dedicated new virtual environment; never install packages into existing host text-encoding or training environments.
 - Run text encoding in the text-encoding environment or `./.venv` to load the official int8 `convrot` encoder or local Qwen3.5-9B and write feature tensors to disk:
   ```bash
-  .venv/bin/python -m moss_lora.cli encode-text --config workspaces/<WORKSPACE>/workspace.yaml
+  .venv/bin/python -m moss_lora.cli encode-text --config workspaces/<WORKSPACE>/runs/<RUN>/config.yaml
   ```
 - Run latent caching, LoRA training, periodic sampling, checkpoint export, and the WebUI server in `./.venv`:
   ```bash
-  .venv/bin/python -m moss_lora.cli cache --config workspaces/<WORKSPACE>/workspace.yaml
-  .venv/bin/python -m moss_lora.cli train --config workspaces/<WORKSPACE>/workspace.yaml
+  .venv/bin/python -m moss_lora.cli cache --config workspaces/<WORKSPACE>/runs/<RUN>/config.yaml
+  .venv/bin/python -m moss_lora.cli train --config workspaces/<WORKSPACE>/runs/<RUN>/config.yaml
   .venv/bin/python -m moss_lora.cli web --port 7869
   ```
 
@@ -93,6 +94,6 @@ Keep public files (`README.md`, `AGENTS.md`, `settings.example.yaml`, `docs/`, `
 
 Validate code changes and training runs against final inference quality in ComfyUI.
 
-- Load base weights from `<MODELS_DIR>/{diffusion_models,text_encoders,vae}/moss-image` (or the paths configured in `workspace.yaml`) and read training images and captions from `<DATASET_DIR>`.
+- Load base weights from `<MODELS_DIR>/{diffusion_models,text_encoders,vae}/moss-image` (or the paths configured in the run's `config.yaml`) and read training images and captions from `<DATASET_DIR>`.
 - Save checkpoints and exported files (`<ckpt>.safetensors`) using `lora_unet_*` keys by default, and store optimizer states separately in `state.safetensors`.
 - Verify that the exported LoRA loads directly in the standard ComfyUI LoRA loader node and reproduces the target character features during inference sampling.

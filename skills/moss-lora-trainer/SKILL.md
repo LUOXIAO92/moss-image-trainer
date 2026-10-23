@@ -1,6 +1,6 @@
 ---
 name: moss-lora-trainer
-description: "Run end-to-end MOSS-Image LoRA fine-tuning in the moss-image-trainer repository: create workspaces, write workspace.yaml, generate captions, build latent and text feature caches, plan VRAM presets, run and monitor training, sample previews, and export weights. Load this skill when the task involves training, caching, captioning, sampling, or exporting a MOSS-Image LoRA."
+description: "Run end-to-end MOSS-Image LoRA fine-tuning in the moss-image-trainer repository: create workspaces, create runs, write runs/<run>/config.yaml, generate captions, build latent and text feature caches, plan VRAM presets, run and monitor training, sample previews, and export weights. Load this skill when the task involves training, caching, captioning, sampling, or exporting a MOSS-Image LoRA."
 when-to-use: "Use when the user asks to fine-tune a MOSS-Image LoRA, build training caches, generate dataset captions, troubleshoot training or caching errors, render preview samples, or export ComfyUI/diffusers weights."
 ---
 
@@ -30,11 +30,12 @@ This repository provides a single-node, single-GPU LoRA training stack and FastA
 All commands in this playbook use the following placeholders:
 - `<MODELS_DIR>`: Local model root directory (containing DiT, Qwen3.5-9B, and FLUX.2 VAE weights).
 - `<DATASET_DIR>`: Local training dataset directory (or regularization dataset directory `<REG_DATASET_DIR>`).
-- `<WORKSPACE>`: Workspace name (maps to `workspaces/<WORKSPACE>/workspace.yaml`; letters, digits, and `._-` only).
+- `<WORKSPACE>`: Workspace name (maps to `workspaces/<WORKSPACE>/`; letters, digits, and `._-` only).
+- `<RUN>`: Run name (maps to `workspaces/<WORKSPACE>/runs/<RUN>/config.yaml`; letters, digits, and `._-` only).
 - `<ckpt>`: Checkpoint filename or step number (e.g., `final.safetensors`, `step000500.safetensors`, or step `500`).
 - `<VLM_ENDPOINT>`: OpenAI-compatible vision service URL in the form `http://<host>:<port>/v1`; omit this flag when `caption.base_url` is already configured in `settings.yaml`.
 
-**Execution rule: Before running any command, replace `<MODELS_DIR>`, `<DATASET_DIR>`, `<WORKSPACE>`, and `<ckpt>` with real paths, or `export` environment variables of the same names in the current shell and pass them as variables. Never pass angle-bracket placeholders literally to a command!**
+**Execution rule: Before running any command, replace `<MODELS_DIR>`, `<DATASET_DIR>`, `<WORKSPACE>`, `<RUN>`, and `<ckpt>` with real paths, or `export` environment variables of the same names in the current shell and pass them as variables. Never pass angle-bracket placeholders literally to a command!**
 
 Run all commands from the repository root (the directory containing `moss_lora/` and `.venv/`), using `.venv/bin/python -m moss_lora.cli <subcommand>` as the fixed Python entry point.
 
@@ -76,22 +77,24 @@ The 9 steps below form a one-way pipeline. Never start Step 7 (training) before 
 
 ### Step 1: Create Workspace Directories
 
-- **Purpose**: Create an isolated workspace directory tree for configs, caches, logs, and training artifacts.
+- **Purpose**: Create an isolated workspace directory tree for caches, logs, run configs, and training artifacts.
 - **Command**:
   ```bash
   export WORKSPACE="<WORKSPACE>"
-  mkdir -p "workspaces/$WORKSPACE"/{configs,train_cache,reg_cache,runs,logs,exports}
+  mkdir -p "workspaces/$WORKSPACE"/{train_cache,reg_cache,runs,logs,exports}
   ```
 - **Success criteria**: `test -d "workspaces/$WORKSPACE/train_cache"` exits with code `0`.
 - **Common errors and fixes**: Slashes or spaces in the workspace name fail validation; use only letters, digits, dots, underscores, and hyphens.
 
-### Step 2: Write and Validate `workspace.yaml`
+### Step 2: Create a Run and Write Its `config.yaml`
 
 - **Purpose**: Write model paths, dataset paths, LoRA architecture, training hyperparameters, VRAM presets, and preview prompts, then run static path validation.
 - **Command**:
   ```bash
-  cat <<EOF > "workspaces/$WORKSPACE/workspace.yaml"
-  name: $WORKSPACE
+  export RUN="<RUN>"
+  mkdir -p "workspaces/$WORKSPACE/runs/$RUN"
+  cat <<EOF > "workspaces/$WORKSPACE/runs/$RUN/config.yaml"
+  name: $RUN
   output_dir: runs
   model:
     dit: $MODELS_DIR/diffusion_models/moss_image_dit.safetensors
@@ -160,7 +163,7 @@ The 9 steps below form a one-way pipeline. Never start Step 7 (training) before 
   EOF
 
   # Validate configuration
-  .venv/bin/python -c "from moss_lora.config import Config; p = Config.load('workspaces/$WORKSPACE/workspace.yaml').validate(); assert not p, p; print('config valid')"
+  .venv/bin/python -c "from moss_lora.config import Config; p = Config.load('workspaces/$WORKSPACE/runs/$RUN/config.yaml').validate(); assert not p, p; print('config valid')"
   ```
 - **Success criteria**: The validation command prints `config valid` and exits with code `0`.
 - **Common errors and fixes**:
@@ -176,7 +179,7 @@ Skip this step if the dataset already has matching `.txt` files or `schema: 2` s
   ```bash
   # Dry-run first to print the request prompt for the first image and verify parameters
   .venv/bin/python -m moss_lora.cli caption \
-      --config "workspaces/$WORKSPACE/workspace.yaml" \
+      --config "workspaces/$WORKSPACE/runs/$RUN/config.yaml" \
       --styles tag_caption,official \
       --base-url "<VLM_ENDPOINT>" \
       --api-key VLM_API_KEY \
@@ -184,7 +187,7 @@ Skip this step if the dataset already has matching `.txt` files or `schema: 2` s
 
   # Generate captions and validate the resulting sidecar JSON files
   .venv/bin/python -m moss_lora.cli caption \
-      --config "workspaces/$WORKSPACE/workspace.yaml" \
+      --config "workspaces/$WORKSPACE/runs/$RUN/config.yaml" \
       --styles tag_caption,official \
       --base-url "<VLM_ENDPOINT>" \
       --api-key VLM_API_KEY \
@@ -192,14 +195,14 @@ Skip this step if the dataset already has matching `.txt` files or `schema: 2` s
       --retries 3
 
   .venv/bin/python -m moss_lora.cli caption \
-      --config "workspaces/$WORKSPACE/workspace.yaml" \
+      --config "workspaces/$WORKSPACE/runs/$RUN/config.yaml" \
       --styles tag_caption,official \
       --validate-only
   ```
 - **Success criteria**: `--validate-only` prints `validated N sidecars, 0 invalid` and exits with code `0`.
 - **Common errors and fixes**:
-  - `skipped without reference: N`: The `tag_caption` style requires a matching `.txt`/`.caption` file next to each image as the source tag list. If no reference tags exist, pass `--styles official` and set `dataset.moss_caption_source` in `workspace.yaml` to `official_long`, `official_medium`, or `official_short`.
-  - Legacy flat sidecar errors: Run `.venv/bin/python -m moss_lora.cli caption --config "workspaces/$WORKSPACE/workspace.yaml" --migrate` to upgrade sidecars to `schema: 2`.
+  - `skipped without reference: N`: The `tag_caption` style requires a matching `.txt`/`.caption` file next to each image as the source tag list. If no reference tags exist, pass `--styles official` and set `dataset.moss_caption_source` in the run config to `official_long`, `official_medium`, or `official_short`.
+  - Legacy flat sidecar errors: Run `.venv/bin/python -m moss_lora.cli caption --config "workspaces/$WORKSPACE/runs/$RUN/config.yaml" --migrate` to upgrade sidecars to `schema: 2`.
 
 ### Step 4: Build Image Latent Cache (Latent Cache)
 
@@ -207,7 +210,7 @@ Skip this step if the dataset already has matching `.txt` files or `schema: 2` s
 - **Command**:
   ```bash
   .venv/bin/python -m moss_lora.cli cache \
-      --config "workspaces/$WORKSPACE/workspace.yaml" \
+      --config "workspaces/$WORKSPACE/runs/$RUN/config.yaml" \
       --workers 6
   ```
 - **Success criteria**: The command prints `index: .../train_cache/index.json (N items)` and exits with code `0`.
@@ -221,7 +224,7 @@ Skip this step if the dataset already has matching `.txt` files or `schema: 2` s
 - **Command**:
   ```bash
   .venv/bin/python -m moss_lora.cli encode-text \
-      --config "workspaces/$WORKSPACE/workspace.yaml" \
+      --config "workspaces/$WORKSPACE/runs/$RUN/config.yaml" \
       --quantize none
   ```
 - **Success criteria**:
@@ -239,25 +242,25 @@ Skip this step if the dataset already has matching `.txt` files or `schema: 2` s
   ```
 - **Common errors and fixes**:
   - OOM when loading the 9B encoder on 12 GB or smaller GPUs: Change `--quantize none` to `--quantize fp8` or `--quantize nf4` and append `--batch-size 4`.
-  - Only `preview.prompts` changed: Run `encode-text --config "workspaces/$WORKSPACE/workspace.yaml" --preview-only` to refresh the preview bundle alone.
+  - Only `preview.prompts` changed: Run `encode-text --config "workspaces/$WORKSPACE/runs/$RUN/config.yaml" --preview-only` to refresh the preview bundle alone.
 
 ### Step 6: Plan VRAM Preset and Render LoRA-Free Baseline Images
 
 - **Purpose**: Write the optimal quantization and block-swapping settings for the current GPU capacity, and render baseline comparison images with the base model before training.
 - **Command**:
   ```bash
-  # Plan parameters for the VRAM budget (--preview reserves sampling headroom and writes back to workspace.yaml)
+  # Plan parameters for the VRAM budget (--preview reserves sampling headroom and writes back to the config)
   .venv/bin/python -m moss_lora.cli plan \
-      --config "workspaces/$WORKSPACE/workspace.yaml" \
+      --config "workspaces/$WORKSPACE/runs/$RUN/config.yaml" \
       --preview \
-      --write "workspaces/$WORKSPACE/workspace.yaml"
+      --write "workspaces/$WORKSPACE/runs/$RUN/config.yaml"
 
   # Render LoRA-free baseline samples (written to workspaces/<WORKSPACE>/baseline/baseline_*.png)
   .venv/bin/python -m moss_lora.cli baseline \
-      --config "workspaces/$WORKSPACE/workspace.yaml"
+      --config "workspaces/$WORKSPACE/runs/$RUN/config.yaml"
   ```
 - **Success criteria**: `workspaces/$WORKSPACE/baseline/baseline_0.png` exists and has a file size greater than 0.
-- **Common errors and fixes**: `no preview embeddings` means Step 5 did not generate `preview.safetensors`; verify that `preview.prompts` in `workspace.yaml` is non-empty and re-run `encode-text --preview-only`.
+- **Common errors and fixes**: `no preview embeddings` means Step 5 did not generate `preview.safetensors`; verify that `preview.prompts` in the run config is non-empty and re-run `encode-text --preview-only`.
 
 ### Step 7: Run Smoke Test and Launch Training
 
@@ -266,18 +269,18 @@ Skip this step if the dataset already has matching `.txt` files or `schema: 2` s
   ```bash
   # 1. Smoke preflight: fixed 3 steps covering forward/backward/eval/sample/save into <name>-smoke
   .venv/bin/python -m moss_lora.cli train \
-      --config "workspaces/$WORKSPACE/workspace.yaml" \
+      --config "workspaces/$WORKSPACE/runs/$RUN/config.yaml" \
       --name "$WORKSPACE" --smoke
 
   # 2. Clean up smoke artifacts and launch full training (tee logs to workspaces/<WORKSPACE>/logs/)
   rm -rf "workspaces/$WORKSPACE/runs/${WORKSPACE}-smoke"
   .venv/bin/python -m moss_lora.cli train \
-      --config "workspaces/$WORKSPACE/workspace.yaml" \
+      --config "workspaces/$WORKSPACE/runs/$RUN/config.yaml" \
       2>&1 | tee "workspaces/$WORKSPACE/logs/${WORKSPACE}.log"
   ```
 - **Success criteria**: The terminal logs `step 1/1000  loss ...` line by line and finishes with `checkpoint .../checkpoints/final.safetensors` and `exported .../<WORKSPACE>.safetensors (756 tensors)`.
 - **Common errors and fixes**:
-  - Resuming an interrupted run: Pass the latest checkpoint path via `.venv/bin/python -m moss_lora.cli train --config "workspaces/$WORKSPACE/workspace.yaml" --resume "workspaces/$WORKSPACE/runs/$WORKSPACE/checkpoints/<ckpt>.safetensors"`, or run `.venv/bin/python -m moss_lora.cli queue --workspace "workspaces/$WORKSPACE"` to scan and resume all unfinished jobs in the workspace automatically.
+  - Resuming an interrupted run: Pass the latest checkpoint path via `.venv/bin/python -m moss_lora.cli train --config "workspaces/$WORKSPACE/runs/$RUN/config.yaml" --resume "workspaces/$WORKSPACE/runs/$WORKSPACE/checkpoints/<ckpt>.safetensors"`, or run `.venv/bin/python -m moss_lora.cli queue --workspace "workspaces/$WORKSPACE"` to scan and resume all unfinished jobs in the workspace automatically.
 
 ### Step 8: Monitor Training and Run On-Demand Sampling
 
@@ -292,18 +295,18 @@ Skip this step if the dataset already has matching `.txt` files or `schema: 2` s
 
   # Backfill preview images for a specific step (e.g., step 500) and redraw trajectory.png
   .venv/bin/python -m moss_lora.cli preview \
-      --config "workspaces/$WORKSPACE/workspace.yaml" \
+      --config "workspaces/$WORKSPACE/runs/$RUN/config.yaml" \
       --step 500
 
   # Encode custom prompts and sample standalone images from a specific checkpoint
   .venv/bin/python -m moss_lora.cli encode-prompt \
-      --config "workspaces/$WORKSPACE/workspace.yaml" \
+      --config "workspaces/$WORKSPACE/runs/$RUN/config.yaml" \
       --out "workspaces/$WORKSPACE/custom_prompts.safetensors" \
       --prompt "1girl, solo, upper body, looking at viewer, outdoor sunlight" \
       --negative "low quality, blurry"
 
   .venv/bin/python -m moss_lora.cli sample \
-      --config "workspaces/$WORKSPACE/workspace.yaml" \
+      --config "workspaces/$WORKSPACE/runs/$RUN/config.yaml" \
       --checkpoint "$RUN_DIR/checkpoints/<ckpt>.safetensors" \
       --embeds "workspaces/$WORKSPACE/custom_prompts.safetensors" \
       --out "$RUN_DIR/custom_samples" \
@@ -318,14 +321,14 @@ Skip this step if the dataset already has matching `.txt` files or `schema: 2` s
   ```bash
   # Export a single checkpoint (generating both kohya and diffusers formats)
   .venv/bin/python -m moss_lora.cli export \
-      --config "workspaces/$WORKSPACE/workspace.yaml" \
+      --config "workspaces/$WORKSPACE/runs/$RUN/config.yaml" \
       --checkpoint final \
       --formats kohya,diffusers \
       --out "workspaces/$WORKSPACE/exports"
 
   # Batch-export a step range and package as a zip archive (pure key conversion without loading the 5B model)
   .venv/bin/python -m moss_lora.cli export-batch \
-      --config "workspaces/$WORKSPACE/workspace.yaml" \
+      --config "workspaces/$WORKSPACE/runs/$RUN/config.yaml" \
       --steps "250-1000:250" \
       --formats kohya \
       --out "workspaces/$WORKSPACE/exports" \
@@ -343,9 +346,10 @@ set -euo pipefail
 export MODELS_DIR="<MODELS_DIR>"
 export DATASET_DIR="<DATASET_DIR>"
 export WORKSPACE="<WORKSPACE>"
-CFG="workspaces/$WORKSPACE/workspace.yaml"
+export RUN="<RUN>"
+CFG="workspaces/$WORKSPACE/runs/$RUN/config.yaml"
 
-mkdir -p "workspaces/$WORKSPACE"/{configs,train_cache,reg_cache,runs,logs,exports}
+mkdir -p "workspaces/$WORKSPACE"/{train_cache,reg_cache,runs,logs,exports}
 # (Ensure $CFG has been written according to Step 2)
 .venv/bin/python -m moss_lora.cli cache --config "$CFG"
 .venv/bin/python -m moss_lora.cli encode-text --config "$CFG"
@@ -405,13 +409,13 @@ mkdir -p "workspaces/$WORKSPACE"/{configs,train_cache,reg_cache,runs,logs,export
    - **Fix**:
      - Latent caching OOM: Run `cli cache --config ... --batch-size 1`.
      - Text encoding OOM: Run `cli encode-text --config ... --quantize nf4 --batch-size 2`.
-     - Training OOM: Lower `vram.preset` by one tier in `workspace.yaml` (e.g., `16` → `12` or `8`), set `train.batch_size: 1`, or explicitly raise `vram.blocks_to_swap: 20` (`vram.gradient_checkpointing` must be `true` when `blocks_to_swap` is enabled).
+     - Training OOM: Lower `vram.preset` by one tier in the run's `config.yaml` (e.g., `16` → `12` or `8`), set `train.batch_size: 1`, or explicitly raise `vram.blocks_to_swap: 20` (`vram.gradient_checkpointing` must be `true` when `blocks_to_swap` is enabled).
 2. **Cache schema mismatch or missing index**
    - **Symptom**: `缓存未就绪：缺 index.json` (cache not ready: missing `index.json`) or `缓存格式不对：不是当前版本的索引` (invalid cache format: outdated index schema).
    - **Fix**: Check whether `"schema"` in `workspaces/<WORKSPACE>/train_cache/index.json` equals `2`. If missing or outdated, re-run `cli cache --config ...` followed by `cli encode-text --config ...` (no `--overwrite` needed; incremental logic backfills missing entries and rewrites the v2 index).
 3. **`KeyError: text_embeds` or `缓存里缺 text_embeds, text_mask` when starting training**
    - **Symptom**: `cli train` was launched right after `cli cache` without text encoding, or `dataset.reg_path` was changed without encoding captions for the regularization set.
-   - **Fix**: Run `.venv/bin/python -m moss_lora.cli encode-text --config "workspaces/<WORKSPACE>/workspace.yaml"` immediately and wait for `index: ...` before launching training.
+   - **Fix**: Run `.venv/bin/python -m moss_lora.cli encode-text --config "workspaces/<WORKSPACE>/runs/<RUN>/config.yaml"` immediately and wait for `index: ...` before launching training.
 4. **`视觉服务连不上` (vision endpoint unreachable) during caption generation**
    - **Symptom**: `RuntimeError: ... 视觉服务连不上（http://...）`.
    - **Fix**: Test whether the OpenAI-compatible vision endpoint is alive with `curl -sS <base_url>/models`. Do not blindly raise `--retries`; once the service recovers and `VLM_API_KEY` is non-empty, re-run `cli caption` (already captioned images are skipped automatically).

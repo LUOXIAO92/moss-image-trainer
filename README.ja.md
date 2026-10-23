@@ -43,21 +43,23 @@
 
 ## クイックスタート
 
-WebUI では、`./run.sh --port 7869` を実行して `http://127.0.0.1:7869` を開きます。「**ワークスペース**」タブでワークスペースを新規作成し、「**学習設定**」で `<MODELS_DIR>` と `<DATASET_DIR>` を設定してから、latent キャッシュ、テキスト埋め込みキャッシュ、学習の順に実行します。
+WebUI では、`./run.sh --port 7869` を実行して `http://127.0.0.1:7869` を開きます。「**ワークスペース**」タブでワークスペースを新規作成し、「**学習設定**」で実行を作成して `<MODELS_DIR>` と `<DATASET_DIR>` を設定してから、latent キャッシュ、テキスト埋め込みキャッシュ、学習の順に実行します。
 
-CLI では、`workspaces/<WORKSPACE>/workspace.yaml` に対して以下の3ステップを順に実行します。
+CLI では、1 つの実行の設定に対して以下の3ステップを順に実行します。
 
 ```bash
 WS=workspaces/<WORKSPACE>
+RUN=<run>
+CONFIG="$WS/runs/$RUN/config.yaml"
 
 # 1. 画像 latent をディスクへエンコード（$WS/train_cache に書き出し）
-.venv/bin/python -m moss_lora.cli cache --config "$WS/workspace.yaml"
+.venv/bin/python -m moss_lora.cli cache --config "$CONFIG"
 
 # 2. テキスト埋め込みをディスクへエンコード（ローカル Qwen3.5-9B）
-.venv/bin/python -m moss_lora.cli encode-text --config "$WS/workspace.yaml"
+.venv/bin/python -m moss_lora.cli encode-text --config "$CONFIG"
 
 # 3. LoRA 学習を実行（$WS/runs/<name> に出力）
-.venv/bin/python -m moss_lora.cli train --config "$WS/workspace.yaml"
+.venv/bin/python -m moss_lora.cli train --config "$CONFIG"
 ```
 
 データセットスキャナーは `.jpg`、`.jpeg`、`.png`、`.webp`、`.bmp` 画像を再帰的に検索し、各画像を sidecar JSON、同名の `.txt`/`.caption` ファイル、または `metadata.jsonl` のエントリとペアリングします。`3_concept` のようなプレフィックス付きサブディレクトリ内の画像は、エポックごとに 3 回反復されます。
@@ -66,19 +68,19 @@ WS=workspaces/<WORKSPACE>
 
 ```bash
 # データセットの統計情報とバケット分布を確認
-.venv/bin/python -m moss_lora.cli info --config "$WS/workspace.yaml"
+.venv/bin/python -m moss_lora.cli info --config "$CONFIG"
 
 # VRAM 予算（GB）に合わせて精度・量子化・ブロックスワップを計画し設定へ書き戻す
-.venv/bin/python -m moss_lora.cli plan --vram 12 --config "$WS/workspace.yaml" --write "$WS/workspace.yaml"
+.venv/bin/python -m moss_lora.cli plan --vram 12 --config "$CONFIG" --write "$CONFIG"
 
 # LoRA なしのベースライン画像を生成、または特定ステップのチェックポイントでプレビューを再描画
-.venv/bin/python -m moss_lora.cli baseline --config "$WS/workspace.yaml"
-.venv/bin/python -m moss_lora.cli preview --config "$WS/workspace.yaml" --step 500
+.venv/bin/python -m moss_lora.cli baseline --config "$CONFIG"
+.venv/bin/python -m moss_lora.cli preview --config "$CONFIG" --step 500
 
 # カスタムプロンプトをエンコードし、指定チェックポイントでサンプリング
-.venv/bin/python -m moss_lora.cli encode-prompt --config "$WS/workspace.yaml" \
+.venv/bin/python -m moss_lora.cli encode-prompt --config "$CONFIG" \
     --out "$WS/custom_prompts.safetensors" --prompt "a portrait in soft daylight"
-.venv/bin/python -m moss_lora.cli sample --config "$WS/workspace.yaml" \
+.venv/bin/python -m moss_lora.cli sample --config "$CONFIG" \
     --checkpoint "$WS/runs/<name>/checkpoints/<ckpt>.safetensors" \
     --embeds "$WS/custom_prompts.safetensors" --out "$WS/samples"
 
@@ -86,7 +88,7 @@ WS=workspaces/<WORKSPACE>
 .venv/bin/python -m moss_lora.cli queue --workspace "$WS"
 
 # SSH 切断後も続く学習を開始し、ダッシュボードと同じ方法で状態を読む
-.venv/bin/python -m moss_lora.cli train --config "$WS/workspace.yaml" --detach
+.venv/bin/python -m moss_lora.cli train --config "$CONFIG" --detach
 .venv/bin/python -m moss_lora.cli status
 .venv/bin/python -m moss_lora.cli status --workspace my-lora --live --json
 ```
@@ -95,11 +97,11 @@ WS=workspaces/<WORKSPACE>
 
 ## 設定
 
-設定はマシン単位の `settings.yaml` とワークスペース単位の `workspace.yaml` の2階層に分かれています。
+設定はマシン単位の `settings.yaml` と、実行ごとの設定の2階層に分かれています。
 
 `settings.yaml` はローカルマシンの設定を保持します（`.gitignore` で除外されており、初回起動時に [settings.example.yaml](<settings.example.yaml>) からコピーされます）。ワークスペースのルート `paths.workspaces`、CUDA アロケーター設定 `runtime`（`allocator: expandable|async|off` と `gc_threshold`）、表示言語 `ui.language`、およびキャプション生成サービス `caption`（`base_url`、環境変数名 `api_key`、モデル名、並列数、プロンプトテンプレート）を管理します。設定画面で直接入力した平文の API キーはプロセスメモリ内にのみ保持され、ディスクには書き込まれません。
 
-`workspace.yaml` は `workspaces/<WORKSPACE>/workspace.yaml` に配置され、モデル、データセット、キャッシュ、LoRA の rank と alpha、学習ハイパーパラメーター、VRAM プリセット、プレビュー用プロンプトを定義します。相対パス（`cache.dir` や `output_dir` など）はワークスペースディレクトリ基準で解決されるため、ワークスペースディレクトリごと移動しても参照は維持されます。
+各実行の完全な設定は `workspaces/<WORKSPACE>/runs/<RUN>/config.yaml` にあり、モデル、データセット、キャッシュ、LoRA の rank と alpha、学習ハイパーパラメーター、VRAM プリセット、プレビュー用プロンプトを定義します。相対パス（`cache.dir` や `output_dir` など）はワークスペースディレクトリ基準で解決されるため、ワークスペースディレクトリごと移動しても参照は維持されます。このファイルは実行中は読み取り専用で、終了後は編集できます。WebUI で実行を作成すると 1 份でき、実行ダイアログから既存の実行を複製することもできます。
 
 ```yaml
 name: my-lora
@@ -200,14 +202,14 @@ lora_unet_layers_<0..41>_proj_<q|k|v|o|ffn_up_gate|ffn_down>.alpha
 ```bash
 # 単一ステップのチェックポイントを kohya と diffusers の両形式でエクスポート
 .venv/bin/python -m moss_lora.cli export \
-    --config "workspaces/<WORKSPACE>/workspace.yaml" \
+    --config "workspaces/<WORKSPACE>/runs/<RUN>/config.yaml" \
     --checkpoint 1000 \
     --formats kohya,diffusers \
     --out "workspaces/<WORKSPACE>/exports"
 
 # ステップ範囲を一括エクスポートして ZIP アーカイブにパッケージ化
 .venv/bin/python -m moss_lora.cli export-batch \
-    --config "workspaces/<WORKSPACE>/workspace.yaml" \
+    --config "workspaces/<WORKSPACE>/runs/<RUN>/config.yaml" \
     --steps 250-1000:250 \
     --formats kohya \
     --out "workspaces/<WORKSPACE>/exports" \

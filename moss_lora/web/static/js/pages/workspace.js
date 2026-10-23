@@ -5,12 +5,10 @@
 
 import { startJob } from '../components/jobsse.js';
 import { clearLog, pushLog } from '../components/logview.js';
-import { loadConfig } from '../config/file.js';
-import { clearYamlError, markDirty, refreshYamlFromConfig, syncFormFromConfig } from '../config/form.js';
+import { loadConfig, switchRun } from '../config/file.js';
+import { syncFormFromConfig } from '../config/form.js';
 import { renderConfigList } from '../config/list.js';
 import { loadProfiles } from '../config/profiles.js';
-import { clearFormErrors } from '../config/validate.js';
-import { parseYaml } from '../config/yaml.js';
 import { api } from '../core/api.js';
 import { $, escapeHtml, setText } from '../core/dom.js';
 import { fmtBytesFromMb, fmtInt } from '../core/fmt.js';
@@ -19,11 +17,11 @@ import { showAlert, showError, showSuccess } from '../core/notify.js';
 import { state } from '../core/state.js';
 import { currentTab, focusLogPanel } from '../main.js';
 
-// A run's config comes from one place: its own directory. Anything else the
-// API might send is shown as-is rather than dressed up as a snapshot.
+// A run's config comes from one place: its own directory, read-only. The API
+// labels that source "run"; anything else is shown as-is.
 function configSourceLabel(source) {
   if (!source) return t('train.noSnapshot');
-  return source === 'run' ? t('train.configSource.run') : source;
+  return source === 'run' ? t('workspace.runsTitle') : source;
 }
 
 
@@ -97,32 +95,19 @@ export function closeRunConfig() {
   }
 }
 
-export function applyRunConfig(start = false) {
+export async function applyRunConfig(start = false) {
   const run = state.activeRunConfig;
   if (!run || !run.config_yaml) {
     showAlert({ type: 'warn', title: t('train.msg10'), text: t('train.msg11'), timeout: 4000 });
     return;
   }
-  try {
-    const parsed = run.config && typeof run.config === 'object'
-      ? JSON.parse(JSON.stringify(run.config))
-      : parseYaml(run.config_yaml);
-    if (state.profileName) parsed.name = state.profileName;
-    state.config = parsed;
-    syncFormFromConfig(parsed);
-    clearFormErrors();
-    clearYamlError();
-    markDirty(true);
-    if (state.mode === 'form') refreshYamlFromConfig();
-    closeRunConfig();
-    if (start) {
-      setTimeout(() => startJob('train'), 120);
-    } else {
-      showSuccess(t('train.msg12'), t('train.msg13'), [], 'run-config-loaded');
-    }
-  } catch (error) {
-    const box = $('#run-config-error');
-    if (box) { box.textContent = error.message; box.classList.remove('hidden'); }
+  // The run's config is the run: selecting it loads that exact file for editing.
+  closeRunConfig();
+  await switchRun(run.name);
+  if (start) {
+    setTimeout(() => startJob('train'), 120);
+  } else {
+    showSuccess(t('train.msg12'), t('train.msg13'), [], 'run-config-loaded');
   }
 }
 
@@ -148,7 +133,6 @@ export async function openRunLog(name) {
 }
 
 const WORKSPACE_PART_LABELS = {
-  configs: 'train.config',
   train_cache: 'cache.trainCache',
   reg_cache: 'cache.regCache',
   runs: 'workspace.runsTitle',
@@ -291,7 +275,8 @@ async function reloadWorkspaceAfterDelete({ workspaceDeleted = false } = {}) {
     if (state.profileName) await loadConfig();
     else {
       state.config = {};
-      state.configs = [];
+      state.runs = [];
+      state.activeRun = '';
       renderConfigList();
       syncFormFromConfig({});
     }

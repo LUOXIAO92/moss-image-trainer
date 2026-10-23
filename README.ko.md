@@ -43,21 +43,23 @@
 
 ## 빠른 시작
 
-WebUI 모드에서는 `./run.sh --port 7869`를 실행하고 `http://127.0.0.1:7869`에 접속합니다. **작업 공간** 탭에서 새 작업 공간을 만들고 **학습 설정**에서 `<MODELS_DIR>`와 `<DATASET_DIR>`를 입력한 다음, latent 캐싱, 텍스트 임베딩 캐싱, 학습을 순서대로 실행합니다.
+WebUI 모드에서는 `./run.sh --port 7869`를 실행하고 `http://127.0.0.1:7869`에 접속합니다. **작업 공간** 탭에서 새 작업 공간을 만들고 **학습 설정**에서 실행을 새로 만든 뒤 `<MODELS_DIR>`와 `<DATASET_DIR>`를 입력하고, latent 캐싱, 텍스트 임베딩 캐싱, 학습을 순서대로 실행합니다.
 
-CLI 모드에서는 `workspaces/<WORKSPACE>/workspace.yaml`을 기준으로 다음 세 단계를 실행합니다:
+CLI 모드에서는 한 실행의 설정을 기준으로 다음 세 단계를 실행합니다:
 
 ```bash
 WS=workspaces/<WORKSPACE>
+RUN=<run>
+CONFIG="$WS/runs/$RUN/config.yaml"
 
 # 1. 이미지 latent를 디스크에 인코딩 ($WS/train_cache에 기록)
-.venv/bin/python -m moss_lora.cli cache --config "$WS/workspace.yaml"
+.venv/bin/python -m moss_lora.cli cache --config "$CONFIG"
 
 # 2. 텍스트 임베딩을 디스크에 인코딩 (로컬 Qwen3.5-9B)
-.venv/bin/python -m moss_lora.cli encode-text --config "$WS/workspace.yaml"
+.venv/bin/python -m moss_lora.cli encode-text --config "$CONFIG"
 
 # 3. LoRA 학습 실행 ($WS/runs/<name>에 출력)
-.venv/bin/python -m moss_lora.cli train --config "$WS/workspace.yaml"
+.venv/bin/python -m moss_lora.cli train --config "$CONFIG"
 ```
 
 데이터셋 스캐너는 `.jpg`, `.jpeg`, `.png`, `.webp`, `.bmp` 이미지를 재귀적으로 탐색하여 각 이미지를 sidecar JSON, 동일한 이름의 `.txt`/`.caption` 파일 또는 `metadata.jsonl` 항목과 매칭합니다. `3_concept`처럼 접두사가 붙은 하위 디렉터리는 내부 이미지를 에폭당 3회 반복합니다.
@@ -66,19 +68,19 @@ WS=workspaces/<WORKSPACE>
 
 ```bash
 # 데이터셋 통계 및 버킷 분포 확인
-.venv/bin/python -m moss_lora.cli info --config "$WS/workspace.yaml"
+.venv/bin/python -m moss_lora.cli info --config "$CONFIG"
 
 # VRAM 예산(GB)에 맞춰 정밀도, 양자화, 블록 스왑을 계획하고 설정에 반영
-.venv/bin/python -m moss_lora.cli plan --vram 12 --config "$WS/workspace.yaml" --write "$WS/workspace.yaml"
+.venv/bin/python -m moss_lora.cli plan --vram 12 --config "$CONFIG" --write "$CONFIG"
 
 # LoRA 없는 베이스라인 이미지 생성 또는 특정 스텝 체크포인트의 프리뷰 렌더링
-.venv/bin/python -m moss_lora.cli baseline --config "$WS/workspace.yaml"
-.venv/bin/python -m moss_lora.cli preview --config "$WS/workspace.yaml" --step 500
+.venv/bin/python -m moss_lora.cli baseline --config "$CONFIG"
+.venv/bin/python -m moss_lora.cli preview --config "$CONFIG" --step 500
 
 # 사용자 프롬프트 인코딩 및 특정 체크포인트로 샘플링
-.venv/bin/python -m moss_lora.cli encode-prompt --config "$WS/workspace.yaml" \
+.venv/bin/python -m moss_lora.cli encode-prompt --config "$CONFIG" \
     --out "$WS/custom_prompts.safetensors" --prompt "a portrait in soft daylight"
-.venv/bin/python -m moss_lora.cli sample --config "$WS/workspace.yaml" \
+.venv/bin/python -m moss_lora.cli sample --config "$CONFIG" \
     --checkpoint "$WS/runs/<name>/checkpoints/<ckpt>.safetensors" \
     --embeds "$WS/custom_prompts.safetensors" --out "$WS/samples"
 
@@ -86,7 +88,7 @@ WS=workspaces/<WORKSPACE>
 .venv/bin/python -m moss_lora.cli queue --workspace "$WS"
 
 # SSH 연결이 끊겨도 계속되는 학습을 시작하고, 대시보드와 같은 방식으로 상태를 읽기
-.venv/bin/python -m moss_lora.cli train --config "$WS/workspace.yaml" --detach
+.venv/bin/python -m moss_lora.cli train --config "$CONFIG" --detach
 .venv/bin/python -m moss_lora.cli status
 .venv/bin/python -m moss_lora.cli status --workspace my-lora --live --json
 ```
@@ -95,11 +97,11 @@ WS=workspaces/<WORKSPACE>
 
 ## 구성
 
-구성은 머신 수준 `settings.yaml`과 작업 공간 수준 `workspace.yaml`의 두 계층으로 나뉩니다.
+구성은 머신 수준 `settings.yaml`과 실행별 설정의 두 계층으로 나뉩니다.
 
 `settings.yaml`은 로컬 머신 설정을 저장하며(`.gitignore`에서 제외되며 첫 실행 시 [settings.example.yaml](<settings.example.yaml>)에서 복사됨), 작업 공간 루트 `paths.workspaces`, CUDA 할당자 설정 `runtime`(`allocator: expandable|async|off` 및 `gc_threshold`), UI 언어 `ui.language`, 캡션 생성 서비스 `caption`(`base_url`, 환경 변수 이름 `api_key`, 모델 이름, 동시성 수, 프롬프트 템플릿)을 관리합니다. 설정 탭에서 직접 입력한 평문 API 키는 프로세스 메모리에만 상주하며 디스크에는 기록되지 않습니다.
 
-`workspace.yaml`은 `workspaces/<WORKSPACE>/workspace.yaml`에 위치하며 모델, 데이터셋, 캐시, LoRA rank 및 alpha, 학습 하이퍼파라미터, VRAM 프리셋, 프리뷰 프롬프트를 정의합니다. 상대 경로(`cache.dir`, `output_dir` 등)는 작업 공간 디렉터리를 기준으로 해석되므로 작업 공간 디렉터리를 이동해도 경로가 유효하게 유지됩니다:
+각 실행의 전체 설정은 `workspaces/<WORKSPACE>/runs/<RUN>/config.yaml`에 있으며 모델, 데이터셋, 캐시, LoRA rank 및 alpha, 학습 하이퍼파라미터, VRAM 프리셋, 프리뷰 프롬프트를 정의합니다. 상대 경로(`cache.dir`, `output_dir` 등)는 작업 공간 디렉터리를 기준으로 해석되므로 작업 공간 디렉터리를 이동해도 경로가 유효하게 유지됩니다. 이 파일은 실행 중에는 읽기 전용이며 끝난 뒤에는 수정할 수 있습니다. WebUI에서 실행을 만들면 한 부가 생기고, 실행 대화상자에서 기존 실행을 복사할 수도 있습니다:
 
 ```yaml
 name: my-lora
@@ -200,14 +202,14 @@ lora_unet_layers_<0..41>_proj_<q|k|v|o|ffn_up_gate|ffn_down>.alpha
 ```bash
 # 단일 스텝 체크포인트를 kohya와 diffusers 형식으로 동시에 내보내기
 .venv/bin/python -m moss_lora.cli export \
-    --config "workspaces/<WORKSPACE>/workspace.yaml" \
+    --config "workspaces/<WORKSPACE>/runs/<RUN>/config.yaml" \
     --checkpoint 1000 \
     --formats kohya,diffusers \
     --out "workspaces/<WORKSPACE>/exports"
 
 # 스텝 범위를 일괄 내보내고 zip 아카이브로 패키징
 .venv/bin/python -m moss_lora.cli export-batch \
-    --config "workspaces/<WORKSPACE>/workspace.yaml" \
+    --config "workspaces/<WORKSPACE>/runs/<RUN>/config.yaml" \
     --steps 250-1000:250 \
     --formats kohya \
     --out "workspaces/<WORKSPACE>/exports" \

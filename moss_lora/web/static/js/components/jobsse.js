@@ -335,7 +335,9 @@ export async function startJob(kind, options = {}) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         kind,
-        yaml: yamlText,
+        // The run names the config; the server reads runs/<run>/config.yaml.
+        // Caption jobs carry their own settings and need no run.
+        ...(kind !== 'caption' && state.activeRun ? { run: state.activeRun } : { yaml: yamlText }),
         workspace: state.profileName,
         ...(kind === 'train' ? { baseline: Boolean($('#cfg-run-baseline')?.checked) } : {}),
         ...(kind === 'caption' ? {

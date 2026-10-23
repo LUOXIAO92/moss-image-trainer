@@ -1,11 +1,14 @@
 /* =========================================================================
- * js/config/file.js — Config <-> form
- * split from web/static/app.js, source 1984-2357 (7 non-contiguous spans, see .tmp/js-map.json); behaviour unchanged
+ * js/config/file.js — the selected run's config
+ *
+ * One config, one home: runs/<run>/config.yaml. This module loads it into the
+ * form, writes it back, and creates new runs. There is no second file and no
+ * overlay: what you save is what the run uses.
  * ========================================================================= */
 
 import { loadDashboardLayout } from '../components/metriccards.js';
 import { clearYamlError, getCurrentYaml, markDirty, readFormIntoConfig, refreshYamlFromConfig, showYamlError, syncFormFromConfig, updateYamlLineCount } from './form.js';
-import { mergeConfigIntoWorkspace, renderConfigIdentity, renderConfigList } from './list.js';
+import { renderConfigIdentity, renderConfigList } from './list.js';
 import { renderProfileOptions } from './profiles.js';
 import { clearFormErrors } from './validate.js';
 import { dumpYaml, parseYaml } from './yaml.js';
@@ -18,28 +21,49 @@ import { autoLoadDataset } from '../pages/dataset.js';
 import { runSetupCheck } from '../pages/settings.js';
 import { loadWorkspaceRuns } from '../pages/workspace.js';
 
-export async function loadConfig(path = null) {
+export function activeRunEntry() {
+  return (state.runs || []).find((entry) => entry.name === state.activeRun) || null;
+}
+
+export function activeRunIsLive() {
+  return Boolean(activeRunEntry()?.live);
+}
+
+function runConfigPath(run = state.activeRun) {
+  return run ? `runs/${run}/config.yaml` : '';
+}
+
+async function refreshRunList() {
+  const data = await api('/api/workspaces/' + encodeURIComponent(state.profileName) + '/runs');
+  state.runs = Array.isArray(data.runs) ? data.runs : [];
+  return state.runs;
+}
+
+function showEmptyState() {
+  state.config = {};
+  state.savedYaml = '';
+  state.savedAt = Date.now();
+  state.configPath = '';
+  const textarea = $('#yaml');
+  if (textarea) textarea.value = '';
+  syncFormFromConfig({});
+  clearFormErrors();
+  clearYamlError();
+  updateYamlLineCount();
+  markDirty(false);
+  renderConfigList();
+}
+
+export async function loadConfig(run = null) {
   if (!state.profileName) {
-    state.config = {};
-    state.savedYaml = '';
-    state.savedAt = Date.now();
-    state.configPath = '';
-    state.configs = [];
-    state.activeConfigName = '';
-    const textarea = $('#yaml');
-    if (textarea) textarea.value = '';
-    renderConfigList();
-    syncFormFromConfig({});
-    clearFormErrors();
-    clearYamlError();
-    updateYamlLineCount();
-    markDirty(false);
+    state.runs = [];
+    state.activeRun = '';
+    showEmptyState();
     renderProfileOptions();
     setHidden('#setup-panel', true);
-      return state.config;
+    return state.config;
   }
 
-  const baseData = await api('/api/config?workspace=' + encodeURIComponent(state.profileName));
   state.workspacePath = (state.profiles.find((item) => item.name === state.profileName) || {}).path || state.workspacePath;
   if (state.workspacePath) {
     try {
@@ -49,30 +73,29 @@ export async function loadConfig(path = null) {
       state.workspaceAbsPath = '';
     }
   }
-  state.workspaceDefaultYaml = baseData.yaml || '';
-  const list = await api('/api/workspaces/' + encodeURIComponent(state.profileName) + '/configs');
-  state.configs = Array.isArray(list.configs) ? list.configs : [];
-  if (!state.configs.length) {
-    state.configs = [{ name: 'default', virtual: true, path: baseData.path }];
+
+  await refreshRunList();
+  let name = String(run || '') || localStorage.getItem(`moss.run.${state.profileName}`) || state.activeRun || '';
+  if (!state.runs.some((entry) => entry.name === name)) name = state.runs[0]?.name || '';
+  state.activeRun = name;
+  if (!name) {
+    // No run yet: nothing to edit until one is created. The run browser still
+    // has to drop the previous workspace's list.
+    showEmptyState();
+    renderProfileOptions();
+    renderConfigIdentity();
+    loadWorkspaceRuns().catch(() => {});
+    return state.config;
   }
-  let name = localStorage.getItem(`moss.config.${state.profileName}`) || '';
-  if (path) name = String(path);
-  if (!state.configs.some((entry) => entry.name === name)) name = state.configs[0].name;
-  state.activeConfigName = name;
-  const active = state.configs.find((entry) => entry.name === name);
-  let selectedYaml = baseData.yaml || '';
-  let configPath = active?.path || baseData.path;
-  if (active && !active.virtual) {
-    const selected = await api('/api/workspaces/' + encodeURIComponent(state.profileName) + '/configs/' + encodeURIComponent(active.name));
-    selectedYaml = selected.yaml || '';
-    configPath = selected.entry?.path || configPath;
-  }
-  const base = parseYaml(baseData.yaml || '{}');
-  const selected = parseYaml(selectedYaml || '{}');
-  state.config = mergeConfigIntoWorkspace(base, selected, name);
-  state.savedYaml = dumpYaml(state.config);
+
+  const data = await api('/api/workspaces/' + encodeURIComponent(state.profileName)
+    + '/runs/' + encodeURIComponent(name) + '/config');
+  state.config = parseYaml(data.yaml || '{}');
+  state.savedYaml = data.yaml || '';
   state.savedAt = Date.now();
-  state.configPath = configPath;
+  state.configPath = data.path || runConfigPath(name);
+  setText('#config-path', runConfigPath(name));
+  localStorage.setItem(`moss.run.${state.profileName}`, name);
   const textarea = $('#yaml');
   if (textarea) textarea.value = state.savedYaml;
   syncFormFromConfig(state.config);
@@ -90,41 +113,48 @@ export async function loadConfig(path = null) {
   return state.config;
 }
 
-export async function switchConfig(name) {
-  if (!name || name === state.activeConfigName) { renderConfigList(); return; }
+export async function switchRun(name) {
+  if (!name || name === state.activeRun) { renderConfigList(); return; }
   if (state.dirty && !window.confirm(t('dash.msg2'))) {
     renderConfigList();
     return;
   }
-  localStorage.setItem(`moss.config.${state.profileName}`, name);
   await loadConfig(name);
 }
 
-export function openConfigDialog(mode) {
+export function openNewRunDialog() {
   if (!state.profileName) {
     showAlert({ type: 'warn', title: t('workspace.emptyTitle'), text: t('train.msg15'), timeout: 4000 });
     return;
   }
   const dialog = $('#config-dialog');
-  const active = state.activeConfigName || 'default';
-  state.configDialog.mode = mode;
-  const title = mode === 'new' ? t('configDialog.title') : mode === 'saveas' ? t('train.msg16') : t('train.msg17');
-  setText('#config-dialog-title', title);
-  setText('#config-dialog-desc', mode === 'new'
-    ? t('configDialog.desc')
-    : t('train.msg18'));
-  setHidden('#config-source-row', mode !== 'new');
+  setText('#config-dialog-title', t('runNew.title'));
+  setText('#config-dialog-desc', t('runNew.desc'));
+  setHidden('#config-source-row', false);
   const input = $('#config-name-input');
   if (input) {
-    input.value = mode === 'new' ? `config-${Date.now().toString().slice(-6)}` : `${active}-copy`;
+    input.value = newRunName();
     input.removeAttribute('aria-invalid');
   }
   const source = $('#config-source-select');
-  if (source) source.value = 'current';
+  if (source) {
+    source.innerHTML = [
+      `<option value="">${t('runNew.fromWorkspace')}</option>`,
+      ...(state.runs || []).map((entry) => `<option value="${entry.name}">${t('runNew.fromRun', { name: entry.name })}</option>`),
+    ].join('');
+    source.value = '';
+  }
   setHidden('#config-dialog-error', true);
   if (typeof dialog.showModal === 'function') { if (!dialog.open) dialog.showModal(); }
   else dialog.setAttribute('open', '');
   setTimeout(() => { input?.focus(); input?.select(); }, 30);
+}
+
+function newRunName() {
+  const stamp = new Date();
+  const pad = (value) => String(value).padStart(2, '0');
+  return `run-${stamp.getFullYear()}${pad(stamp.getMonth() + 1)}${pad(stamp.getDate())}`
+    + `-${pad(stamp.getHours())}${pad(stamp.getMinutes())}`;
 }
 
 export function closeConfigDialog() {
@@ -136,7 +166,6 @@ export function closeConfigDialog() {
 
 export async function submitConfigDialog(event) {
   event.preventDefault();
-  const mode = state.configDialog.mode;
   const input = $('#config-name-input');
   const errorBox = $('#config-dialog-error');
   const name = String(input?.value || '').trim().replace(/\.ya?ml$/i, '');
@@ -149,57 +178,60 @@ export async function submitConfigDialog(event) {
     show(t('train.msg19'));
     return;
   }
-  const oldName = state.activeConfigName;
-  const oldVirtual = state.configs.find((entry) => entry.name === oldName)?.virtual;
-  readFormIntoConfig();
-  let yamlText;
-  if (mode === 'new' && $('#config-source-select')?.value === 'workspace') {
-    yamlText = state.workspaceDefaultYaml;
-  } else {
-    yamlText = getCurrentYaml();
-  }
+  const from = $('#config-source-select')?.value || '';
   const confirm = $('#config-dialog-confirm');
   if (confirm) confirm.disabled = true;
   try {
-    const parsed = parseYaml(yamlText);
-    parsed.name = name;
-    const data = await api('/api/workspaces/' + encodeURIComponent(state.profileName) + '/configs', {
+    await api('/api/workspaces/' + encodeURIComponent(state.profileName) + '/runs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, yaml: dumpYaml(parsed), overwrite: false }),
+      body: JSON.stringify({ name, from }),
     });
-    if (mode === 'rename' && oldName && !oldVirtual && oldName !== name) {
-      await api('/api/workspaces/' + encodeURIComponent(state.profileName) + '/configs/' + encodeURIComponent(oldName), { method: 'DELETE' });
-    }
     closeConfigDialog();
-    localStorage.setItem(`moss.config.${state.profileName}`, name);
+    localStorage.setItem(`moss.run.${state.profileName}`, name);
+    state.activeRun = name;
     await loadConfig(name);
-    showSuccess(mode === 'rename' ? t('train.msg20') : mode === 'saveas' ? t('train.msg21') : t('train.msg22'), `${name} · ${data.entry?.path || ''}`, [], 'config-created');
+    showSuccess(t('runNew.created'), `runs/${name}/config.yaml`, [], 'run-created');
   } catch (error) {
-    show(error.detail || error.message);
+    show(error.status === 409
+      ? `${t('runNew.exists')}：${name}`
+      : (error.detail || error.message));
   } finally {
     if (confirm) confirm.disabled = false;
   }
 }
 
-export async function deleteCurrentConfig() {
-  if (!state.profileName) return;
-  const active = state.configs.find((entry) => entry.name === state.activeConfigName);
-  if (!active || active.virtual) return;
-  if (!window.confirm(t('train.config.confirmDelete', { name: active.name }))) return;
+export async function deleteCurrentRun() {
+  if (!state.profileName || !state.activeRun) return;
+  if (activeRunIsLive()) {
+    showAlert({ type: 'warn', title: t('runFrozen.title'), text: t('runFrozen.text'), timeout: 5000 });
+    return;
+  }
+  const run = state.activeRun;
+  if (!window.confirm(t('runDelete.confirm', { name: run }))) return;
   try {
-    await api('/api/workspaces/' + encodeURIComponent(state.profileName) + '/configs/' + encodeURIComponent(active.name), { method: 'DELETE' });
-    localStorage.removeItem(`moss.config.${state.profileName}`);
+    await api('/api/workspaces/' + encodeURIComponent(state.profileName)
+      + '/runs/' + encodeURIComponent(run), { method: 'DELETE' });
+    localStorage.removeItem(`moss.run.${state.profileName}`);
+    state.activeRun = '';
     await loadConfig();
-    showSuccess(t('train.msg23'), active.name, [], 'config-deleted');
+    showSuccess(t('runDelete.done'), `runs/${run}`, [], 'run-deleted');
   } catch (error) {
-    showError(t('train.msg24'), error.detail || error.message);
+    showError(t('runDelete.failed'), error.detail || error.message);
   }
 }
 
 export async function saveConfig(options = {}) {
   if (!state.profileName) {
     showAlert({ type: 'warn', title: t('workspace.emptyTitle'), text: t('train.msg33'), timeout: 5000 });
+    return false;
+  }
+  if (!state.activeRun) {
+    showAlert({ type: 'warn', title: t('runEmpty.title'), text: t('runEmpty.desc'), timeout: 5000 });
+    return false;
+  }
+  if (activeRunIsLive()) {
+    showAlert({ type: 'warn', title: t('runFrozen.title'), text: t('runFrozen.text'), timeout: 5000 });
     return false;
   }
   readFormIntoConfig();
@@ -213,46 +245,62 @@ export async function saveConfig(options = {}) {
       : t('train.yaml.errorNoLine', { error: error.message }));
     return false;
   }
-  const target = state.activeConfigName || 'default';
   const button = $('#btn-config-save');
   if (button) button.disabled = true;
   try {
-    const parsed = parseYaml(yamlText);
-    parsed.name = target;
-    const data = await api('/api/workspaces/' + encodeURIComponent(state.profileName) + '/configs', {
-      method: 'POST',
+    const data = await api('/api/workspaces/' + encodeURIComponent(state.profileName)
+      + '/runs/' + encodeURIComponent(state.activeRun) + '/config', {
+      method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: target, yaml: dumpYaml(parsed), overwrite: true }),
+      body: JSON.stringify({ yaml: yamlText }),
     });
-    state.savedYaml = dumpYaml(parsed);
+    state.savedYaml = yamlText;
     state.savedAt = Date.now();
-    state.config.name = target;
-    state.configPath = data.entry?.path || state.configPath;
-    localStorage.setItem(`moss.config.${state.profileName}`, target);
-    localStorage.setItem('moss.workspace', state.profileName);
+    state.configPath = data.path || runConfigPath();
     markDirty(false);
     clearYamlError();
-    const list = await api('/api/workspaces/' + encodeURIComponent(state.profileName) + '/configs');
-    state.configs = Array.isArray(list.configs) ? list.configs : [];
-    if (!state.configs.some((entry) => entry.name === target)) {
-      state.configs.unshift({ name: target, path: data.entry?.path || '' });
-    }
-    state.activeConfigName = target;
+    await refreshRunList();
     renderConfigList();
-    setText('#config-path', state.configPath);
-      refreshYamlFromConfig();
+    setText('#config-path', runConfigPath());
+    refreshYamlFromConfig();
     if (!options.silent) {
-      showSuccess(t('train.msg35'), t('train.config.savedPath', { path: data.entry?.path || state.configPath }), [], 'config-saved');
+      showSuccess(t('train.msg35'), t('train.config.savedPath', { path: state.configPath }), [], 'config-saved');
     }
     runSetupCheck().catch(() => {});
     return true;
   } catch (error) {
-    if (error.line) showYamlError({ message: error.detail || error.message, line: error.line, column: error.column });
+    if (error.status === 409 || /冻结/.test(String(error.detail || ''))) {
+      showAlert({ type: 'warn', title: t('runFrozen.title'), text: t('runFrozen.text'), timeout: 5000 });
+    } else if (error.line) {
+      showYamlError({ message: error.detail || error.message, line: error.line, column: error.column });
+    }
     showError(t('train.msg36'), error.detail || error.message, [
       { label: t('common.retry'), onClick: () => saveConfig() },
     ]);
     return false;
   } finally {
     if (button) button.disabled = false;
+    applyFrozenState();
   }
+}
+
+export function applyFrozenState() {
+  const live = activeRunIsLive();
+  const note = $('#config-frozen-note');
+  if (note) {
+    note.textContent = live ? t('runFrozen.text') : '';
+    setHidden('#config-frozen-note', !live);
+  }
+  const controls = document.querySelectorAll('#config-form input, #config-form select, #config-form textarea');
+  for (const control of controls) {
+    if (control.dataset.alwaysEnabled === 'true') continue;
+    control.disabled = live;
+  }
+  const yaml = $('#yaml');
+  if (yaml) yaml.readOnly = live;
+  for (const id of ['#btn-config-save', '#btn-config-delete']) {
+    const button = $(id);
+    if (button) button.disabled = live;
+  }
+  return live;
 }

@@ -190,7 +190,10 @@ export async function loadCache() {
     return;
   }
   try {
-    const params = new URLSearchParams({ path, workspace: workspaceParam(), reg_path: cacheRegPath() });
+    const params = new URLSearchParams({
+      path, workspace: workspaceParam(), reg_path: cacheRegPath(),
+      run: state.activeRun || '',
+    });
     const data = await api('/api/cache?' + params.toString());
     state.cache.data = data;
     state.cache.error = null;

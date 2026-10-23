@@ -19,15 +19,14 @@ from fastapi.responses import Response, StreamingResponse
 from ... import runtime
 from ... import settings as runtime_settings
 from ...config import apply_preset
-from .. import deps
 from ..deps import _rel, _safe_name, _settings_snapshot, _write_text
 from ..jobs import JOBS, Job, _terminate
 from ..services.cache_cmd import _cache_parts, _cache_summary
 from ..services.caption import (_caption_command, _caption_env, _caption_selection,
                                 resolve_api_key)
 from ..services.launcher import _command, _python, _run
-from ..services.workspace import (_resolve_workspace, _section, _workspace_cache_dir,
-                                  _workspace_config, _workspace_configs_dir, _workspace_dir,
+from ..services.workspace import (_config_from_data, _resolve_workspace, _run_config_path,
+                                  _run_is_live, _section, _workspace_cache_dir, _workspace_dir,
                                   _workspace_logs_dir, _workspace_root, _workspace_runs_dir,
                                   _workspace_target_run)
 
@@ -44,17 +43,20 @@ async def api_start(request: Request):
     parts = _cache_parts(body) if kind == "cache" else []
     workspace = _resolve_workspace(body.get("workspace"))
     text = body.get("yaml") or ""
-    if not text and body.get("config"):
-        # Naming a config beats shipping a copy of it: the agent passes the
-        # name the WebUI shows, and both paths read the same file.
-        config_name = _safe_name(body.get("config"), "配置名称")
-        candidate = os.path.join(_workspace_configs_dir(workspace), f"{config_name}.yaml")
+    run_arg = str(body.get("run") or "").strip()
+    if run_arg:
+        # A run names its own config; the file is the only thing read. Editing
+        # it afterwards is allowed, but not while the run is training.
+        run_arg = _safe_name(run_arg, "run 名称")
+        candidate = _run_config_path(workspace, run_arg)
         if not os.path.isfile(candidate):
-            raise HTTPException(404, f"配置不存在：{config_name}")
+            raise HTTPException(404, f"运行没有配置存档：{run_arg}")
+        if kind != "caption" and _run_is_live(workspace, run_arg):
+            raise HTTPException(409, "本次运行进行中，配置已冻结")
         with open(candidate, encoding="utf-8") as handle:
             text = handle.read()
     if not text:
-        raise HTTPException(400, 'yaml required (or pass {"config": "<name>"})')
+        raise HTTPException(400, 'yaml required (or pass {"run": "<name>"})')
     try:
         data = yaml.safe_load(text)
     except yaml.YAMLError as exc:
@@ -65,7 +67,7 @@ async def api_start(request: Request):
         raise HTTPException(400, "配置必须是一个 YAML 映射")
 
     settings, resolved = _settings_snapshot()
-    config = _workspace_config(workspace, data)
+    config = _config_from_data(workspace, data)
     apply_preset(config)
     problems = config.validate()
     if kind == "caption":

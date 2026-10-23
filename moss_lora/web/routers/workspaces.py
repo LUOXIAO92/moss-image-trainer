@@ -9,21 +9,18 @@ import shutil
 import subprocess
 import time
 
-import yaml
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from ... import runtime
-from ..deps import RESERVED_WORKSPACES, _rel, _safe_name, _write_text
+from ..deps import RESERVED_WORKSPACES, _rel, _safe_name
 from ..jobs import JOBS
 from ..services.system import (_is_cli_train_process, _parse_metrics, _run_samples)
-from ..services.workspace import (_dir_usage, _has_live_cli_training, _resolve_workspace,
-                                  _run_config_snapshot,
-                                  _workspace_config_path, _workspace_config_text,
-                                  _workspace_dir, _workspace_exists, _workspace_info,
-                                  _workspace_logs_dir, _workspace_name, _workspace_root,
-                                  _workspace_run_dirs, _workspace_run_list,
-                                  _workspace_runs_dir, _workspaces_payload)
+from ..services.workspace import (_dir_usage, _ensure_workspace_dirs, _has_live_cli_training,
+                                  _resolve_workspace, _run_config_snapshot, _workspace_dir,
+                                  _workspace_exists, _workspace_info, _workspace_logs_dir,
+                                  _workspace_name, _workspace_root, _workspace_run_dirs,
+                                  _workspace_run_list, _workspace_runs_dir, _workspaces_payload)
 
 router = APIRouter()
 
@@ -39,26 +36,7 @@ async def api_workspaces_create(request: Request):
     name = _workspace_name(body.get("name"))
     if _workspace_exists(name):
         return JSONResponse({"detail": f"工作区已存在：{name}"}, status_code=409)
-    supplied = body.get("yaml")
-    if supplied is not None:
-        if not isinstance(supplied, str) or not supplied.strip():
-            raise HTTPException(400, "yaml 不能为空")
-        try:
-            data = yaml.safe_load(supplied)
-        except yaml.YAMLError as exc:
-            raise HTTPException(400, f"YAML 语法错误：{getattr(exc, 'problem', exc)}")
-        if not isinstance(data, dict):
-            raise HTTPException(400, "配置必须是一个 YAML 映射")
-        text = supplied
-    else:
-        text = _workspace_config_text()
-    root = _workspace_root()
-    ws = _workspace_dir(name)
-    os.makedirs(os.path.join(ws, "train_cache"), exist_ok=True)
-    os.makedirs(os.path.join(ws, "reg_cache"), exist_ok=True)
-    os.makedirs(os.path.join(ws, "runs"), exist_ok=True)
-    os.makedirs(os.path.join(ws, "logs"), exist_ok=True)
-    _write_text(_workspace_config_path(name), text)
+    _ensure_workspace_dirs(name)
     return {"ok": True, "workspace": _workspace_info(name), **_workspaces_payload()}
 
 
@@ -77,7 +55,6 @@ def api_workspace_usage(name: str):
         raise HTTPException(404, f"工作区不存在：{name}")
     base = _workspace_dir(name)
     parts = {
-        "configs": _dir_usage(os.path.join(base, "configs")),
         "train_cache": _dir_usage(os.path.join(base, "train_cache")),
         "reg_cache": _dir_usage(os.path.join(base, "reg_cache")),
         "runs": _dir_usage(os.path.join(base, "runs")),

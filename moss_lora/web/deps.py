@@ -29,8 +29,7 @@ from .. import settings as runtime_settings
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
-WORKSPACE_MARKER = "workspace.yaml"
-RESERVED_WORKSPACES = {"configs", "train_cache", "reg_cache", "runs", "logs", "baseline", "exports"}
+RESERVED_WORKSPACES = {"train_cache", "reg_cache", "runs", "logs", "baseline", "exports"}
 SETTINGS_REL = os.path.relpath(runtime_settings.SETTINGS_PATH, ROOT)
 NAME_RE = runtime_settings.NAME_RE
 STEP_RE = re.compile(

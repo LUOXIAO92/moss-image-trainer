@@ -43,21 +43,23 @@
 
 ## 快速开始
 
-WebUI 模式下，运行 `./run.sh --port 7869` 并访问 `http://127.0.0.1:7869`，在「工作区」新建工作区，在「训练设置」填入 `<MODELS_DIR>` 与 `<DATASET_DIR>`，再依次启动潜变量缓存、文本特征缓存与训练。
+WebUI 模式下，运行 `./run.sh --port 7869` 并访问 `http://127.0.0.1:7869`，在「工作区」新建工作区，在「训练设置」新建一个运行并填入 `<MODELS_DIR>` 与 `<DATASET_DIR>`，再依次启动潜变量缓存、文本特征缓存与训练。
 
-CLI 模式下，基于 `workspaces/<WORKSPACE>/workspace.yaml` 分三步执行：
+CLI 模式下，基于某次运行的配置分三步执行：
 
 ```bash
 WS=workspaces/<WORKSPACE>
+RUN=<run>
+CONFIG="$WS/runs/$RUN/config.yaml"
 
 # 1. 编码图像潜变量缓存（写入 $WS/train_cache）
-.venv/bin/python -m moss_lora.cli cache --config "$WS/workspace.yaml"
+.venv/bin/python -m moss_lora.cli cache --config "$CONFIG"
 
 # 2. 编码文本特征缓存（本地 Qwen3.5-9B）
-.venv/bin/python -m moss_lora.cli encode-text --config "$WS/workspace.yaml"
+.venv/bin/python -m moss_lora.cli encode-text --config "$CONFIG"
 
 # 3. 启动 LoRA 训练（输出至 $WS/runs/<name>）
-.venv/bin/python -m moss_lora.cli train --config "$WS/workspace.yaml"
+.venv/bin/python -m moss_lora.cli train --config "$CONFIG"
 ```
 
 数据集扫描器递归读取 `.jpg`、`.jpeg`、`.png`、`.webp` 与 `.bmp` 图片，配对 sidecar JSON、同名 `.txt`/`.caption` 或 `metadata.jsonl` 标注；`3_concept` 子目录将内部图片重复采样 3 次。
@@ -66,19 +68,19 @@ WS=workspaces/<WORKSPACE>
 
 ```bash
 # 查看数据集统计与字幕覆盖
-.venv/bin/python -m moss_lora.cli info --config "$WS/workspace.yaml"
+.venv/bin/python -m moss_lora.cli info --config "$CONFIG"
 
 # 按显存预算（GB）规划精度、量化与块交换参数并写回配置
-.venv/bin/python -m moss_lora.cli plan --vram 12 --config "$WS/workspace.yaml" --write "$WS/workspace.yaml"
+.venv/bin/python -m moss_lora.cli plan --vram 12 --config "$CONFIG" --write "$CONFIG"
 
 # 生成无 LoRA 基准图，或重绘指定步数检查点的预览图
-.venv/bin/python -m moss_lora.cli baseline --config "$WS/workspace.yaml"
-.venv/bin/python -m moss_lora.cli preview --config "$WS/workspace.yaml" --step 500
+.venv/bin/python -m moss_lora.cli baseline --config "$CONFIG"
+.venv/bin/python -m moss_lora.cli preview --config "$CONFIG" --step 500
 
 # 编码自定义提示词并用指定检查点采样
-.venv/bin/python -m moss_lora.cli encode-prompt --config "$WS/workspace.yaml" \
+.venv/bin/python -m moss_lora.cli encode-prompt --config "$CONFIG" \
     --out "$WS/custom_prompts.safetensors" --prompt "a portrait in soft daylight"
-.venv/bin/python -m moss_lora.cli sample --config "$WS/workspace.yaml" \
+.venv/bin/python -m moss_lora.cli sample --config "$CONFIG" \
     --checkpoint "$WS/runs/<name>/checkpoints/<ckpt>.safetensors" \
     --embeds "$WS/custom_prompts.safetensors" --out "$WS/samples"
 
@@ -86,7 +88,7 @@ WS=workspaces/<WORKSPACE>
 .venv/bin/python -m moss_lora.cli queue --workspace "$WS"
 
 # 起一个掉线也继续跑的训练，再用看板同款的方式读它的状态
-.venv/bin/python -m moss_lora.cli train --config "$WS/workspace.yaml" --detach
+.venv/bin/python -m moss_lora.cli train --config "$CONFIG" --detach
 .venv/bin/python -m moss_lora.cli status
 .venv/bin/python -m moss_lora.cli status --workspace my-lora --live --json
 ```
@@ -95,11 +97,11 @@ WS=workspaces/<WORKSPACE>
 
 ## 配置
 
-配置分为机器级 `settings.yaml` 与工作区级 `workspace.yaml` 两层。
+配置分为机器级 `settings.yaml` 与每次运行自带的配置两层。
 
 `settings.yaml` 存放本机参数（已被 `.gitignore` 忽略），首次启动从 [settings.example.yaml](<settings.example.yaml>) 复制生成，管理工作区根目录 `paths.workspaces`、CUDA 分配器 `runtime`（`allocator: expandable|async|off` 与 `gc_threshold`）、界面语言 `ui.language` 及提示词生成服务 `caption`（`base_url`、环境变量名 `api_key`、模型名、并发数与模板）。设置页直接输入的明文密钥仅驻留当前进程内存，不写盘。
 
-`workspace.yaml` 位于 `workspaces/<WORKSPACE>/workspace.yaml`，定义模型、数据集、缓存、LoRA 结构、训练超参、显存策略与预览提示词。相对路径（如 `cache.dir`、`output_dir`）相对于工作区目录解析，移动工作区目录不破坏引用：
+每次运行的完整配置在 `workspaces/<WORKSPACE>/runs/<RUN>/config.yaml`，定义模型、数据集、缓存、LoRA 结构、训练超参、显存策略与预览提示词。相对路径（如 `cache.dir`、`output_dir`）相对于工作区目录解析，移动工作区目录不破坏引用。该运行训练期间这份配置只读，运行结束后可改。在 WebUI 里新建运行即可得到一份，也可以在运行对话框里从已有运行复制：
 
 ```yaml
 name: my-lora
@@ -200,14 +202,14 @@ lora_unet_layers_<0..41>_proj_<q|k|v|o|ffn_up_gate|ffn_down>.alpha
 ```bash
 # 导出单个步数检查点（同时生成 kohya 与 diffusers 格式）
 .venv/bin/python -m moss_lora.cli export \
-    --config "workspaces/<WORKSPACE>/workspace.yaml" \
+    --config "workspaces/<WORKSPACE>/runs/<RUN>/config.yaml" \
     --checkpoint 1000 \
     --formats kohya,diffusers \
     --out "workspaces/<WORKSPACE>/exports"
 
 # 按步数区间批量导出并打包为 zip
 .venv/bin/python -m moss_lora.cli export-batch \
-    --config "workspaces/<WORKSPACE>/workspace.yaml" \
+    --config "workspaces/<WORKSPACE>/runs/<RUN>/config.yaml" \
     --steps 250-1000:250 \
     --formats kohya \
     --out "workspaces/<WORKSPACE>/exports" \

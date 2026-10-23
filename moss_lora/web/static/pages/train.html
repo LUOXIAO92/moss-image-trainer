@@ -36,11 +36,9 @@
       <span class="chip chip-muted" id="config-summary">--</span>
     </div>
     <div class="config-actions">
-      <button class="btn btn-ghost btn-sm" id="btn-config-new" type="button" data-i18n="common.new">新建</button>
+      <button class="btn btn-ghost btn-sm" id="btn-config-new" type="button" data-i18n="runNew.title">新建运行</button>
       <button class="btn btn-sm" id="btn-config-save" type="button" data-i18n="common.save">保存</button>
-      <button class="btn btn-ghost btn-sm" id="btn-config-saveas" type="button" data-i18n="common.saveAs">另存为</button>
-      <button class="btn btn-ghost btn-sm" id="btn-config-rename" type="button" data-i18n="common.rename">重命名</button>
-      <button class="btn btn-danger-ghost btn-sm" id="btn-config-delete" type="button" data-i18n="common.delete">删除</button>
+      <button class="btn btn-danger-ghost btn-sm" id="btn-config-delete" type="button" data-i18n="runDelete.title">删除运行</button>
     </div>
   </div>
 
@@ -103,7 +101,8 @@
           <h2 id="config-form-title" data-i18n="train.config">配置</h2>
           <span class="chip chip-muted" id="config-dirty" data-i18n="common.unmodified">未修改</span>
         </div>
-        <p class="panel-desc"><span data-i18n="train.configFile">配置文件</span> <span class="mono" id="config-path">configs/&lt;config&gt;.yaml</span></p>
+        <p class="panel-desc"><span data-i18n="train.configFile">配置文件</span> <span class="mono" id="config-path">runs/&lt;run&gt;/config.yaml</span></p>
+        <p class="callout callout-warn hidden" id="config-frozen-note" role="status"></p>
       </header>
 
       <div id="form-errors" class="form-errors hidden" role="alert" tabindex="-1" aria-labelledby="form-errors-title">

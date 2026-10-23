@@ -645,8 +645,11 @@ export function renderDashboard(data) {
   setText('#dash-run-name', data.run || '--');
   const runInfo = runs.find((run) => run.name === data.run);
   setText('#dash-run-path', runInfo?.path || '--');
-  // The run's own config file, or "no snapshot": never another run's config.
-  setText('#dash-run-config', data.run_config_path || t('train.noSnapshot'));
+  // The run's own config file, or "no snapshot": never another config's.
+  const runConfigName = String(data.run || '').split('/').pop();
+  setText('#dash-run-config', data.run_config_path && runConfigName
+    ? `runs/${runConfigName}/config.yaml`
+    : t('train.noSnapshot'));
   setText('#dash-last-update', runInfo?.mtime ? fmtTime(runInfo.mtime) : '--');
   setText('#dash-points', t('dash.kpi.points', { train: train.length, eval: evals.length }));
   setText('#dash-samples-count', fmtInt((data.samples || []).length));

@@ -16,9 +16,6 @@ import sys
 
 from .config import Config
 
-TRAIN_SNAPSHOTS = ("logs", "configs")
-
-
 def _read_metrics(run_dir: str) -> list[dict]:
     path = os.path.join(run_dir, "metrics.jsonl")
     rows = []
@@ -53,42 +50,15 @@ def _checkpoints(run_dir: str) -> list[tuple[int, str]]:
 
 
 def _snapshot(workspace: str, run: str) -> str | None:
-    for folder in TRAIN_SNAPSHOTS:
-        path = os.path.join(workspace, folder, f"{run}.yaml")
-        if os.path.isfile(path):
-            return path
-    config = os.path.join(workspace, "workspace.yaml")
-    return config if os.path.isfile(config) else None
-
-
-def _arm_configs(workspace: str) -> dict[str, str]:
-    """Saved training configs under ``<ws>/configs``."""
-    arms = {}
-    for folder in ("configs",):
-        directory = os.path.join(workspace, folder)
-        if not os.path.isdir(directory):
-            continue
-        for name in os.listdir(directory):
-            if name.endswith((".yaml", ".yml")):
-                arms.setdefault(os.path.splitext(name)[0], os.path.join(directory, name))
-    return arms
+    """A run resumes from the config it started with, and nothing else."""
+    path = os.path.join(workspace, "runs", run, "config.yaml")
+    return path if os.path.isfile(path) else None
 
 
 def find_pending(workspace: str) -> list[dict]:
-    """Runs that stopped short of their target, plus configs that never started."""
+    """Runs that stopped short of their target and have a checkpoint to resume."""
     runs_dir = os.path.join(workspace, "runs")
     pending = []
-    for run in sorted(_arm_configs(workspace)):
-        if not os.path.isdir(os.path.join(runs_dir, run)):
-            cfg_path = _arm_configs(workspace)[run]
-            try:
-                config = Config.load(cfg_path)
-            except Exception:
-                continue
-            pending.append({
-                "run": run, "step": 0, "total": int(config.train.steps),
-                "checkpoint": None, "checkpoint_step": 0, "config": cfg_path,
-            })
     if not os.path.isdir(runs_dir):
         return pending
     for run in sorted(os.listdir(runs_dir)):
@@ -121,9 +91,27 @@ def find_pending(workspace: str) -> list[dict]:
     return pending
 
 
+def _workspace_config_path(workspace: str) -> str | None:
+    """The newest run's config: the cache and queue operate per run."""
+    runs_dir = os.path.join(workspace, "runs")
+    if not os.path.isdir(runs_dir):
+        return None
+    found = []
+    for name in os.listdir(runs_dir):
+        path = os.path.join(runs_dir, name, "config.yaml")
+        if os.path.isfile(path):
+            found.append((os.path.getmtime(path), path))
+    if not found:
+        return None
+    return max(found)[1]
+
+
 def missing_cache(workspace: str) -> dict:
     """How many items still lack latents or text embeddings."""
-    config = Config.load(os.path.join(workspace, "workspace.yaml"))
+    path = _workspace_config_path(workspace)
+    if not path:
+        raise SystemExit(f"queue: 没有可用的运行配置：{workspace}/runs/*/config.yaml")
+    config = Config.load(path)
     from .cache import CacheBuilder
 
     builder = CacheBuilder(config, log=lambda *a: None)
@@ -139,7 +127,10 @@ def missing_cache(workspace: str) -> dict:
 
 
 def ensure_cache(workspace: str, log=print) -> None:
-    config_path = os.path.join(workspace, "workspace.yaml")
+    config_path = _workspace_config_path(workspace)
+    if not config_path:
+        raise SystemExit(f"queue: 没有可用的运行配置：{workspace}/runs/*/config.yaml")
+    log(f"queue: using {config_path}")
     config = Config.load(config_path)
     from .cache import CacheBuilder
     from .encode import run_encode_text

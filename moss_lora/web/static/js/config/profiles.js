@@ -72,7 +72,6 @@ export async function loadProfiles(options = {}) {
   if (chosen) {
     state.profileName = chosen.name;
     state.workspacePath = chosen.path || '';
-    state.configPath = chosen.config_path || '';
     localStorage.setItem('moss.workspace', chosen.name);
   } else {
     state.profileName = '';
@@ -96,12 +95,13 @@ export async function switchProfile(name) {
   }
   const previous = {
     profileName: state.profileName, workspacePath: state.workspacePath,
-    configPath: state.configPath,
+    configPath: state.configPath, activeRun: state.activeRun,
   };
   try {
     state.profileName = profile.name;
     state.workspacePath = profile.path || '';
-    state.configPath = profile.config_path || '';
+    state.configPath = '';
+    state.activeRun = '';
     localStorage.setItem('moss.workspace', profile.name);
     await loadConfig();
     state.dashboard.run = null;
@@ -132,6 +132,7 @@ export async function switchProfile(name) {
     state.profileName = previous.profileName;
     state.workspacePath = previous.workspacePath;
     state.configPath = previous.configPath;
+    state.activeRun = previous.activeRun;
     renderProfileOptions();
     showError(t('train.msg26'), error.detail || error.message);
   }
@@ -195,7 +196,6 @@ export async function submitProfileDialog(event) {
   if (confirm) confirm.disabled = true;
   try {
     const payload = { name };
-    if (mode === 'saveas') payload.yaml = getCurrentYaml();
     const data = await api('/api/workspaces', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -210,7 +210,7 @@ export async function submitProfileDialog(event) {
     state.series = { train: new Map(), avg: new Map(), eval: new Map(), meta: new Map() };
     state.trainTotal = 0;
     await loadTrainHistory();
-    showSuccess(mode === 'saveas' ? t('train.msg32') : t('train.msg32'), data.workspace.config_path, [], 'workspace-created');
+    showSuccess(t('train.msg32'), data.workspace.path, [], 'workspace-created');
     runSetupCheck().catch(() => {});
   } catch (error) {
     show(error.detail || error.message);

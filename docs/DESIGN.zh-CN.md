@@ -25,8 +25,6 @@
 
 ```text
 workspaces/<WORKSPACE>/
-├── workspace.yaml                    # 工作区主配置（相对路径以此目录为基准）
-├── configs/<name>.yaml               # 训练配置变体（共享同一套缓存）
 ├── train_cache/                      # 训练集缓存目录（cache.dir 默认值）
 │   ├── <uid>.safetensors             # 单样本缓存（含 latent、text_embeds、text_mask）
 │   ├── preview.safetensors           # 预览提示词与负面提示词特征包
@@ -37,7 +35,8 @@ workspaces/<WORKSPACE>/
 ├── logs/                             # 任务运行日志与配置快照
 │   ├── <job_id>.yaml                 # 任务启动时的实际配置快照
 │   └── <run_id|cache-*|caption-*>.log
-├── runs/<run_id>/                    # 单次训练产物（output_dir 默认值）
+├── runs/<run_id>/                    # 一次运行：它自己的配置和全部产物
+│   ├── config.yaml                   # 这次运行的完整配置；训练进行中只读
 │   ├── metrics.jsonl                 # 逐歩训练损失、验证损失、学习率与显存记录
 │   ├── training.json                 # CLI 训练进程心跳文件（pid / step / time）
 │   ├── checkpoints/
@@ -242,7 +241,7 @@ Sidecar 文件固定采用 `schema: 2` 结构，容纳两个互不干扰的风�
 - 确定性留出集验证：`train.eval_holdout > 0`（默认 `0.05`）时，`_split_eval` 计算每张图像绝对路径的 SHA1 前 8 位十六进制值，按模 1000 切分验证集。哈希切分保证跨运行、跨中断续训的验证样本集合恒定；每 `train.eval_every` 步使用固定种子 `1234` 计算前 `train.eval_batches` 批的验证损失，追加写入 `metrics.jsonl`。
 - 周期采样与轨迹拼图：每 `train.sample_every` 步调用 [sampling.py](<../moss_lora/sampling.py>) 的 `sample` 生成预览图，训练结束时由 `make_contact_sheet` 按「每步一行、每条提示词一列」拼接为 `samples/trajectory.png`。采样异常被捕获并记录日志，绝不中断训练主循环。
 - 检查点与状态分离：`save_checkpoint` 每 `train.save_every` 步写出仅含 LoRA 权重且直接采用 `lora_unet_*` 键名的 `checkpoints/stepXXXXXX.safetensors`（结束时写 `final.safetensors`），并在头部 `metadata` 写入步数与配置摘要。优化器动量和 CPU/CUDA 随机数状态则根据 `train.save_state`（`off|last|all`，默认 `last`）单独写入滚动更新的 `checkpoints/state.safetensors` 或按步保存的 `<tag>.state.safetensors`。
-- 断点续训与队列：传入 `--resume <ckpt>` 时，`_load_checkpoint` 通过 `_denormalise_keys` 将 `lora_unet_*` 键名逆映射回 PEFT 参数名，随后查找同目录匹配的 `.state.safetensors` 或 `state.safetensors`，校验 `state_step == step` 后恢复优化器动量与 RNG 状态。[queue.py](<../moss_lora/queue.py>) 的 `run_pipeline` 可扫描工作区内所有 `metrics.jsonl` 未达目标步数或 `configs/*.yaml` 尚未启动的任务，先补齐缺失缓存再逐一续训。
+- 断点续训与队列：传入 `--resume <ckpt>` 时，`_load_checkpoint` 通过 `_denormalise_keys` 将 `lora_unet_*` 键名逆映射回 PEFT 参数名，随后查找同目录匹配的 `.state.safetensors` 或 `state.safetensors`，校验 `state_step == step` 后恢复优化器动量与 RNG 状态。[queue.py](<../moss_lora/queue.py>) 的 `run_pipeline` 可扫描工作区内所有 `metrics.jsonl` 未达目标步数的运行，先补齐缺失缓存，再按各自 `runs/<run>/config.yaml` 逐一续训。
 
 这套设计通过分离权重与优化器状态，把每个检查点体积压缩了三分之二且立即可用于推理；代价是在默认的 `save_state: last` 下，只有最新一个检查点拥有匹配的优化器动量，若指定从更早的历史步数 `--resume`，训练器只能恢复模型权重而优化器动量将从零重建。
 
@@ -311,7 +310,7 @@ WebUI 后端采用「路由层 → 服务层 → 共享状态与任务注册表�
 
 ## 10. 配置系统
 
-配置系统将机器环境参数（`settings.yaml`）与实验超参（`workspace.yaml` 及 `configs/*.yaml`）严格分离，并通过显存预设与预检接口在启动前拦截配置错误。
+配置系统将机器环境参数（`settings.yaml`）与实验超参严格分离，并通过显存预设与预检接口在启动前拦截配置错误。训练配置只有一个家：`runs/<run>/config.yaml`，是完整配置而不是覆盖层。新运行从 `Config()` 默认值开始，或复制另一次运行的配置，此后不依赖其它文件。训练进行中拒绝写入，运行结束后可改。
 
 两层配置文件的职责边界如下：
 - 机器级配置 `settings.yaml`（由 [settings.py](<../moss_lora/settings.py>) 管理）：位于仓库根目录，被 `.gitignore` 忽略；首次启动时由 `ensure_settings_file` 从 [settings.example.yaml](<../settings.example.yaml>) 自动复制生成。文件仅包含四个顶层段：
@@ -319,13 +318,13 @@ WebUI 后端采用「路由层 → 服务层 → 共享状态与任务注册表�
   - `runtime`：CUDA 缓存分配器策略 `allocator`（`expandable|async|off`，默认 `expandable`）与回收阈值 `gc_threshold`（默认 `0.9`）。`alloc_conf_for` 会为训练任务注入 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.90`（或 `backend:cudaMallocAsync`），但对 `encode-text` 与 `encode-prompt` 强制清空该变量，防止一次性拷贝 9B 权重时在部分驱动或 WSL2 下触发 GPU 映射失败。
   - `caption`：OpenAI 兼容的本地视觉服务配置，含 `base_url`、`api_key`、`model`、`trigger`、`workers`（`1..32`，默认 `6`）、`retries`（`1..10`，默认 `3`）、`temperature`（默认 `1.0`）、`top_p`（默认 `0.95`）、`max_tokens`（默认 `16384`）、`thinking`（默认 `true`）及自定义模板 `prompt_tags` / `prompt_natural`（与内置模板相同时自动存为空串）。`api_key` 遵循安全持久化规则（见 [caption.py](<../moss_lora/web/services/caption.py>) 与 [settings_svc.py](<../moss_lora/web/services/settings_svc.py>)）：若填入形如 `^[A-Z_][A-Z0-9_]{0,63}$` 的环境变量名且环境中存在该值，则将变量名写入 `settings.yaml`；若直接填入明文密钥且通过 `/models` 探测，则只存入进程内存 `deps._LITERAL_API_KEY`，`settings.yaml` 中写空串；向提示词生成子进程传递密钥时一律通过子进程环境变量注入，绝不写入命令行参数或日志文件。
   - `ui.language`：当前界面语言代码（正则 `^[a-z][a-z0-9-]{1,7}$`，默认 `zh`）。
-- 工作区配置 `workspaces/<WORKSPACE>/workspace.yaml` 与实验变体 `workspaces/<WORKSPACE>/configs/<name>.yaml`（由 [config.py](<../moss_lora/config.py>) 管理）：映射为嵌套 dataclass `Config`，下辖 `name`、`output_dir` 以及 `model`（`ModelConfig`）、`dataset`（`DatasetConfig`）、`cache`（`CacheConfig`）、`lora`（`LoraConfig`）、`train`（`TrainConfig`，内嵌 `sigma: SigmaConfig`）、`vram`（`VramConfig`）、`export`（`ExportConfig`）、`preview`（`PreviewConfig`）八个子段。从 `workspace.yaml` 或 `configs/*.yaml` 加载时，`Config.load` 将工作区目录设为 `_base_dir`，使 `dataset.path`、`dataset.reg_path`、`cache.dir`（留空默认 `train_cache`）、`cache.reg_dir` 与 `output_dir`（留空默认 `runs`）全部相对于该工作区目录解析；Web 端保存时，`_portable_workspace_config` 还会将指向工作区内部的绝对缓存和输出路径自动重写回相对名称，保证整个工作区文件夹可整体移动或备份。`${VAR}` 环境变量表达式仅在该变量非空时展开，未定义时原样保留以便校验器报错，避免静默展开为根目录 `/...`。
+- 每次运行自带的 `workspaces/<WORKSPACE>/runs/<run>/config.yaml`（由 [config.py](<../moss_lora/config.py>) 管理）：映射为嵌套 dataclass `Config`，下辖 `name`、`output_dir` 以及 `model`（`ModelConfig`）、`dataset`（`DatasetConfig`）、`cache`（`CacheConfig`）、`lora`（`LoraConfig`）、`train`（`TrainConfig`，内嵌 `sigma: SigmaConfig`）、`vram`（`VramConfig`）、`export`（`ExportConfig`）、`preview`（`PreviewConfig`）八个子段。从 `runs/<run>/config.yaml` 加载时，`Config.load` 将工作区目录设为 `_base_dir`，使 `dataset.path`、`dataset.reg_path`、`cache.dir`（留空默认 `train_cache`）、`cache.reg_dir` 与 `output_dir`（留空默认 `runs`）全部相对于该工作区目录解析；Web 端保存时，`_portable_workspace_config` 还会将指向工作区内部的绝对缓存和输出路径自动重写回相对名称，保证整个工作区文件夹可整体移动或备份。`${VAR}` 环境变量表达式仅在该变量非空时展开，未定义时原样保留以便校验器报错，避免静默展开为根目录 `/...`。
 
 校验与预设机制贯穿前后端与 CLI：
 - 静态与运行时校验：`Config.validate()` 检查必填路径（`dataset.path`、`model.dit`、`model.vae` 必须存在；`model.text_encoder` 可为空以支持纯缓存训练，非空时须为含 `config.json` 的目录或 `.safetensors` 文件）、枚举合法性（`dataset.moss_caption_source`、`train.attention`、`train.batch_mode`）、数值范围（`lora.rank > 0`、`lora.layers` 与 `preview.uncond_skip_layers` 落在 `0..41`、`preview.width` 与 `preview.height` 为 16 的正整数倍）。Web 端 `POST /api/validate`（[validate.py](<../moss_lora/web/routers/validate.py>)）在此基础上叠加缓存就绪检查，并返回 `next_tab` 与 `focus_field` 引导前端自动跳转到首个出错控件。
-- 显存预设与 CLI 规划：`apply_preset` 根据 `vram.preset`（`32|24|16|12|8|6`）或 `detect_vram_gb()` 自动探测的显卡容量填充 `gradient_checkpointing`、`blocks_to_swap`、`optimizer_in_8bit` 与 `quantize_dit`。CLI 子命令 `python -m moss_lora.cli plan --vram <GB> --config workspaces/<WORKSPACE>/workspace.yaml --write workspaces/<WORKSPACE>/workspace.yaml` 则扣除采样预留余量后，在内置基准表 `MEMORY_TABLE` 中挑选满足显存预算且单步最快的精度、NF4 量化与块交换组合写回配置文件。
+- 显存预设与 CLI 规划：`apply_preset` 根据 `vram.preset`（`32|24|16|12|8|6`）或 `detect_vram_gb()` 自动探测的显卡容量填充 `gradient_checkpointing`、`blocks_to_swap`、`optimizer_in_8bit` 与 `quantize_dit`。CLI 子命令 `python -m moss_lora.cli plan --vram <GB> --config workspaces/<WORKSPACE>/runs/<RUN>/config.yaml --write workspaces/<WORKSPACE>/runs/<RUN>/config.yaml` 则扣除采样预留余量后，在内置基准表 `MEMORY_TABLE` 中挑选满足显存预算且单步最快的精度、NF4 量化与块交换组合写回配置文件。
 
-两层配置分离配合相对路径解析，确保工作区配置不含任何本机敏感信息，而将 `settings.yaml` 排除在版本控制之外则保护了本机目录结构与 API 密钥；代价是同一工作区下的多份 `configs/*.yaml` 共享同一个 `train_cache/`，若某份变体配置修改了分辨率或提示词来源，启动训练前必须手动重跑缓存。
+两层配置分离配合相对路径解析，确保工作区配置不含任何本机敏感信息，而将 `settings.yaml` 排除在版本控制之外则保护了本机目录结构与 API 密钥；代价是同一工作区下的每次运行共享同一个 `train_cache/`，若某次运行的配置改动了分辨率或提示词来源，启动训练前必须手动重跑缓存。
 
 ## 11. 测试与验收
 

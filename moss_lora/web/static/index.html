@@ -310,7 +310,7 @@
       <span class="field-label" data-i18n="profile.name">工作区名称</span>
       <input id="profile-name-input" type="text" spellcheck="false" autocomplete="off" placeholder="demo">
     </label>
-    <p class="field-help"><span data-i18n="profile.nameHelp">只允许字母、数字、点、下划线、短横线；自动创建</span> <span class="mono">workspaces/&lt;name&gt;/workspace.yaml</span>。</p>
+    <p class="field-help"><span data-i18n="profile.nameHelp">只允许字母、数字、点、下划线、短横线；只创建目录；第一次进入时新建运行。</span> <span class="mono">workspaces/&lt;name&gt;/</span></p>
     <div class="inline-error hidden" id="profile-dialog-error" role="alert"></div>
     <div class="dialog-actions">
       <button class="btn btn-ghost" id="profile-dialog-cancel" type="button" data-i18n="common.cancel">取消</button>
@@ -342,22 +342,19 @@
 
 <dialog class="profile-dialog config-dialog" id="config-dialog" aria-labelledby="config-dialog-title">
   <header class="modal-head">
-    <h2 id="config-dialog-title" data-i18n="configDialog.title">新建训练配置</h2>
+    <h2 id="config-dialog-title" data-i18n="runNew.title">新建运行</h2>
     <button class="btn btn-ghost btn-sm" id="config-dialog-close" type="button" aria-label="关闭" data-i18n-aria="common.close" data-i18n="common.close">关闭</button>
   </header>
-  <p class="profile-dialog-desc" id="config-dialog-desc" data-i18n="configDialog.desc">配置只覆盖训练相关字段；模型、数据集与缓存路径仍使用 workspace.yaml。</p>
+  <p class="profile-dialog-desc" id="config-dialog-desc" data-i18n="runNew.desc">新运行得到自己的一份 runs/&lt;run&gt;/config.yaml；模型与数据集路径在训练设置里填。</p>
   <form id="config-dialog-form">
     <label class="field" for="config-name-input">
-      <span class="field-label" data-i18n="configDialog.name">配置名称</span>
-      <input id="config-name-input" type="text" spellcheck="false" autocomplete="off" placeholder="例如 r16-nf4ffn" data-i18n-placeholder="configDialog.namePlaceholder">
-      <span class="field-help" data-i18n="configDialog.nameHelp">字母、数字、点、下划线、短横线。</span>
+      <span class="field-label" data-i18n="runNew.name">运行名</span>
+      <input id="config-name-input" type="text" spellcheck="false" autocomplete="off" placeholder="例如 r16-nf4ffn" data-i18n-placeholder="runNew.namePlaceholder">
+      <span class="field-help" data-i18n="runNew.nameHelp">字母、数字、点、下划线、短横线。</span>
     </label>
     <label class="field" id="config-source-row" for="config-source-select">
-      <span class="field-label" data-i18n="configDialog.source">初始内容</span>
-      <select id="config-source-select">
-        <option value="current" data-i18n="configDialog.sourceCurrent">从当前表单复制</option>
-        <option value="workspace" data-i18n="configDialog.sourceWorkspace">从 workspace.yaml 默认配置复制</option>
-      </select>
+      <span class="field-label" data-i18n="runNew.source">初始内容</span>
+      <select id="config-source-select"></select>
     </label>
     <div class="inline-error hidden" id="config-dialog-error" role="alert"></div>
     <div class="dialog-actions">

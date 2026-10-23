@@ -249,7 +249,7 @@ async function boot() {
       { label: t('common.reload'), onClick: () => location.reload() },
     ], 'init-error');
   }
-  const configResult = await Promise.allSettled([loadConfig(state.configPath || null)]);
+  const configResult = await Promise.allSettled([loadConfig()]);
   for (const failure of configResult.filter((result) => result.status === 'rejected')) {
     showError(t('common.msg90'), failure.reason?.message || String(failure.reason), [
       { label: t('common.reload'), onClick: () => location.reload() },

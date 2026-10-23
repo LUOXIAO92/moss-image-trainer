@@ -14,8 +14,7 @@ import yaml
 from fastapi import HTTPException
 
 from ...config import Config
-from ..deps import (RESERVED_WORKSPACES, ROOT, WORKSPACE_MARKER, _rel, _safe_name,
-                    _settings_snapshot, _write_text)
+from ..deps import RESERVED_WORKSPACES, ROOT, _rel, _safe_name, _settings_snapshot
 from .system import _dir_size, _is_cli_train_process, _parse_metrics
 
 
@@ -33,33 +32,6 @@ def _workspace_dir(name: str) -> str:
 
 
 
-def _workspace_configs_dir(name: str) -> str:
-    return os.path.join(_workspace_dir(name), "configs")
-
-
-def _config_entry(path: str) -> dict:
-    """Small summary the training page shows for each saved config."""
-    entry = {"name": os.path.splitext(os.path.basename(path))[0], "path": _rel(path),
-             "mtime": os.path.getmtime(path)}
-    try:
-        with open(path, encoding="utf-8") as handle:
-            data = yaml.safe_load(handle) or {}
-        entry.update({
-            "steps": (data.get("train") or {}).get("steps"),
-            "rank": (data.get("lora") or {}).get("rank"),
-            "quantize": (data.get("vram") or {}).get("quantize_dit"),
-            "lr": (data.get("train") or {}).get("lr"),
-            "dataset": (data.get("dataset") or {}).get("path") or "",
-        })
-    except Exception as exc:
-        entry["error"] = str(exc)
-    return entry
-
-
-def _workspace_config_path(name: str) -> str:
-    return os.path.join(_workspace_dir(name), WORKSPACE_MARKER)
-
-
 def _workspace_name(value: str | None) -> str:
     name = _safe_name(value, "工作区名称")
     if name in RESERVED_WORKSPACES:
@@ -68,13 +40,13 @@ def _workspace_name(value: str | None) -> str:
 
 
 def _workspace_exists(name: str) -> bool:
-    """A workspace is a directory; the config file is created on demand."""
+    """A workspace is a directory; each run carries its own config."""
     return os.path.isdir(_workspace_dir(name))
 
 
 def _ensure_workspace_dirs(name: str) -> str:
     directory = _workspace_dir(name)
-    for sub in ("", "configs", "train_cache", "reg_cache", "runs", "logs"):
+    for sub in ("", "train_cache", "reg_cache", "runs", "logs"):
         os.makedirs(os.path.join(directory, sub), exist_ok=True)
     return directory
 
@@ -87,7 +59,7 @@ def _workspace_names() -> list[str]:
     for name in sorted(os.listdir(root)):
         if name.startswith(".") or name in RESERVED_WORKSPACES:
             continue
-        if os.path.isfile(os.path.join(root, name, WORKSPACE_MARKER)):
+        if os.path.isdir(os.path.join(root, name)):
             names.append(name)
     return names
 
@@ -109,24 +81,22 @@ def _resolve_workspace(workspace: str | None) -> str:
     return name
 
 
-def _workspace_data(name: str) -> dict:
-    path = _workspace_config_path(name)
-    if not os.path.isfile(path):
-        # deleting the folder (or only workspace.yaml) must not brick the app:
-        # the defaults are code-side, so an empty dict is a valid workspace
-        if not os.path.isdir(_workspace_dir(name)):
-            raise HTTPException(404, f"工作区不存在：{name}")
-        return {}
-    with open(path, encoding="utf-8") as handle:
-        data = yaml.safe_load(handle) or {}
-    if not isinstance(data, dict):
-        raise HTTPException(400, f"工作区配置不是映射：{name}/{WORKSPACE_MARKER}")
-    return data
+def _config_from_data(name: str, data: dict | None = None) -> Config:
+    """Config for a job/preflight, with paths relative to the workspace.
+
+    The YAML on disk stays portable (``cache`` / ``runs``); only the copy handed
+    to the trainer/cache code is absolute.
+    """
+    config = Config.from_dict(copy.deepcopy(data or {}))
+    # Same contract as Config.load(): the config knows which workspace it lives in
+    config._base_dir = _workspace_dir(name)
+    return config.resolve_paths()
 
 
-def _workspace_config_text() -> str:
+def _default_run_config_text(run: str) -> str:
+    """A brand-new run: complete defaults, no model or dataset paths yet."""
     data = asdict(Config())
-    data["name"] = "moss-lora"
+    data["name"] = run
     data["dataset"]["path"] = ""
     data["preview"]["prompts"] = []
     data["model"]["dit"] = ""
@@ -135,34 +105,6 @@ def _workspace_config_text() -> str:
     data["cache"]["dir"] = "train_cache"
     data["output_dir"] = "runs"
     return yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
-
-
-def _workspace_config(name: str, data: dict | None = None) -> Config:
-    """Resolve workspace-relative paths for a job/preflight.
-
-    The YAML on disk stays portable (``cache`` / ``runs``).  Only the copy
-    handed to the existing trainer/cache code is absolute.
-    """
-    _ensure_workspace_dirs(name)
-    raw = copy.deepcopy(data if data is not None else _workspace_data(name))
-    config = Config.from_dict(raw).resolve_paths()
-    ws = _workspace_dir(name)
-    # Same contract as Config.load(): the config knows which workspace it lives in
-    config._base_dir = ws
-    # 空字段 = 工作区默认目录；Config.resolve_paths() 已经填好 train_cache
-    config.cache.dir = config.cache.dir or "train_cache"
-    config.output_dir = config.output_dir or "runs"
-    if not os.path.isabs(config.cache.dir):
-        config.cache.dir = os.path.abspath(os.path.join(ws, config.cache.dir))
-    if config.cache.reg_dir and not os.path.isabs(config.cache.reg_dir):
-        config.cache.reg_dir = os.path.abspath(os.path.join(ws, config.cache.reg_dir))
-    if not os.path.isabs(config.output_dir):
-        config.output_dir = os.path.abspath(os.path.join(ws, config.output_dir))
-    if config.dataset.path and not os.path.isabs(config.dataset.path):
-        config.dataset.path = os.path.abspath(os.path.join(ws, config.dataset.path))
-    if config.dataset.reg_path and not os.path.isabs(config.dataset.reg_path):
-        config.dataset.reg_path = os.path.abspath(os.path.join(ws, config.dataset.reg_path))
-    return config
 
 
 def _workspace_runs_dir(name: str) -> str:
@@ -225,17 +167,19 @@ def _workspace_cache_items(name: str) -> int:
 def _workspace_info(name: str, include_size: bool = True) -> dict:
     path = _workspace_dir(name)
     stat = os.stat(path)
-    try:
-        data = _workspace_data(name)
-    except HTTPException:
-        data = {}
     latest = _workspace_latest_run(name)
+    dataset = ""
+    if latest:
+        text, _run_path, _source = _run_config_snapshot(name, latest["name"])
+        try:
+            dataset = str(((yaml.safe_load(text) or {}).get("dataset") or {}).get("path") or "")
+        except yaml.YAMLError:
+            dataset = ""
     info = {
         "name": name,
         "path": _rel(path),
-        "config_path": _rel(_workspace_config_path(name)),
         "kind": "workspace",
-        "dataset": str(getPath(data, "dataset.path") or ""),
+        "dataset": dataset,
         "steps": latest["step"] if latest else 0,
         "latest_run": latest["name"] if latest else "",
         "cache_items": _workspace_cache_items(name),
@@ -293,21 +237,60 @@ def _portable_workspace_config(name: str, text: str) -> str:
     return yaml.safe_dump(data, allow_unicode=True, sort_keys=False, width=10**9)
 
 
+def _run_config_path(name: str, run: str) -> str:
+    return os.path.join(_workspace_runs_dir(name), run, "config.yaml")
+
+
+def _run_is_live(name: str, run: str) -> bool:
+    """Is this run training right now? The heartbeat decides, nothing else."""
+    from ... import runtime
+
+    record = runtime.read_json(os.path.join(_workspace_runs_dir(name), run, "training.json"))
+    if not record:
+        return False
+    return runtime.classify(record)["state"] in ("starting", "running", "stopping")
+
+
 def _run_config_snapshot(name: str, run: str) -> tuple[str, str, str]:
     """Return (yaml_text, path, source) for one run.
 
     One source only: ``runs/<run>/config.yaml``, written by the trainer when the
-    run starts. Earlier versions guessed from the run's name -- a same-named
-    file in ``logs/`` or ``configs/``, then the workspace defaults -- which
-    labelled a CLI run with whatever file happened to share its name. A run
-    without the snapshot reports no config instead of borrowing someone else's.
+    run starts and edited by hand afterwards. Nothing guesses from the run's
+    name; a run without the file reports no config instead of borrowing one.
     """
-    path = os.path.join(_workspace_runs_dir(name), run, "config.yaml")
+    path = _run_config_path(name, run)
     if not os.path.isfile(path):
         return "", "", ""
     with open(path, encoding="utf-8") as handle:
         text = handle.read()
     return _portable_workspace_config(name, text), _rel(path), "run"
+
+
+def _run_config_default(name: str, run: str, from_run: str = "") -> str:
+    """YAML for a new run: a copy of another run, or the workspace defaults.
+
+    A new run starts from ``Config()`` defaults with no model or dataset paths,
+    or from a copy of an existing run's config. Nothing else seeds it.
+    """
+    if from_run:
+        text, _path, _source = _run_config_snapshot(name, from_run)
+        if not text:
+            raise HTTPException(404, f"运行没有配置存档：{from_run}")
+        data = yaml.safe_load(text) or {}
+    else:
+        return _default_run_config_text(run)
+    data["name"] = run
+    data["output_dir"] = "runs"
+    return yaml.safe_dump(data, allow_unicode=True, sort_keys=False, width=10**9)
+
+
+def _write_run_config(name: str, run: str, text: str) -> str:
+    """Write one run's config, creating the run directory when needed."""
+    path = _run_config_path(name, run)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(text)
+    return path
 
 
 def _run_checkpoints(directory: str) -> list[dict]:
@@ -334,41 +317,68 @@ def _run_checkpoints(directory: str) -> list[dict]:
     return out
 
 
+def _run_entry(name: str, directory: str, rows: list[dict]) -> dict:
+    """One entry for a run directory: metrics when present, config always."""
+    train_rows = [row for row in rows if "train" in row]
+    eval_rows = [row for row in rows if "eval" in row]
+    run = os.path.basename(directory.rstrip(os.sep))
+    config_yaml, config_path, config_source = _run_config_snapshot(name, run)
+    try:
+        config_data = yaml.safe_load(config_yaml) if config_yaml else None
+    except yaml.YAMLError:
+        config_data = None
+    sample_dir = os.path.join(directory, "samples")
+    samples = 0
+    if os.path.isdir(sample_dir):
+        samples = len([f for f in os.listdir(sample_dir) if f.endswith(".png")])
+    log_path = os.path.join(_workspace_logs_dir(name), f"{run}.log")
+    metrics_path = os.path.join(directory, "metrics.jsonl")
+    if os.path.isfile(metrics_path):
+        mtime = os.path.getmtime(metrics_path)
+    elif config_path:
+        mtime = os.path.getmtime(os.path.join(directory, "config.yaml"))
+    else:
+        mtime = os.path.getmtime(directory)
+    return {
+        "name": run,
+        "label": f"{name}/{run}",
+        "workspace": name,
+        "path": _rel(directory),
+        "step": train_rows[-1]["step"] if train_rows else 0,
+        "total": train_rows[-1].get("total") if train_rows else 0,
+        "last_train": train_rows[-1].get("train") if train_rows else None,
+        "last_eval": eval_rows[-1].get("eval") if eval_rows else None,
+        "mtime": mtime,
+        "samples": samples,
+        "config_yaml": config_yaml,
+        "config": config_data,
+        "config_path": config_path,
+        "config_source": config_source,
+        "log_path": _rel(log_path) if os.path.isfile(log_path) else "",
+        "checkpoints": _run_checkpoints(directory),
+        # Training freezes the config; the picker and the form read this flag.
+        "live": _run_is_live(name, run),
+    }
+
+
 def _workspace_run_list(name: str) -> list[dict]:
+    """Every run in the workspace, including one created but not yet trained."""
     runs = []
-    for root, directory in _workspace_run_dirs(name):
-        rows = _parse_metrics(directory)
-        train_rows = [row for row in rows if "train" in row]
-        eval_rows = [row for row in rows if "eval" in row]
-        run = os.path.basename(directory.rstrip(os.sep))
-        config_yaml, config_path, config_source = _run_config_snapshot(name, run)
-        try:
-            config_data = yaml.safe_load(config_yaml) if config_yaml else None
-        except yaml.YAMLError:
-            config_data = None
-        sample_dir = os.path.join(directory, "samples")
-        samples = 0
-        if os.path.isdir(sample_dir):
-            samples = len([f for f in os.listdir(sample_dir) if f.endswith(".png")])
-        log_path = os.path.join(_workspace_logs_dir(name), f"{run}.log")
-        runs.append({
-            "name": run,
-            "label": f"{name}/{run}",
-            "workspace": name,
-            "path": _rel(directory),
-            "step": train_rows[-1]["step"] if train_rows else 0,
-            "total": train_rows[-1].get("total") if train_rows else 0,
-            "last_train": train_rows[-1].get("train") if train_rows else None,
-            "last_eval": eval_rows[-1].get("eval") if eval_rows else None,
-            "mtime": os.path.getmtime(os.path.join(directory, "metrics.jsonl")),
-            "samples": samples,
-            "config_yaml": config_yaml,
-            "config": config_data,
-            "config_path": config_path,
-            "config_source": config_source,
-            "log_path": _rel(log_path) if os.path.isfile(log_path) else "",
-            "checkpoints": _run_checkpoints(directory),
-        })
+    seen = set()
+    for _root, directory in _workspace_run_dirs(name):
+        seen.add(os.path.realpath(directory))
+        runs.append(_run_entry(name, directory, _parse_metrics(directory)))
+    base = _workspace_runs_dir(name)
+    if os.path.isdir(base):
+        for entry in sorted(os.listdir(base)):
+            directory = os.path.join(base, entry)
+            if entry.startswith(".") or not os.path.isdir(directory):
+                continue
+            if os.path.realpath(directory) in seen:
+                continue
+            if not os.path.isfile(os.path.join(directory, "config.yaml")):
+                continue
+            runs.append(_run_entry(name, directory, []))
     runs.sort(key=lambda item: item["mtime"], reverse=True)
     return runs
 

@@ -11,7 +11,7 @@ from fastapi import APIRouter, Request
 from ...config import expand
 from ..deps import ROOT, _rel
 from ..services.cache_cmd import _cache_summary
-from ..services.workspace import _resolve_workspace, _workspace_config, _workspace_target_run
+from ..services.workspace import _config_from_data, _resolve_workspace, _workspace_target_run
 
 router = APIRouter()
 
@@ -46,7 +46,7 @@ async def api_validate(request: Request):
     problems: list[str] = []
     warnings: list[str] = []
     try:
-        config = _workspace_config(workspace, data)
+        config = _config_from_data(workspace, data)
         problems = config.validate()
     except Exception as exc:  # malformed types must not 500 the UI
         return {"ok": False, "yaml_error": {"message": f"配置结构错误: {exc}", "line": None, "column": None},

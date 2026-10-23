@@ -204,10 +204,16 @@ export function updateJobUi() {
     // the chip never lags behind the header.
     setText('#dash-run-status', t('dash.runState.training', { step: active.step }));
   }
-  for (const selector of ['#btn-config-save', '#btn-config-new', '#btn-config-saveas', '#btn-config-rename', '#btn-config-delete']) {
+  // A run that is training owns its config, and with no run there is nothing
+  // to save: neither state re-enables the buttons.
+  const frozen = Boolean((state.runs || []).find((entry) => entry.name === state.activeRun)?.live);
+  const hasRun = Boolean(state.activeRun);
+  for (const selector of ['#btn-config-save', '#btn-config-delete']) {
     const button = $(selector);
-    if (button) button.disabled = blocked;
+    if (button) button.disabled = blocked || frozen || !hasRun;
   }
+  const newRun = $('#btn-config-new');
+  if (newRun) newRun.disabled = blocked;
   const preflight = $('#btn-preflight');
   if (preflight) preflight.disabled = startDisabled;
   const stop = $('#btn-stop');

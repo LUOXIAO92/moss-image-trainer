@@ -5,8 +5,8 @@
 
 import { applySmoothWindow, drawChart } from './components/chart.js'; import { startJob, stopJob } from './components/jobsse.js';
 import { clearLog, copyLog, isLogNearBottom } from './components/logview.js'; import { drawMetricCards, positionWidgets, toggleMetricCard } from './components/metriccards.js';
-import { runPreflight } from './components/preflight.js'; import { closeConfigDialog, deleteCurrentConfig, openConfigDialog, saveConfig, submitConfigDialog, switchConfig } from './config/file.js';
-import { addLayerRow, clearYamlError, focusYamlLine, markDirty, readLayerControlsIntoConfig, scheduleFormSync, setMode, showYamlError, syncAttentionControls, syncFormFromConfig, syncSaveStateControls, syncYamlScroll, updateCacheEffective, updateLrEffective, updateOutputPreview, updateRegCacheEffective, updateRegCachePlaceholder, updateYamlLineCount } from './config/form.js'; import { RUN_SNAPSHOT, armRunSnapshot, selectDashboardConfig, startDashboardTraining } from './config/list.js';
+import { runPreflight } from './components/preflight.js'; import { closeConfigDialog, deleteCurrentRun, openNewRunDialog, saveConfig, submitConfigDialog, switchRun } from './config/file.js';
+import { addLayerRow, clearYamlError, focusYamlLine, markDirty, readLayerControlsIntoConfig, scheduleFormSync, setMode, showYamlError, syncAttentionControls, syncFormFromConfig, syncSaveStateControls, syncYamlScroll, updateCacheEffective, updateLrEffective, updateOutputPreview, updateRegCacheEffective, updateRegCachePlaceholder, updateYamlLineCount } from './config/form.js'; import { selectDashboardConfig, startDashboardTraining } from './config/list.js';
 import { FIELD_DEFS, LAYER_COUNT } from './config/model.js'; import { closeProfileDialog, openProfileDialog, submitProfileDialog, switchProfile } from './config/profiles.js';
 import { setFieldError, validateField } from './config/validate.js'; import { dumpYaml, parseYaml } from './config/yaml.js';
 import { copyText } from './core/clipboard.js'; import { $, $$, setHidden, setText } from './core/dom.js';
@@ -299,12 +299,10 @@ export function bindEvents() {
     input?.scrollIntoView({ block: 'center' });
   });
 
-  $('#config-select')?.addEventListener('change', (event) => switchConfig(event.target.value));
-  $('#btn-config-new')?.addEventListener('click', () => openConfigDialog('new'));
+  $('#config-select')?.addEventListener('change', (event) => switchRun(event.target.value));
+  $('#btn-config-new')?.addEventListener('click', () => openNewRunDialog());
   $('#btn-config-save')?.addEventListener('click', () => saveConfig());
-  $('#btn-config-saveas')?.addEventListener('click', () => openConfigDialog('saveas'));
-  $('#btn-config-rename')?.addEventListener('click', () => openConfigDialog('rename'));
-  $('#btn-config-delete')?.addEventListener('click', deleteCurrentConfig);
+  $('#btn-config-delete')?.addEventListener('click', deleteCurrentRun);
   $('#config-dialog-close')?.addEventListener('click', closeConfigDialog);
   $('#config-dialog-cancel')?.addEventListener('click', closeConfigDialog);
   $('#config-dialog-form')?.addEventListener('submit', submitConfigDialog);
@@ -537,17 +535,14 @@ export function bindEvents() {
   });
   $('#dash-run')?.addEventListener('change', (event) => {
     state.dashboard.run = event.target.value || null;
-    // Inspecting a run shows the config that run actually used: its own
-    // snapshot, never a pointer into configs/.
-    armRunSnapshot();
+    // Inspecting a run shows the config it actually used, as a read-only line;
+    // the picker keeps pointing at the run whose config starts next.
     loadDashboard(state.dashboard.run, {})
       .then(() => loadDashboardCompare())
       .catch(() => {});
   });
   $('#dash-config-select')?.addEventListener('change', (event) => {
     if (!event.target.value) return;
-    if (event.target.value === RUN_SNAPSHOT) return;
-    state.dashboard.configPicked = true;
     selectDashboardConfig(event.target.value).catch((error) => showError(t('common.msg84'), error.detail || error.message));
   });
   $('#dash-smooth')?.addEventListener('input', applySmoothWindow);
