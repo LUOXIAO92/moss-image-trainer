@@ -111,9 +111,23 @@ def check_translations(codes: list[str]) -> list[str]:
     return problems
 
 
+def check_registry_matches_pack() -> None:
+    """The Chinese template in ``CODES`` is the source every pack was translated
+    from, so it must be the same string the zh pack serves. Letting the two drift
+    makes the server's fallback message disagree with the UI's own language."""
+    zh = load_json(os.path.join(I18N_DIR, "zh.json"))
+    drift = sorted(
+        f"{code}: 注册表 {template!r} ≠ 语言包 {zh.get(code)!r}"
+        for code, template in CODES.items()
+        if zh.get(code) != template
+    )
+    assert not drift, "中文模板与 zh 语言包不一致：\n  " + "\n  ".join(drift)
+
+
 def main() -> None:
     codes = check_codes_known(used_codes())
     check_manifest(codes)
+    check_registry_matches_pack()
     print(f"错误码 {len(codes)} 个，manifest 与代码一致")
     problems = check_translations(codes)
     if problems:
