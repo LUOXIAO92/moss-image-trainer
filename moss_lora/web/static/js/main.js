@@ -21,7 +21,7 @@ import { ensureDashboardConfigSelection } from './config/list.js';
 import { loadProfiles } from './config/profiles.js';
 import { dumpYaml, parseYaml } from './config/yaml.js';
 import { api, describeError } from './core/api.js';
-import { $, $$ } from './core/dom.js';
+import { $, $$, escapeHtml } from './core/dom.js';
 import { mountFragments } from './core/fragments.js';
 import { applyI18n, loadI18n, t } from './core/i18n.js';
 import { showAlert, showError, showSuccess } from './core/notify.js';
@@ -211,12 +211,25 @@ function arrangeDashboardOrder() {
 }
 
 async function boot() {
+  // 语言包先到位：片段加载失败、顶栏、任务条都要按当前语言说话，而碎片挂载
+  // 本身不依赖文案，所以这一步可以安全地提到最前。
+  try {
+    await loadI18n();
+  } catch (error) {
+    showError(t('common.msg89'), error?.message || String(error), [
+      { label: t('common.reload'), onClick: () => location.reload() },
+    ], 'init-error');
+  }
   // 外壳里没有页面 markup：先把 9 个片段挂上去，后面所有 $() 才有东西可查。
   try {
     await mountFragments(TABS);
   } catch (error) {
+    // The loader tags its failures with an i18n code; the message is the
+    // neutral fallback for the case where even the packs could not load.
+    const localized = error.code ? t(error.code, error.params || {}) : '';
+    const detail = localized && localized !== error.code ? localized : error.message;
     document.getElementById('main')?.insertAdjacentHTML('afterbegin',
-      `<p class="inline-error" role="alert">页面片段加载失败：${error.message}</p>`);
+      `<p class="inline-error" role="alert">${escapeHtml(t('app.fragmentLoadFailed', { error: detail }))}</p>`);
     throw error;
   }
   arrangeDashboardOrder();
@@ -224,16 +237,6 @@ async function boot() {
   initCharts();
   if (!location.hash) {
     history.replaceState(null, '', '#train');
-  }
-
-  // 先单独把语言包等到位：loadSystem()/loadJobs() 会立刻把 t() 的文本写进顶栏，
-  // 和 loadI18n() 并发跑的话，顶栏会先闪一串裸 key（gpu.unavailable 之类）。
-  try {
-    await loadI18n();
-  } catch (error) {
-    showError(t('common.msg89'), error?.message || String(error), [
-      { label: t('common.reload'), onClick: () => location.reload() },
-    ], 'init-error');
   }
 
   const results = await Promise.allSettled([

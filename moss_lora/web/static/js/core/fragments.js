@@ -14,13 +14,27 @@ const FRAGMENT_ROOT = 'pages';
 
 const fragmentCache = new Map();
 
+/**
+ * An error a translator can render: the code names an i18n key and the message
+ * stays a neutral technical string for the case where no pack loaded at all.
+ */
+function fragmentError(code, params, message) {
+  const error = new Error(message);
+  error.code = code;
+  error.params = params;
+  return error;
+}
+
 /** 取回单个片段文本（同一 tab 只请求一次）。 */
 async function fetchFragment(tab) {
   if (fragmentCache.has(tab)) return fragmentCache.get(tab);
   const response = await fetch(`${FRAGMENT_ROOT}/${tab}.html`, { cache: 'no-cache' });
-  if (!response.ok) throw new Error(`片段 ${tab} 加载失败：HTTP ${response.status}`);
+  if (!response.ok) {
+    throw fragmentError('app.fragmentHttp', { tab, status: response.status },
+      `fragment ${tab}: HTTP ${response.status}`);
+  }
   const html = await response.text();
-  if (!html.trim()) throw new Error(`片段 ${tab} 是空的`);
+  if (!html.trim()) throw fragmentError('app.fragmentEmpty', { tab }, `fragment ${tab} is empty`);
   fragmentCache.set(tab, html);
   return html;
 }
@@ -32,7 +46,7 @@ async function fetchFragment(tab) {
  * @returns {Promise<Element[]>} 按顺序排列的 section 节点
  */
 export async function mountFragments(tabs, host = document.getElementById('main')) {
-  if (!host) throw new Error('找不到 #main');
+  if (!host) throw fragmentError('app.fragmentNoHost', {}, 'no #main to mount into');
   const htmls = await Promise.all(tabs.map((tab) => fetchFragment(tab)));
   const anchor = [...host.children].find((child) => child.tagName === 'DIALOG') || null;
   const mounted = [];
@@ -40,8 +54,11 @@ export async function mountFragments(tabs, host = document.getElementById('main'
     const template = document.createElement('template');
     template.innerHTML = htmls[index];
     const node = template.content.firstElementChild;
-    if (!node) throw new Error(`片段 ${tab} 没有根节点`);
-    if (node.id !== `tab-${tab}`) throw new Error(`片段 ${tab} 根节点是 #${node.id}`);
+    if (!node) throw fragmentError('app.fragmentNoRoot', { tab }, `fragment ${tab} has no root element`);
+    if (node.id !== `tab-${tab}`) {
+      throw fragmentError('app.fragmentWrongRoot', { tab, id: node.id },
+        `fragment ${tab} has root #${node.id}`);
+    }
     host.insertBefore(node, anchor);
     mounted.push(node);
   });
