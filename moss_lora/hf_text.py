@@ -62,15 +62,13 @@ def _shard_files(directory: str) -> list[str]:
     )
 
 
-def _iter_text_weights(source: str, dtype: torch.dtype = torch.bfloat16, config_hint: str = "",
-                       device: str = "cpu"):
-    """Yield ``(name, tensor)`` one at a time so the caller can stream them in.
+def _iter_raw_weights(source: str, dtype: torch.dtype = torch.bfloat16, config_hint: str = "",
+                      device: str = "cpu"):
+    """Yield ``(name, tensor, scale, marker)`` straight from the checkpoint.
 
-    ``device`` decides where dequantisation runs. On the host, 9B int8 parameters
-    become a ~36 GB float32 working set and pin every core for a minute; on the
-    device the same arithmetic takes seconds. Streaming matters just as much as
-    where the math happens: holding a full 18 GB bf16 copy beside the 18 GB model
-    is what overflowed a 32 GB card.
+    ``scale`` is the ConvRot per-row scale for int8 weights and ``None`` for
+    everything else, so the caller decides whether to dequantise now or keep the
+    int8 tensor on the device and dequantise per forward pass.
     """
     from safetensors import safe_open
 
@@ -92,19 +90,31 @@ def _iter_text_weights(source: str, dtype: torch.dtype = torch.bfloat16, config_
                     if name is None:
                         continue
                     tensor = handle.get_tensor(key)
-                    if tensor.dtype == torch.int8 and quantized:
-                        scale_key = key[: -len(".weight")] + ".weight_scale"
+                    if tensor.dtype == torch.int8 and quantized and key.endswith(".weight"):
+                        base = key[: -len(".weight")]
+                        scale_key = base + ".weight_scale"
                         scale = handle.get_tensor(scale_key) if scale_key in keys else torch.tensor(1.0)
-                        marker = markers.get(key[: -len(".weight")], {})
-                        yield name, convrot.dequantize(tensor.to(device), scale.to(device),
-                                                       256, marker).to(dtype)
+                        yield name, tensor.to(device), scale.to(device), markers.get(base, {})
                     elif tensor.dtype in (torch.bfloat16, torch.float16, torch.float32):
-                        yield name, tensor.to(device=device, dtype=dtype)
+                        yield name, tensor.to(device=device, dtype=dtype), None, {}
+
+
+def _iter_text_weights(source: str, dtype: torch.dtype = torch.bfloat16, config_hint: str = "",
+                       device: str = "cpu"):
+    """Yield ``(name, tensor)`` with every tensor dequantised to ``dtype``."""
+    from . import convrot
+
+    for name, tensor, scale, marker in _iter_raw_weights(source, dtype=dtype,
+                                                         config_hint=config_hint, device=device):
+        if scale is None:
+            yield name, tensor
+        else:
+            yield name, convrot.dequantize(tensor, scale, 256, marker).to(dtype)
 
 
 def _load_text_weights(source: str, dtype: torch.dtype = torch.bfloat16, config_hint: str = "",
                        device: str = "cpu") -> dict[str, torch.Tensor]:
-    """The whole text tower as one dict. Prefer ``_iter_text_weights`` for a 9B model."""
+    """The whole text tower as one dict. Prefer ``_iter_raw_weights`` for a 9B model."""
     return dict(_iter_text_weights(source, dtype=dtype, config_hint=config_hint, device=device))
 
 
@@ -124,36 +134,65 @@ def load_text_model(directory: str, dtype: torch.dtype = torch.bfloat16, device:
             config = Qwen3_5TextConfig(**json.load(handle))
     else:
         config = Qwen3_5Config.from_pretrained(resolved_config, local_files_only=True).text_config
-    # A 9B random init on CPU costs ~58s of pure host work; do it on the device instead.
     build_on = device if torch.cuda.is_available() and str(device).startswith("cuda") else "cpu"
-    # Build in the target dtype. Constructing in float32 costs 4 bytes per
-    # parameter (29.6 GiB for this tower) and the later cast needs both copies
-    # alive at once, which by itself exceeds a 32 GB card.
+    # Build on meta: it allocates nothing, and every tensor is then placed exactly
+    # once -- the 200 linear layers as int8 (6.4 GiB), the embedding and the norms
+    # as bf16 (1.9 GiB). Dequantising the whole tower up front doubles that to
+    # 14.8 GiB for no benefit.
     previous_dtype = torch.get_default_dtype()
     torch.set_default_dtype(dtype)
     try:
-        with torch.device(build_on):
+        with torch.device("meta"):
             model = Qwen3_5TextModel(config)
     finally:
         torch.set_default_dtype(previous_dtype)
-    # Build first, then copy one tensor at a time. Dequantising into a dict first
-    # kept a second full copy alive beside the model, which is the other way to
-    # run this card out of memory.
-    targets = dict(model.named_parameters())
-    targets.update(model.named_buffers())
-    unexpected = []
+    # RoPE frequencies are buffers filled in __init__, so on meta they hold nothing.
+    # Recompute them on the device rather than leaving uninitialised memory.
+    inv_freq, _scaling = model.rotary_emb.compute_default_rope_parameters(config, device=build_on)
+    model.rotary_emb.inv_freq = inv_freq
+    model.rotary_emb.original_inv_freq = inv_freq.clone()
+
+    from . import convrot
+    from .quant_linear import QuantLinear
+
+    quantized = 0
+    missing = []
     with torch.no_grad():
-        for name, tensor in _iter_text_weights(directory, dtype=dtype, config_hint=config_dir,
-                                               device=build_on):
-            target = targets.get(name)
-            if target is None:
-                unexpected.append(name)
+        for name, tensor, scale, marker in _iter_raw_weights(directory, dtype=dtype,
+                                                             config_hint=config_dir, device=build_on):
+            module_path, _, leaf = name.rpartition(".")
+            try:
+                parent = model.get_submodule(module_path)
+            except AttributeError:
+                missing.append(name)
+                del tensor
                 continue
-            target.copy_(tensor)
+            if scale is not None:
+                holder_path, _, holder_name = module_path.rpartition(".")
+                container = model.get_submodule(holder_path) if holder_path else model
+                if isinstance(getattr(container, holder_name, None), nn.Embedding):
+                    # The embedding is looked up by row, so dequantising it per
+                    # forward would cost 3.9 GiB of float32 every batch. Keep it
+                    # bf16 (1.9 GiB) and quantise only the linear layers.
+                    parent.weight = nn.Parameter(
+                        convrot.dequantize(tensor, scale, 256, marker).to(dtype), requires_grad=False)
+                else:
+                    setattr(container, holder_name, QuantLinear(tensor, scale, marker))
+                    quantized += 1
+            elif isinstance(parent, nn.Embedding) and leaf == "weight":
+                parent.weight = nn.Parameter(tensor, requires_grad=False)
+            elif leaf in parent._parameters:
+                parent._parameters[leaf] = nn.Parameter(tensor, requires_grad=False)
+            else:
+                parent._buffers[leaf] = tensor
             del tensor
-    if unexpected:
-        raise RuntimeError(f"unexpected text-encoder weights: {unexpected[:4]}")
-    model = model.to(device=device, dtype=dtype).eval()
+    if missing:
+        raise RuntimeError(f"unexpected text-encoder weights: {missing[:4]}")
+    still_meta = [name for name, value in list(model.named_parameters()) + list(model.named_buffers())
+                  if value is not None and value.is_meta]
+    if still_meta:
+        raise RuntimeError(f"text-encoder weights left on meta: {still_meta[:4]}")
+    model = model.eval()
     for parameter in model.parameters():
         parameter.requires_grad_(False)
     return model
