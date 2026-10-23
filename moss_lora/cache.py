@@ -11,14 +11,118 @@ import hashlib
 import json
 import os
 import time
+from contextlib import contextmanager
 
 import numpy as np
 import torch
 from PIL import Image
 from safetensors.torch import save_file
 
+from . import runtime
 from .data import ALIGN, assign_sizes, scan, sizing_spec
 from .weights import LatentCodec, load_vae
+
+PROGRESS_NAME = ".cache-progress.json"
+
+
+def progress_path(config) -> str:
+    """Where a cache build publishes its progress: the workspace, not the cache.
+
+    The cache directory is what the delete button wipes, and a reader has to be
+    able to say "nothing is running" right after that.
+    """
+    root = runtime.workspace_root(config)
+    return os.path.join(root, PROGRESS_NAME) if root else ""
+
+
+class CacheProgress:
+    """Publish "which phase, how many done" so any reader can follow a build.
+
+    Written atomically to the workspace, so the WebUI shows a run started in a
+    terminal and a finished run keeps its verdict after the process is gone.
+    A config outside a workspace publishes nothing.
+    """
+
+    def __init__(self, config):
+        self.path = progress_path(config)
+        self.cache_dir = os.path.abspath(os.path.expanduser(config.cache.dir))
+        self.record = {
+            "pid": os.getpid(),
+            "status": "running",
+            "phase": "",
+            "done": 0,
+            "total": 0,
+            "rate": 0.0,
+            "unit": "",
+            "cache_dir": self.cache_dir,
+            "started": 0.0,
+            "time": 0.0,
+            "exit_code": None,
+            # every phase this build ran, so a reader that arrives late still
+            # sees the finished latent bar while the text pass runs
+            "history": {},
+        }
+
+    def write(self) -> None:
+        if not self.path:
+            return
+        try:
+            runtime.write_json_atomic(self.path, self.record)
+        except OSError:
+            pass
+
+    @contextmanager
+    def phase(self, name: str, total: int, unit: str):
+        now = time.time()
+        if not self.record["started"]:
+            self.record["started"] = now
+        self.record.setdefault("history", {})[name] = {
+            "done": 0, "total": int(total), "unit": unit, "complete": False,
+        }
+        self.record.update({
+            "phase": name, "status": "running", "done": 0, "total": int(total),
+            "unit": unit, "rate": 0.0, "time": now, "exit_code": None, "finished": None,
+        })
+        self.write()
+        beat = _Beat(self)
+        try:
+            yield beat
+        except BaseException:
+            self.record.setdefault("history", {}).setdefault(name, {})["failed"] = True
+            self.record.update({"status": "failed", "exit_code": 1, "time": time.time(),
+                                "finished": time.time()})
+            self.write()
+            raise
+        entry = self.record.setdefault("history", {}).setdefault(name, {})
+        entry.update({"done": int(self.record["total"]), "total": int(self.record["total"]),
+                      "complete": True})
+        self.record.update({"status": "done", "phase": "done", "exit_code": 0,
+                            "done": int(self.record["total"]), "rate": 0.0,
+                            "time": time.time(), "finished": time.time()})
+        self.write()
+
+
+class _Beat:
+    """Per-phase progress handle handed to the encoding loops."""
+
+    def __init__(self, progress: CacheProgress):
+        self.progress = progress
+
+    def update(self, done: int, rate: float | None = None) -> None:
+        record = self.progress.record
+        record["done"] = int(done)
+        if rate is not None:
+            record["rate"] = round(float(rate), 2)
+        record["time"] = time.time()
+        phase = record.get("phase") or ""
+        if phase:
+            entry = record.setdefault("history", {}).setdefault(phase, {})
+            entry["done"] = int(done)
+            entry.setdefault("total", int(record.get("total") or 0))
+            entry.setdefault("unit", record.get("unit") or "")
+            if entry.get("total"):
+                entry["complete"] = int(done) >= int(entry["total"])
+        self.progress.write()
 
 
 def _text_len(path: str) -> int:
@@ -83,6 +187,7 @@ class CacheBuilder:
                 f"(repeats from folder names x{multiplier})"
             )
             base = base + reg
+        self.progress = CacheProgress(config)
         self.sizing = sizing_spec(config.dataset.max_area, ALIGN)
         self.items = assign_sizes(base, area=config.dataset.max_area, align=ALIGN)
         self.dir = os.path.abspath(os.path.expanduser(config.cache.dir))
@@ -144,6 +249,8 @@ class CacheBuilder:
         pending = self._pending("latent")
         if not pending:
             self.log("latents: nothing to do")
+            with self.progress.phase("latent", 0, "img/s"):
+                pass
             return 0
         from .memory import free_gib, latent_batch
 
@@ -171,18 +278,21 @@ class CacheBuilder:
         done = 0
         executor = ThreadPoolExecutor(max_workers=max(1, workers))
         try:
-            futures = [executor.submit(load, batch) for batch in batches[:workers]]
-            for index, batch in enumerate(batches):
-                images = futures[index].result().cuda()
-                if index + workers < len(batches):
-                    futures.append(executor.submit(load, batches[index + workers]))
-                latents = codec.encode(images)
-                for item, latent in zip(batch, latents):
-                    self._write(item, latent=latent.to(torch.float16).cpu())
-                done += len(batch)
-                if done % 40 < batch_size or done == len(pending):
+            with self.progress.phase("latent", len(pending), "img/s") as beat:
+                beat.update(0, 0.0)
+                futures = [executor.submit(load, batch) for batch in batches[:workers]]
+                for index, batch in enumerate(batches):
+                    images = futures[index].result().cuda()
+                    if index + workers < len(batches):
+                        futures.append(executor.submit(load, batches[index + workers]))
+                    latents = codec.encode(images)
+                    for item, latent in zip(batch, latents):
+                        self._write(item, latent=latent.to(torch.float16).cpu())
+                    done += len(batch)
                     rate = done / max(time.time() - start, 1e-6)
-                    self.log(f"latents {done}/{len(pending)}  {rate:.2f} img/s")
+                    beat.update(done, rate)
+                    if done % 40 < batch_size or done == len(pending):
+                        self.log(f"latents {done}/{len(pending)}  {rate:.2f} img/s")
         finally:
             executor.shutdown(wait=False)
         del codec

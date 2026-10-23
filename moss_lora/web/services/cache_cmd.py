@@ -26,6 +26,42 @@ def _cache_parts(body: dict) -> list[str]:
         raise HTTPException(400, "至少勾一个：latent 缓存 或 文本编码")
     return parts
 
+def _cache_job(workspace_dir: str) -> dict | None:
+    """The progress a cache build publishes, whoever started it.
+
+    A build started from a terminal writes the same file as one started in the
+    WebUI, so the panel can show either without a second code path. The path is
+    derived from the workspace, because a config built by the web layer carries
+    absolute paths but no workspace root.
+    """
+    from ... import runtime
+    from ...cache import PROGRESS_NAME
+
+    path = os.path.join(workspace_dir, PROGRESS_NAME) if workspace_dir else ""
+    record = runtime.read_json(path) if path else None
+    if not record:
+        return None
+    state = runtime.classify(record)
+    return {
+        "state": state["state"],
+        "stale": state["stale"],
+        "age": state["age"],
+        "status": record.get("status") or "",
+        "phase": record.get("phase") or "",
+        "done": record.get("done"),
+        "total": record.get("total"),
+        "rate": record.get("rate"),
+        "unit": record.get("unit") or "",
+        "pid": record.get("pid"),
+        "started": record.get("started") or 0.0,
+        "time": record.get("time") or 0.0,
+        "finished": record.get("finished") or 0.0,
+        "exit_code": record.get("exit_code"),
+        "cache_dir": record.get("cache_dir") or "",
+        "history": record.get("history") or {},
+    }
+
+
 def _cache_summary(config: Config) -> dict:
     """Cache readiness without changing the historical ``items``/``ready`` keys."""
     cache_dir = os.path.abspath(os.path.expanduser(expand(config.cache.dir)))

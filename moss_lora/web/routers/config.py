@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 
 from ...config import VRAM_PRESETS
 from ..deps import _rel, _safe_name, _write_text
-from ..services.cache_cmd import _cache_summary
+from ..services.cache_cmd import _cache_job, _cache_summary
 from ..services.workspace import (_config_entry, _ensure_workspace_dirs, _resolve_workspace,
                                   _workspace_config, _workspace_config_path,
                                   _workspace_configs_dir, _workspace_dir, _workspace_exists,
@@ -141,4 +141,6 @@ def api_cache(path: str = "", workspace: str = "", reg_path: str | None = None):
             raw_reg if os.path.isabs(raw_reg)
             else os.path.abspath(os.path.join(_workspace_dir(name), raw_reg))
         ) if raw_reg else ""
-    return _cache_summary(config)
+    summary = _cache_summary(config)
+    summary["job"] = _cache_job(_workspace_dir(name))
+    return summary

@@ -14,6 +14,7 @@
  "cache.help": "One cache file per sample: training set writes to train_cache, regularization set writes to reg_cache; latent and text embeddings share the same per-sample file",
  "cache.itemCount": "{count} items{files}",
  "cache.job.idleDesc": "No running cache job",
+ "cache.job.externalLog": "Started in a terminal; its output is not captured here.",
  "cache.job.lastStatus": "Last cache job: {status}",
  "cache.job.occupied": "Busy with {kind}",
  "cache.job.otherRunning": "{kind} job is running; only one job can run at a time, so caching must wait",

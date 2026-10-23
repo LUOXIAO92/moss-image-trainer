@@ -17,6 +17,7 @@
 ```
 workspaces/<workspace>/
   .gpu.lock                     唯一的持有者：正在用显卡的进程
+  .cache-progress.json          缓存构建进度：阶段、已完成、总数
   runs/<run>/
     config.yaml                 这次训练实际用的配置
     training.json               心跳：谁在训、训到哪
@@ -43,6 +44,12 @@ workspaces/<workspace>/
 读的地方只认这一份。没有这个文件的 run 就是没有配置记录，面板如实显示为空。早先的版本靠名字猜：先找 `logs/` 或 `configs/` 里同名的文件，再退到工作区默认值。结果是一个叫 `foo`、用 `bar.yaml` 训出来的 run 被标成 `foo.yaml`，而名字对不上任何配置的 run 被标成 `workspace.yaml`。
 
 这样一来，配置文件是怎么写出来的就不再重要。网页保存也好、手写也好，它都只是输入；用了什么，记在 run 目录里。
+
+## 缓存构建
+
+一次缓存构建在写工作区里的 `.cache-progress.json`：当前阶段（`latent`、`text`）、已处理多少张图或多少条字幕、速率，还有一份按阶段记录的 `history`，所以晚打开页面的读者也能看到已经跑完的 latent 进度条，而不是在文本阶段看到它归零。终态记录带退出码，和训练心跳同一套规则。
+
+`GET /api/cache` 把这记录作为 `job` 返回，缓存页因此能看到在终端里发起的构建；构建进行中，页面比常规轮询更快地刷新它。
 
 ## 心跳
 

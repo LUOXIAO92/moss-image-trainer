@@ -14,6 +14,7 @@
  "cache.help": "サンプルごとに1つのキャッシュファイルを作成します。学習セットは train_cache、正則化セットは reg_cache に保存され、latent とテキスト埋め込みは同一ファイルに格納されます。",
  "cache.itemCount": "{count} 件{files}",
  "cache.job.idleDesc": "実行中のキャッシュタスクはありません。",
+ "cache.job.externalLog": "外部のターミナルで開始されたタスクです。ログはここには表示されません。",
  "cache.job.lastStatus": "前回のキャッシュタスク：{status}。",
  "cache.job.occupied": "{kind}が実行中",
  "cache.job.otherRunning": "{kind}タスクが実行中です。サーバーは同時に1つのタスクのみ実行できるため、終了するまで待機してください。",

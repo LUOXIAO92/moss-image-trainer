@@ -14,6 +14,7 @@
  "cache.help": "每条样本对应一个缓存文件：训练集写入 train_cache，正则集写入 reg_cache；latent 与文本嵌入保存在同一样本文件中。",
  "cache.itemCount": "{count} 条{files}",
  "cache.job.idleDesc": "当前无运行中的缓存任务。",
+ "cache.job.externalLog": "该任务在外部终端启动，日志不在这个面板里。",
  "cache.job.lastStatus": "上次缓存任务：{status}。",
  "cache.job.occupied": "{kind}占用中",
  "cache.job.otherRunning": "{kind}任务正在运行；服务端同时仅运行一个任务，需等待其结束后再执行缓存。",

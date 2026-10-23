@@ -147,6 +147,8 @@ def _workspace_config(name: str, data: dict | None = None) -> Config:
     raw = copy.deepcopy(data if data is not None else _workspace_data(name))
     config = Config.from_dict(raw).resolve_paths()
     ws = _workspace_dir(name)
+    # Same contract as Config.load(): the config knows which workspace it lives in
+    config._base_dir = ws
     # 空字段 = 工作区默认目录；Config.resolve_paths() 已经填好 train_cache
     config.cache.dir = config.cache.dir or "train_cache"
     config.output_dir = config.output_dir or "runs"

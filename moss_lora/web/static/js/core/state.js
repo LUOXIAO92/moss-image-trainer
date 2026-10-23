@@ -117,7 +117,11 @@ export const state = {
   lastEvalSync: 0,
   dashboard: { data: null, run: null, loading: false, lastError: '' },
   dataset: { data: null, path: '', error: null, lastPath: '', reg: null, regPath: '', regError: null, loading: false, loadingPath: '', autoPath: '', scanSeq: 0, regLoading: false, regAutoPath: '', regScanSeq: 0 },
-  cache: { data: null, progress: null, stages: { latent: null, text: null }, active: '', parts: [], error: null },
+  cache: {
+    data: null, progress: null, stages: { latent: null, text: null }, active: '', parts: [], error: null,
+    // progress published to the workspace, whoever started the build
+    job: null, jobRunning: false, diskKey: '', diskStages: { latent: null, text: null },
+  },
   samples: { items: [], filter: 'all' },
   loras: [],
   charts: {},

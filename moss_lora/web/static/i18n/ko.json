@@ -14,6 +14,7 @@
  "cache.help": "샘플당 하나의 캐시 파일이 생성됩니다. 학습 세트는 train_cache에, 정규화 세트는 reg_cache에 기록되며, latent와 텍스트 임베딩은 샘플별로 동일한 파일을 공유합니다.",
  "cache.itemCount": "{count}개 항목{files}",
  "cache.job.idleDesc": "실행 중인 캐시 작업이 없습니다.",
+ "cache.job.externalLog": "외부 터미널에서 시작된 작업입니다. 로그는 여기에 표시되지 않습니다.",
  "cache.job.lastStatus": "최근 캐시 작업: {status}.",
  "cache.job.occupied": "{kind} 사용 중",
  "cache.job.otherRunning": "{kind} 작업이 실행 중입니다. 서버는 동시에 하나의 작업만 허용하므로 캐시 작업은 해당 작업이 끝날 때까지 대기해야 합니다.",

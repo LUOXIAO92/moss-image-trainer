@@ -216,6 +216,9 @@ class Config:
         elif os.path.basename(os.path.dirname(parent)) == "runs":
             # <workspaces>/<name>/runs/<run>/config.yaml -> resolve against <name>
             config._base_dir = os.path.dirname(os.path.dirname(parent))
+        elif os.path.basename(parent) == "logs":
+            # <workspaces>/<name>/logs/<job>.yaml, the snapshot a job runs from
+            config._base_dir = os.path.dirname(parent)
         return config.resolve_paths()
 
     def save(self, path: str) -> None:

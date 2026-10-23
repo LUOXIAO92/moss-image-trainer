@@ -146,6 +146,7 @@ export async function loadCache() {
   if (!state.profileName) {
     state.cache.data = null;
     state.cache.progress = null;
+    applyCacheJob(null);
     setText('#cache-ready-text', t('workspace.emptyTitle'));
     setText('#cache-train-path', '--');
     setText('#cache-train-count', '—');
@@ -165,6 +166,7 @@ export async function loadCache() {
   if (!path) {
     state.cache.data = null;
     state.cache.progress = null;
+    applyCacheJob(null);
     setText('#cache-ready-text', t('cache.msg21'));
     const pill = $('#cache-ready-pill');
     if (pill) pill.className = 'status-pill is-warn';
@@ -192,6 +194,7 @@ export async function loadCache() {
     const data = await api('/api/cache?' + params.toString());
     state.cache.data = data;
     state.cache.error = null;
+    applyCacheJob(data.job || null);
     renderCacheFromData(data);
     renderCacheJob();
   } catch (error) {
@@ -204,6 +207,27 @@ export async function loadCache() {
   }
 }
 
+let cacheTimer = null;
+
+// Poll faster than the page's 6 s heartbeat while a build is live, and refresh
+// the readiness panel once it settles.
+function applyCacheJob(job) {
+  const wasRunning = Boolean(state.cache.jobRunning);
+  state.cache.job = job;
+  state.cache.jobRunning = diskJobRunning(job);
+  if (cacheTimer) {
+    clearTimeout(cacheTimer);
+    cacheTimer = null;
+  }
+  if (state.cache.jobRunning) {
+    cacheTimer = setTimeout(() => { loadCache().catch(() => {}); }, 1500);
+  } else if (wasRunning) {
+    // the build just ended: the index/preview it wrote are only visible now
+    cacheTimer = setTimeout(() => { loadCache().catch(() => {}); }, 800);
+  }
+  updateCacheStartState();
+}
+
 export function readCacheParts() {
   const parts = [];
   if ($('#cache-part-latent')?.checked) parts.push('latent');
@@ -214,7 +238,9 @@ export function readCacheParts() {
 export function updateCacheStartState() {
   const button = $('#btn-cache-start');
   if (!button) return;
-  const running = Boolean(state.job && state.job.status === 'running') || Boolean(state.activeTraining);
+  const running = Boolean(state.job && state.job.status === 'running')
+    || Boolean(state.activeTraining)
+    || diskJobRunning(state.cache.job);
   const busy = running || state.busy;
   for (const id of ['cache-part-latent', 'cache-part-text']) {
     const checkbox = $(`#${id}`);
@@ -254,11 +280,77 @@ function renderCacheStage(part, stage) {
   }
 }
 
+// A cache build publishes its progress to the workspace, so a run started from a
+// terminal shows up here too. The local stages win while this tab owns the job.
+function diskJobRunning(job) {
+  return Boolean(job && (job.state === 'running' || job.state === 'starting'));
+}
+
+function diskCacheStages(job) {
+  const key = String(job.started || 0);
+  if (state.cache.diskKey !== key) {
+    state.cache.diskKey = key;
+    state.cache.diskStages = { latent: null, text: null };
+  }
+  const stages = state.cache.diskStages;
+  const running = diskJobRunning(job);
+  const history = job.history || {};
+  for (const part of ['latent', 'text']) {
+    const entry = history[part];
+    if (!entry) continue;
+    const total = Number(entry.total) || 0;
+    const done = Number(entry.done) || 0;
+    stages[part] = {
+      done,
+      total,
+      rate: '',
+      unit: entry.unit || (part === 'text' ? 'cap/s' : 'img/s'),
+      started: true,
+      complete: Boolean(entry.complete) || Boolean(entry.failed) || (total > 0 && done >= total),
+    };
+  }
+  const phase = job.phase === 'text' ? 'text' : job.phase === 'latent' ? 'latent' : '';
+  if (phase && running) {
+    const total = Number(job.total) || 0;
+    const done = Number(job.done) || 0;
+    stages[phase] = {
+      ...(stages[phase] || {}),
+      done,
+      total,
+      rate: job.rate ? String(job.rate) : '',
+      unit: job.unit || (phase === 'text' ? 'cap/s' : 'img/s'),
+      started: true,
+      complete: total > 0 && done >= total,
+    };
+  }
+  return stages;
+}
+
+function effectiveCacheView() {
+  const local = state.job && state.job.kind === 'cache' ? state.job : null;
+  if (local && local.status === 'running') return null;      // this tab streams it live
+  // A training run owns the GPU; the cache panel must say so instead of showing
+  // the last build as if nothing else were happening.
+  if (state.job && state.job.status === 'running' && state.job.kind !== 'cache') return null;
+  const disk = state.cache.job;
+  if (!disk) return null;
+  const state_ = disk.state;
+  const status = state_ === 'running' || state_ === 'starting'
+    ? 'running'
+    : state_ === 'done' ? 'done' : 'error';
+  return {
+    job: { kind: 'cache', status, created: disk.started || 0, disk },
+    stages: diskCacheStages(disk),
+    active: disk.phase === 'text' || disk.phase === 'latent' ? disk.phase : '',
+  };
+}
+
 export function renderCacheJob() {
-  const job = state.job;
+  const disk = effectiveCacheView();
+  const job = disk ? disk.job : state.job;
   const isCache = Boolean(job && job.kind === 'cache');
-  const stages = state.cache.stages || {};
-  const active = state.cache.active || '';
+  const stages = (disk ? disk.stages : state.cache.stages) || {};
+  const active = disk ? disk.active : (state.cache.active || '');
   const activeStage = active ? stages[active] : null;
   const activeLabel = cacheStageLabel(active);
   const desc = $('#cache-job-desc');
@@ -291,7 +383,8 @@ export function renderCacheJob() {
         : '',
       elapsed != null ? t('job.elapsed', { duration: fmtDuration(elapsed) }) : '',
     ].filter(Boolean).join(' · ') || t('job.msg11');
-    if (lastLine) lastLine.textContent = state.logs[state.logs.length - 1]?.line || t('cache.waiting');
+    if (lastLine) lastLine.textContent = state.logs[state.logs.length - 1]?.line
+      || (job.disk ? t('cache.job.stageRunning', { stage: activeLabel }) : t('cache.waiting'));
   } else if (job.status === 'running') {
     renderCacheStage('latent', null);
     renderCacheStage('text', null);
@@ -310,7 +403,8 @@ export function renderCacheJob() {
     if (desc) desc.textContent = t('cache.job.lastStatus', { status: job.status === 'done' ? t('common.done') : job.status === 'error' ? t('common.failed') : t('common.stopped') });
     if (label) label.textContent = t('common.idle');
     if (meta) meta.textContent = job.status === 'done' ? t('caption.msg2') : job.status === 'error' ? t('caption.msg3') : t('job.msg7');
-    if (lastLine) lastLine.textContent = state.logs[state.logs.length - 1]?.line || t('cache.waiting');
+    if (lastLine) lastLine.textContent = state.logs[state.logs.length - 1]?.line
+      || (job.disk ? t('cache.job.externalLog') : t('cache.waiting'));
   }
 }
 

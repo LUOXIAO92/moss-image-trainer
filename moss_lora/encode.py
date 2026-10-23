@@ -109,18 +109,22 @@ def run_encode_text(
     pending.sort(key=lambda item: len(caption(item)))
     start = time.time()
     done = 0
-    for offset in range(0, len(pending), max(1, batch_size)):
-        batch = pending[offset: offset + max(1, batch_size)]
-        embeds_batch, mask_batch = encode([caption(item) for item in batch])
-        for index, item in enumerate(batch):
-            path = path_for(item)
-            data = dict(load_file(path, device="cpu")) if os.path.exists(path) else {}
-            data.update({"text_embeds": embeds_batch[index], "text_mask": mask_batch[index]})
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            # 元数据必须一起写：下次靠 caption 是否变化来决定要不要重编码
-            save_file(data, path, metadata=builder.item_metadata(item))
-        done += len(batch)
-        log(f"text {done}/{len(pending)}  {done / max(time.time() - start, 1e-6):.2f} cap/s")
+    with builder.progress.phase("text", len(pending), "cap/s") as beat:
+        beat.update(0, 0.0)
+        for offset in range(0, len(pending), max(1, batch_size)):
+            batch = pending[offset: offset + max(1, batch_size)]
+            embeds_batch, mask_batch = encode([caption(item) for item in batch])
+            for index, item in enumerate(batch):
+                path = path_for(item)
+                data = dict(load_file(path, device="cpu")) if os.path.exists(path) else {}
+                data.update({"text_embeds": embeds_batch[index], "text_mask": mask_batch[index]})
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                # 元数据必须一起写：下次靠 caption 是否变化来决定要不要重编码
+                save_file(data, path, metadata=builder.item_metadata(item))
+            done += len(batch)
+            rate = done / max(time.time() - start, 1e-6)
+            beat.update(done, rate)
+            log(f"text {done}/{len(pending)}  {rate:.2f} cap/s")
 
     if config.preview.prompts:
         prompts = list(config.preview.prompts)

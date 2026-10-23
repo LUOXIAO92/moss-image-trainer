@@ -23,6 +23,7 @@ terminal — costs nothing.
 ```
 workspaces/<workspace>/
   .gpu.lock                     one holder: the process using the GPU
+  .cache-progress.json          cache build progress: phase, done, total
   runs/<run>/
     config.yaml                 the config this run was trained with
     training.json               heartbeat: who is training and how far
@@ -61,6 +62,18 @@ inherited `workspace.yaml`.
 The upshot is that how the config file was written stops mattering. Saved in
 the WebUI or edited by hand, the file is the input; the run directory keeps the
 record of what was used.
+
+## Cache builds
+
+A cache build writes `.cache-progress.json` in the workspace: the phase it is in
+(`latent`, `text`), how many images or captions it has done, the rate, and a
+`history` entry per phase so a reader that arrives late still sees the finished
+latent bar while the text pass runs. Terminal records carry an exit code, the
+same way a training heartbeat does.
+
+`GET /api/cache` returns that record as `job`, so the cache panel shows a build
+started in a terminal, and the page polls it faster than the page heartbeat
+while the build is live.
 
 ## The heartbeat
 
