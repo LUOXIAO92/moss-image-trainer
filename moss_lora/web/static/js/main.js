@@ -35,7 +35,7 @@ import { loadExportPage, loadLoras } from './pages/export.js';
 import { loadSamples } from './pages/samples.js';
 import { loadSettings, openOnboarding, renderI18nSettings, runSetupCheck } from './pages/settings.js';
 import { loadTrainHistory, refreshTrainSamples } from './pages/train.js';
-import { loadWorkspacePage } from './pages/workspace.js';
+import { loadWorkspacePage, loadWorkspaceRuns } from './pages/workspace.js';
 
 export function currentTab() {
   const hash = (location.hash || '').replace(/^#/, '');
@@ -268,6 +268,14 @@ async function boot() {
   loadLoras().catch(() => {});
 
   setInterval(() => { pollJobs().catch(() => {}); }, 4000);
+  // The run browser is a snapshot taken when the tab opened. A run that starts
+  // outside this page would never appear in it while it runs, so follow the job
+  // poll while something is live.
+  setInterval(() => {
+    if (document.hidden || currentTab() !== 'train') return;
+    if (state.job?.status !== 'running' && !state.activeTraining) return;
+    loadWorkspaceRuns().catch(() => {});
+  }, 4000);
   setInterval(() => {
     if (document.hidden) return;
     loadSystem().catch(() => {});
