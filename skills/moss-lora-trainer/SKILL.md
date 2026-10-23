@@ -393,7 +393,7 @@ When the preset is not explicitly set, `auto` resolves the tier from the detecte
 | Subcommand | Required Arguments | Optional Arguments and Defaults |
 | :--- | :--- | :--- |
 | `info` | None (requires `--config` or `--dataset`) | `--config`, `--dataset`, `--preset` |
-| `cache` | None (typically pass `--config`) | `--config`, `--dataset`, `--cache-dir`, `--preset`, `--latents-only`, `--text-only` (disabled; exits with error), `--batch-size` (`None`), `--workers` (`6`) |
+| `cache` | None (typically pass `--config`) | `--config`, `--dataset`, `--cache-dir`, `--preset`, `--latents-only`, `--text-only` (disabled; exits with error), `--overwrite` (rebuild files that already exist), `--batch-size` (`None`), `--workers` (`6`) |
 | `encode-text` | `--config` | `--overwrite`, `--text-model` (`""`), `--quantize` (`none\|fp8\|nf4_ffn\|nf4`, default `none`), `--preview-only`, `--batch-size` (`None`) |
 | `encode-prompt` | `--config`, `--out`, `--prompt` (repeatable) | `--negative` (`""`), `--text-model` (`""`) |
 | `caption` | None (requires `--config` or `--images`) | `--config` (`""`), `--images` (`""`), `--out` (`""`), `--styles` (`""`, defaults to `tag_caption,official`), `--overwrite`, `--migrate`, `--role` (`train\|reg`), `--base-url` (`""`), `--api-key` (`""`), `--model` (`""`), `--trigger` (`None`), `--prompt-tags` (`""`), `--prompt-natural` (`""`), `--no-thinking`, `--temperature`, `--top-p`, `--max-tokens`, `--workers`, `--retries`, `--structured` (`""\|auto\|on\|off`), `--limit` (`0`), `--dry-run`, `--validate-only` |
@@ -449,6 +449,6 @@ After fine-tuning completes, run through the checks below to verify the delivera
 ## 9. Prohibitions
 
 - **Do not touch other workspaces**: Read and write only inside the target `workspaces/<WORKSPACE>/` directory; never modify or delete other workspace directories under `workspaces/`.
-- **Do not abuse `--overwrite` to wipe caches**: `cache`, `encode-text`, and `caption` all include incremental and metadata-staleness checks (when prompts change, simply re-run `encode-text`). A change to `dataset.max_area` is detected through the cache's sizing fingerprint and re-encodes latents on its own, so never pass `--overwrite` or delete `train_cache/` for that.
+- **Do not abuse `--overwrite` to wipe caches**: `cache`, `encode-text`, and `caption` all include incremental and metadata-staleness checks (when prompts change, simply re-run `encode-text`). A change to `dataset.max_area` is detected through the cache's sizing fingerprint and re-encodes latents on its own, so never pass `--overwrite` or delete `train_cache/` for that. `cache --overwrite` rebuilds latents that already exist and only re-encodes captions when text encoding was requested in the same call; reach for it when the images behind unchanged filenames were edited in place, which the fingerprint cannot see.
 - **Do not download from the network**: Never run `pip install`, `huggingface-cli download`, `git clone`, `wget`, or `curl` in scripts or the terminal to fetch external models, weights, or packages.
 - **Do not disrupt a running WebUI or concurrent training job**: A single-GPU machine can run only one heavy workload at a time. Before starting a CLI job, run `pgrep -af "moss_lora"` to check for active WebUI or training processes, and never force-kill a running WebUI server.
