@@ -14,7 +14,7 @@ import { jobLabel, t } from '../core/i18n.js';
 import { showAlert, showError, showSuccess } from '../core/notify.js';
 import { isCaptionJob, state } from '../core/state.js';
 import { currentTab, focusLogPanel } from '../main.js';
-import { loadCache, readCacheParts, updateCacheStartState } from '../pages/cache.js';
+import { loadCache, readCacheParts, stopCacheBuild, updateCacheStartState } from '../pages/cache.js';
 import { loadActiveTraining, loadDashboard } from '../pages/dashboard.js';
 import { readCaptionSelection, refreshDatasetAfterCaption, updateCaptionStartState } from '../pages/dataset.js';
 import { loadLoras, updateExportStatus } from '../pages/export.js';
@@ -457,6 +457,10 @@ async function stopActiveTraining() {
 export async function stopJob() {
   if (state.activeTraining) { await stopActiveTraining(); return; }
   if (!state.job || state.job.status !== 'running') {
+    // A cache build published to disk is not in this page's registry, but it is
+    // still a job with a pid; stopping it must not fall through to "nothing to
+    // stop".
+    if (state.cache.jobRunning) { await stopCacheBuild(); return; }
     showAlert({ type: 'info', title: t('job.msg49'), text: t('job.msg50'), timeout: 3000 });
     return;
   }

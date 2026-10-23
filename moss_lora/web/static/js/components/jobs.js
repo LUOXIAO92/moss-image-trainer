@@ -213,7 +213,11 @@ export function updateJobUi() {
   const stop = $('#btn-stop');
   if (stop) stop.disabled = !running;
   const cacheStop = $('#cache-stop');
-  if (cacheStop) cacheStop.classList.toggle('hidden', !(running && state.job?.kind === 'cache'));
+  // A cache build published to disk is stoppable too; the in-memory registry
+  // only knows jobs this server spawned.
+  if (cacheStop) {
+    cacheStop.classList.toggle('hidden', !(running && (state.job?.kind === 'cache' || state.cache?.jobRunning)));
+  }
   const captionSource = $('#cfg-caption-source');
   if (captionSource) captionSource.disabled = running;
 

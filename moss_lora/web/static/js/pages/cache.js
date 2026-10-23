@@ -13,7 +13,7 @@ import { api } from '../core/api.js';
 import { $, getPath, setHidden, setPath, setText } from '../core/dom.js';
 import { fmtDuration, fmtInt } from '../core/fmt.js';
 import { jobLabel, t } from '../core/i18n.js';
-import { showAlert, showSuccess } from '../core/notify.js';
+import { showAlert, showError, showSuccess } from '../core/notify.js';
 import { CAPTION_SOURCES, state, workspaceParam } from '../core/state.js';
 import { refreshDatasetAfterCaption } from './dataset.js';
 
@@ -228,6 +228,19 @@ function applyCacheJob(job) {
   updateCacheStartState();
 }
 
+export async function stopCacheBuild() {
+  try {
+    await api('/api/cache/stop?workspace=' + encodeURIComponent(workspaceParam()), { method: 'POST' });
+    showAlert({ type: 'info', title: t('train.msg55'), text: t('job.msg52'), timeout: 4000 });
+    await loadCache();
+  } catch (error) {
+    showError(t('job.msg54'), error.detail || error.message, [
+      { label: t('common.retry'), onClick: () => { stopCacheBuild().catch(() => {}); } },
+    ]);
+    await loadCache().catch(() => {});
+  }
+}
+
 export function readCacheParts() {
   const parts = [];
   if ($('#cache-part-latent')?.checked) parts.push('latent');
@@ -283,7 +296,7 @@ function renderCacheStage(part, stage) {
 // A cache build publishes its progress to the workspace, so a run started from a
 // terminal shows up here too. The local stages win while this tab owns the job.
 function diskJobRunning(job) {
-  return Boolean(job && (job.state === 'running' || job.state === 'starting'));
+  return Boolean(job && (job.state === 'running' || job.state === 'starting' || job.state === 'stopping'));
 }
 
 function diskCacheStages(job) {
@@ -334,10 +347,11 @@ function effectiveCacheView() {
   if (state.job && state.job.status === 'running' && state.job.kind !== 'cache') return null;
   const disk = state.cache.job;
   if (!disk) return null;
-  const state_ = disk.state;
-  const status = state_ === 'running' || state_ === 'starting'
-    ? 'running'
-    : state_ === 'done' ? 'done' : 'error';
+  // Keep the four verdicts apart: a build someone stopped is not a failure.
+  const status = {
+    running: 'running', starting: 'running', stopping: 'running',
+    done: 'done', stopped: 'stopped', failed: 'error', interrupted: 'error',
+  }[disk.state] || 'error';
   return {
     job: { kind: 'cache', status, created: disk.started || 0, disk },
     stages: diskCacheStages(disk),

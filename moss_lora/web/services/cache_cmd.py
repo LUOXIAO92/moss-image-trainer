@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 
 from fastapi import HTTPException
 
@@ -60,6 +61,55 @@ def _cache_job(workspace_dir: str) -> dict | None:
         "cache_dir": record.get("cache_dir") or "",
         "history": record.get("history") or {},
     }
+
+
+def _looks_like_cache_process(pid: int) -> bool:
+    """True when the pid's command line is one of ours and is a cache build."""
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as handle:
+            command = handle.read().replace(b"\0", b" ").decode("utf-8", "replace")
+    except OSError:
+        return False
+    return "moss_lora" in command and ("cache" in command or "encode-text" in command)
+
+
+def _cache_stop(workspace_dir: str) -> dict:
+    """Stop a running cache build, whoever started it.
+
+    The button used to be dead for a build started in a terminal: it asked the
+    in-memory registry, which only knows jobs this server spawned. The published
+    heartbeat carries the pid, and the pid is checked against its own command
+    line before any signal goes out.
+    """
+    import signal
+
+    from ... import runtime
+    from ...cache import PROGRESS_NAME
+
+    path = os.path.join(workspace_dir, PROGRESS_NAME) if workspace_dir else ""
+    record = runtime.read_json(path) if path else None
+    if not record:
+        raise HTTPException(404, "没有正在运行的缓存任务")
+    state = runtime.classify(record)
+    if state["state"] not in ("running", "starting", "stopping"):
+        raise HTTPException(409, f"缓存任务已经结束（{state['state']}）")
+    pid = int(record.get("pid") or 0)
+    if pid <= 0 or not runtime.pid_alive(pid):
+        raise HTTPException(409, "缓存进程已经不在")
+    if not _looks_like_cache_process(pid):
+        raise HTTPException(409, f"pid {pid} 不是缓存进程，已拒绝发送信号")
+    try:
+        os.kill(pid, signal.SIGINT)
+    except ProcessLookupError:
+        raise HTTPException(409, "缓存进程已经不在") from None
+    except PermissionError:
+        raise HTTPException(409, "没有权限停止这个进程") from None
+    record.update({"status": "stopping", "time": time.time()})
+    try:
+        runtime.write_json_atomic(path, record)
+    except OSError:
+        pass
+    return {"ok": True, "pid": pid, "state": "stopping"}
 
 
 def _cache_summary(config: Config) -> dict:

@@ -105,6 +105,13 @@ class CacheProgress:
         beat = _Beat(self)
         try:
             yield beat
+        except KeyboardInterrupt:
+            # A stop request is not a failure: the reader must be able to tell
+            # "someone stopped it" from "it broke".
+            self.record.update({"status": "stopped", "exit_code": 130, "time": time.time(),
+                                "finished": time.time()})
+            self.write()
+            raise
         except BaseException:
             self.record.setdefault("history", {}).setdefault(name, {})["failed"] = True
             self.record.update({"status": "failed", "exit_code": 1, "time": time.time(),

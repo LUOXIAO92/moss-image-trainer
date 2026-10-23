@@ -112,12 +112,79 @@ def check_projection(tmp):
     print("cache job projection: ok  running / interrupted / done")
 
 
+def check_stop(tmp):
+    """停止请求：先验进程身份，再发信号；心跳立刻变成 stopping。"""
+    import signal
+    import subprocess
+
+    from fastapi import HTTPException
+
+    from moss_lora.web.services.cache_cmd import _cache_stop
+
+    workspace = os.path.join(tmp, "ws-stop")
+    os.makedirs(workspace)
+    path = os.path.join(workspace, PROGRESS_NAME)
+
+    def refused() -> str:
+        try:
+            _cache_stop(workspace)
+        except HTTPException as exc:
+            return str(exc.status_code) + ":" + str(exc.detail)
+        return ""
+
+    # 1) 没有心跳 -> 没有可停的任务
+    assert refused().startswith("404"), refused()
+
+    # 2) 心跳指向一个不是缓存进程的 pid（就是本测试进程）-> 拒绝，不发信号
+    record = {"pid": os.getpid(), "status": "running", "phase": "latent", "done": 1, "total": 4,
+              "rate": 1.0, "unit": "img/s", "started": time.time(), "time": time.time(),
+              "cache_dir": os.path.join(workspace, "train_cache"), "exit_code": None, "history": {}}
+    runtime.write_json_atomic(path, record)
+    detail = refused()
+    assert detail.startswith("409") and "不是缓存进程" in detail, detail
+    assert runtime.read_json(path)["status"] == "running", "a refused stop must not touch the record"
+
+    # 3) 一个带着缓存进程命令行的真进程：信号必须送达，记录必须变成 stopping
+    fake = subprocess.Popen(
+        ["bash", "-c", 'exec -a "python -m moss_lora.cli cache --config x.yaml" sleep 30'],
+        start_new_session=True,
+    )
+    try:
+        runtime.write_json_atomic(path, {**record, "pid": fake.pid, "time": time.time()})
+        result = _cache_stop(workspace)
+        assert result["ok"] and result["pid"] == fake.pid, result
+        assert fake.wait(timeout=10) != 0, "the fake cache process kept running"
+        stopped = runtime.read_json(path)
+        assert stopped["status"] == "stopping" and stopped["time"] > record["time"], stopped
+    finally:
+        if fake.poll() is None:
+            fake.kill()
+
+    # 4) 已经结束的任务：再点一次要明确说结束，而不是再发一次信号
+    runtime.write_json_atomic(path, {**record, "status": "done", "exit_code": 0,
+                                     "finished": time.time(), "time": time.time()})
+    detail = refused()
+    assert detail.startswith("409") and "已经结束" in detail, detail
+
+    # 5) 进程自己把 KeyboardInterrupt 接住时，终态是 stopped / 130，不是 failed
+    progress = CacheProgress(fake_config(workspace))
+    try:
+        with progress.phase("latent", 4, "img/s"):
+            raise KeyboardInterrupt
+    except KeyboardInterrupt:
+        pass
+    final = read(workspace)
+    assert final["status"] == "stopped" and final["exit_code"] == 130, final
+    print("cache stop          : ok  refused for a foreign pid, signals a cache build, stopped=130")
+
+
 def main():
     tmp = tempfile.mkdtemp(prefix="moss-cache-progress-")
     try:
         check_writer(tmp)
         check_continuation(tmp)
         check_projection(tmp)
+        check_stop(tmp)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("\ncache progress checks passed")

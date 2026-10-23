@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 
 from ...config import VRAM_PRESETS
 from ..deps import _rel, _safe_name, _write_text
-from ..services.cache_cmd import _cache_job, _cache_summary
+from ..services.cache_cmd import _cache_job, _cache_stop, _cache_summary
 from ..services.workspace import (_config_entry, _ensure_workspace_dirs, _resolve_workspace,
                                   _workspace_config, _workspace_config_path,
                                   _workspace_configs_dir, _workspace_dir, _workspace_exists,
@@ -125,6 +125,12 @@ def api_configs_delete(name: str, config: str):
         raise HTTPException(404, f"配置不存在：{config}")
     os.remove(path)
     return {"ok": True}
+
+@router.post("/api/cache/stop")
+def api_cache_stop(workspace: str = ""):
+    name = _resolve_workspace(workspace)
+    return _cache_stop(_workspace_dir(name))
+
 
 @router.get("/api/cache")
 def api_cache(path: str = "", workspace: str = "", reg_path: str | None = None):
