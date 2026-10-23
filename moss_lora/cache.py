@@ -285,8 +285,9 @@ class CacheBuilder:
 
         if batch_size is None:
             # one batch size per image size; same-size images are grouped below
+            fixed = int(getattr(self.config.cache, "vae_batch", 0) or 0)
             sample = pending[0]
-            batch_size = latent_batch(*sample.size)
+            batch_size = fixed if fixed > 0 else latent_batch(*sample.size)
         batch_size = max(1, min(int(batch_size), 4))
         self.batch["latent"] = batch_size
         self.log(f"latents: {len(pending)} images (batch {batch_size}, free {free_gib():.1f} GiB)")

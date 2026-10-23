@@ -100,13 +100,18 @@ def run_encode_text(
     if batch_size is None:
         from .memory import free_gib, text_batch
 
-        # Size the batch after the encoder is on the device. Sizing it first read
-        # the empty card's 30 GiB, chose 64 prompts, and then asked for activation
-        # room next to an 18 GB model -- which is what ran the card out of memory.
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        batch_size = text_batch()
-        log(f"encode-text: batch {batch_size} (free {free_gib():.1f} GiB after loading the encoder)")
+        fixed = int(getattr(config.cache, "text_batch", 0) or 0)
+        if fixed > 0:
+            batch_size = fixed
+            log(f"encode-text: batch {batch_size} (cache.text_batch, free {free_gib():.1f} GiB)")
+        else:
+            # Size the batch after the encoder is on the device. Sizing it first read
+            # the empty card's 30 GiB, chose 64 prompts, and then asked for activation
+            # room next to an 18 GB model -- which is what ran the card out of memory.
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            batch_size = text_batch()
+            log(f"encode-text: batch {batch_size} (free {free_gib():.1f} GiB after loading the encoder)")
     # A bigger batch is summed by a different kernel, so the same caption encodes
     # to a slightly different vector. Stamp the batch into the cache index.
     builder.record_batch("text", batch_size)

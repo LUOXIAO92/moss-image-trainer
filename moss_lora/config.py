@@ -82,6 +82,10 @@ class CacheConfig:
     latent_dtype: str = "float16"
     latent_sample: bool = False
     overwrite: bool = False
+    # 0 = pick from free VRAM. A fixed number keeps re-encodes comparable: the
+    # same caption comes back a few 1e-4 apart at batch 1 and at batch 64.
+    text_batch: int = 0
+    vae_batch: int = 0
 
 
 @dataclass
@@ -296,6 +300,10 @@ class Config:
                 problems.append(f"lora.layers index out of range 0..41: {index}")
         if self.train.batch_size <= 0 or self.train.grad_accum <= 0:
             problems.append("batch_size and grad_accum must be positive")
+        for key in ("text_batch", "vae_batch"):
+            value = getattr(self.cache, key, 0) or 0
+            if int(value) < 0:
+                problems.append(f"cache.{key} must be 0 (auto) or a positive number")
         source = str(getattr(self.dataset, "moss_caption_source", "tag_caption"))
         if source not in ("tag_caption", "official_long", "official_medium", "official_short"):
             problems.append(

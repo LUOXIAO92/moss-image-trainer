@@ -15,6 +15,8 @@ export const FIELD_DEFS = [
   { id: 'cfg-dataset-path', path: 'dataset.path', type: 'text', label: 'dataset.path', required: true, default: '' },
   { id: 'cfg-cache-dir', path: 'cache.dir', type: 'text', label: 'dataset.cacheDir', default: '', blankDefault: true },
   { id: 'cfg-cache-reg-dir', path: 'cache.reg_dir', type: 'text', label: 'dataset.reg.cacheDir', default: '', blankDefault: true },
+  { id: 'cfg-cache-text-batch', path: 'cache.text_batch', type: 'number', label: 'cache.textBatch', min: 0, integer: true, default: 0 },
+  { id: 'cfg-cache-vae-batch', path: 'cache.vae_batch', type: 'number', label: 'cache.vaeBatch', min: 0, integer: true, default: 0 },
   { id: 'cfg-reg-path', path: 'dataset.reg_path', type: 'text', label: 'dataset.reg.path', default: '' },
   { id: 'cfg-reg-caption', path: 'dataset.reg_caption', type: 'text', label: 'dataset.reg.caption', default: '' },
   { id: 'cfg-caption-source', path: 'dataset.moss_caption_source', type: 'text', label: 'cache.captionSource', default: 'tag_caption' },

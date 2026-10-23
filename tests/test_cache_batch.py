@@ -18,6 +18,7 @@ import types
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from moss_lora.cache import CacheBuilder  # noqa: E402
+from moss_lora.config import Config  # noqa: E402
 
 
 def _builder(directory: str):
@@ -59,7 +60,19 @@ def check_empty_batch_is_still_explicit():
         assert _read(directory)["batch"] == {}, _read(directory)["batch"]
 
 
+def check_config_fields():
+    """UI 上填的固定 batch 必须能读进配置，负数要被校验拦住。"""
+    config = Config.from_dict({"cache": {"text_batch": 32, "vae_batch": 2}})
+    assert config.cache.text_batch == 32, config.cache.text_batch
+    assert config.cache.vae_batch == 2, config.cache.vae_batch
+    assert not [p for p in config.validate() if "cache." in p], config.validate()
+
+    bad = Config.from_dict({"cache": {"text_batch": -1}})
+    assert any("cache.text_batch" in p for p in bad.validate()), bad.validate()
+
+
 def main():
+    check_config_fields()
     check_records_and_merges()
     check_empty_batch_is_still_explicit()
     print("cache batch checks passed")

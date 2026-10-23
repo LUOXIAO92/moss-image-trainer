@@ -39,6 +39,15 @@
             <span class="field-help" id="cfg-cache-help"><span data-i18n="dataset.cacheHelp">留空使用工作区缓存目录</span> <span class="mono">train_cache</span></span>
             <span class="field-help mono" id="cfg-cache-effective" data-i18n-skip data-i18n="dataset.effective">生效：--</span>
           </div>
+          <div class="field">
+            <label class="field-label" for="cfg-cache-text-batch" data-i18n="cache.textBatch">文本编码 batch</label>
+            <input id="cfg-cache-text-batch" type="number" min="0" step="1" inputmode="numeric" aria-describedby="cfg-cache-batch-help">
+            <span class="field-help" id="cfg-cache-batch-help" data-i18n="cache.batchHelp">0 = 按剩余显存自动；填固定值可让每次编码的结果完全一致（batch 会改变数值）。</span>
+          </div>
+          <div class="field">
+            <label class="field-label" for="cfg-cache-vae-batch" data-i18n="cache.vaeBatch">VAE 编码 batch</label>
+            <input id="cfg-cache-vae-batch" type="number" min="0" step="1" inputmode="numeric">
+          </div>
         </div>
       </div>
 
