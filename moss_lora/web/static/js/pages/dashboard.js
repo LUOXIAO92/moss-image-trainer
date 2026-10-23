@@ -13,6 +13,7 @@ import { fmtDuration, fmtInt, fmtNum, fmtTime } from '../core/fmt.js';
 import { localeCode, t } from '../core/i18n.js';
 import { showAlert, showError } from '../core/notify.js';
 import { state, workspaceParam } from '../core/state.js';
+import { renderDashboardConfigOptions } from '../config/list.js';
 
 function dashboardSeries(rows) {
   const train = [];
@@ -660,4 +661,7 @@ export function renderDashboard(data) {
   if (liveMismatch) updateTrainMetrics();
   renderRunStrip();
   updateTrainRunState();
+  // The config picker follows the viewed run; it used to only re-render when a
+  // config changed, which is how the two selectors drifted apart.
+  renderDashboardConfigOptions();
 }

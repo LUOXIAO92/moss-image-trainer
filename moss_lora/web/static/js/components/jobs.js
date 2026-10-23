@@ -196,7 +196,7 @@ export function updateJobUi() {
     : '';
   const activeText = active
     ? t('job.trainingActive', { run: active.run, progress: activeProgress })
-    : t('dash.train.start');
+    : (!running && missingDashboardConfig ? t('train.selectConfig') : t('dash.train.start'));
   setText('#btn-start-text', activeText);
   if (active && sameRun && state.job?.status === 'running' && state.job.kind === 'train'
       && active.step != null && $('#dash-run-status')) {

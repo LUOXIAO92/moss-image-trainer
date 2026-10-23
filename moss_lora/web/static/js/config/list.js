@@ -105,6 +105,8 @@ function dashboardConfigOptions() {
     value: entry.name,
     label: entry.name,
   }));
+  const snapshot = runSnapshotOption();
+  if (snapshot) options.unshift(snapshot);
   if (workspaceDefaultConfigReady()) {
     options.push({ value: 'default', label: t('dash.msg1') });
   }
@@ -113,10 +115,12 @@ function dashboardConfigOptions() {
 
 export function hasDashboardConfigSelection() {
   const select = $('#dash-config-select');
-  return Boolean(select && select.value && !select.disabled);
+  if (!select || select.disabled) return false;
+  // The snapshot is read-only history: it enables no launch button.
+  return Boolean(select.value) && select.value !== RUN_SNAPSHOT;
 }
 
-function renderDashboardConfigOptions() {
+export function renderDashboardConfigOptions() {
   const select = $('#dash-config-select');
   if (!select) return;
   const options = dashboardConfigOptions();
@@ -129,14 +133,19 @@ function renderDashboardConfigOptions() {
     select.innerHTML = options
       .map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`)
       .join('');
-    const active = options.some((option) => option.value === state.activeConfigName)
-      ? state.activeConfigName
-      : options[0].value;
+    const snapshot = runSnapshotOption();
+    const active = snapshot
+      ? snapshot.value
+      : (options.some((option) => option.value === state.activeConfigName)
+        ? state.activeConfigName
+        : options[0].value);
     select.value = active;
     select.disabled = !state.profileName;
-    setHidden('#dash-config-line', false);
+    // While a historic run is selected, its own snapshot is the only config
+    // shown; the "next run" line would describe something else.
+    setHidden('#dash-config-line', Boolean(snapshot));
     setHidden('#dash-config-empty', true);
-    renderDashboardConfigSummary(active);
+    if (!snapshot) renderDashboardConfigSummary(active);
   }
   updateJobUi();
 }
@@ -225,6 +234,29 @@ export async function ensureDashboardConfigSelection() {
   const target = options[0]?.value || '';
   if (target && !state.dirty) await selectDashboardConfig(target, { confirmChange: false });
   else renderDashboardConfigOptions();
+}
+
+// A run's config lives in its own directory and nowhere else. While a historic
+// run is selected the picker shows that snapshot instead of a config name, so
+// the panel never describes a run with a file that is not its own.
+export const RUN_SNAPSHOT = '__run_snapshot__';
+
+export function runSnapshotOption() {
+  const data = state.dashboard.data;
+  if (!data || !data.run || !data.run_config_path) return null;
+  // Once the user picks a real config, the picker belongs to the next run
+  // again; inspecting a run puts it back on that run's own snapshot.
+  if (state.dashboard.configPicked) return null;
+  const name = String(data.run).split('/').pop();
+  return { value: RUN_SNAPSHOT, label: `${t('train.configSource.run')} · ${name}` };
+}
+
+export function armRunSnapshot() {
+  state.dashboard.configPicked = false;
+}
+
+export function isRunSnapshotSelected() {
+  return $('#dash-config-select')?.value === RUN_SNAPSHOT;
 }
 
 export async function startDashboardTraining() {
