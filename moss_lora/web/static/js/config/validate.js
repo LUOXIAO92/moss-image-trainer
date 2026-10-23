@@ -67,6 +67,12 @@ export function validateField(field) {
     if (field.integer && !Number.isInteger(value)) return t('common.msg28');
     if (field.multipleOf && value % field.multipleOf !== 0) return t('train.validation.multiple', { value: field.multipleOf });
   }
+  if (field.type === 'resident' && raw !== '') {
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value < 0 || value > field.max) {
+      return t('train.validation.residentRange', { max: field.max });
+    }
+  }
   if (field.type === 'intlist' && raw !== '') {
     const list = parseIntList(raw);
     if (!list) return t('common.msg29');

@@ -30,6 +30,11 @@
             </span>
             <span class="field-help" id="cfg-dataset-help" data-i18n="dataset.pathHelp">扫描结果会写回这里；支持任意本地目录。</span>
           </div>
+          <label class="field span2" for="cfg-max-area">
+            <span class="field-label" data-i18n="dataset.maxArea">图片面积上限</span>
+            <input id="cfg-max-area" type="number" min="1" step="1" inputmode="numeric" placeholder="1048576" aria-describedby="cfg-max-area-help">
+            <span class="field-help" id="cfg-max-area-help" data-i18n="dataset.maxAreaHelp">图片面积预算，决定缓存 latent 的尺寸和训练激活显存；调低省显存，但已缓存 latent 需要重建（缓存页会自动检测到变化）。</span>
+          </label>
           <div class="field span2">
             <label class="field-label" for="cfg-cache-dir" data-i18n="dataset.cacheDir">缓存目录</label>
             <span class="input-row">

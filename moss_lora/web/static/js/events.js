@@ -6,7 +6,7 @@
 import { applySmoothWindow, drawChart } from './components/chart.js'; import { startJob, stopJob } from './components/jobsse.js';
 import { clearLog, copyLog, isLogNearBottom } from './components/logview.js'; import { drawMetricCards, positionWidgets, toggleMetricCard } from './components/metriccards.js';
 import { runPreflight } from './components/preflight.js'; import { closeConfigDialog, deleteCurrentRun, openNewRunDialog, saveConfig, submitConfigDialog, switchRun } from './config/file.js';
-import { addLayerRow, clearYamlError, focusYamlLine, markDirty, readLayerControlsIntoConfig, scheduleFormSync, setMode, showYamlError, syncAttentionControls, syncFormFromConfig, syncQuantizeControls, syncSaveStateControls, syncYamlScroll, updateCacheEffective, updateLrEffective, updateOutputPreview, updateRegCacheEffective, updateRegCachePlaceholder, updateYamlLineCount } from './config/form.js'; import { selectDashboardConfig, startDashboardTraining } from './config/list.js';
+import { addLayerRow, clearYamlError, focusYamlLine, markDirty, readLayerControlsIntoConfig, scheduleFormSync, setMode, showYamlError, syncAttentionControls, syncFormFromConfig, syncQuantizeControls, syncSaveStateControls, syncYamlScroll, updateCacheEffective, updateLrEffective, updateOutputPreview, updatePresetSummary, updateRegCacheEffective, updateRegCachePlaceholder, updateYamlLineCount } from './config/form.js'; import { selectDashboardConfig, startDashboardTraining } from './config/list.js';
 import { FIELD_DEFS, LAYER_COUNT } from './config/model.js'; import { closeProfileDialog, openProfileDialog, submitProfileDialog, switchProfile } from './config/profiles.js';
 import { setFieldError, validateField } from './config/validate.js'; import { dumpYaml, parseYaml } from './config/yaml.js';
 import { copyText } from './core/clipboard.js'; import { $, $$, setHidden, setText } from './core/dom.js';
@@ -39,6 +39,9 @@ export function bindEvents() {
   $('#activity-open')?.addEventListener('click', focusLogPanel);
   $('#btn-read-log')?.addEventListener('click', readJobLogFile);
   $('#activity-stop')?.addEventListener('click', () => stopJob());
+  // The card total arrives with /api/system; the auto tier in the preset line
+  // depends on it, so re-render once that number is known.
+  document.addEventListener('moss:gpu-total-changed', updatePresetSummary);
 
   for (const selector of ['#ui-language-select', '#i18n-current-select']) {
     $(selector)?.addEventListener('change', (event) => setUiLanguage(event.target.value));
