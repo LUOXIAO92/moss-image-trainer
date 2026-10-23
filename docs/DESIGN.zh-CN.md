@@ -245,7 +245,7 @@ Sidecar 文件固定采用 `schema: 2` 结构，容纳两个互不干扰的风�
 ### 6.4 验证、采样、检查点与断点续训
 
 - 确定性留出集验证：`train.eval_holdout > 0`（默认 `0.05`）时，`_split_eval` 计算每张图像绝对路径的 SHA1 前 8 位十六进制值，按模 1000 切分验证集。哈希切分保证跨运行、跨中断续训的验证样本集合恒定；每 `train.eval_every` 步使用固定种子 `1234` 计算前 `train.eval_batches` 批的验证损失，追加写入 `metrics.jsonl`。
-- 周期采样与轨迹拼图：每 `train.sample_every` 步调用 [sampling.py](<../moss_lora/sampling.py>) 的 `sample` 生成预览图，训练结束时由 `make_contact_sheet` 按「每步一行、每条提示词一列」拼接为 `samples/trajectory.png`。采样异常被捕获并记录日志，绝不中断训练主循环。
+- 周期采样与轨迹拼图：每 `train.sample_every` 步调用 [sampling.py](<../moss_lora/sampling.py>) 的 `sample` 生成预览图，训练结束时由 `make_contact_sheet` 按「每步一行、每条提示词一列」拼接为 `samples/trajectory.png`。采样异常被捕获并记录日志，绝不中断训练主循环。开启 `vram.compile` 时，`_preview_forward` 会在采样期间把模型换回未编译的 forward，结束后再换回编译版本：预览的批大小和 token 形状是训练循环从未追踪过的，第一次编译预览会在图捕获里耗上几分钟而日志一片安静，用户会以为卡死。`preview.batch`（`0` = 所有提示词一次跑完）仍然决定采样峰值。
 - 检查点与状态分离：`save_checkpoint` 每 `train.save_every` 步写出仅含 LoRA 权重且直接采用 `lora_unet_*` 键名的 `checkpoints/stepXXXXXX.safetensors`（结束时写 `final.safetensors`），并在头部 `metadata` 写入步数与配置摘要。优化器动量和 CPU/CUDA 随机数状态则根据 `train.save_state`（`off|last|all`，默认 `last`）单独写入滚动更新的 `checkpoints/state.safetensors` 或按步保存的 `<tag>.state.safetensors`。
 - 断点续训与队列：传入 `--resume <ckpt>` 时，`_load_checkpoint` 通过 `_denormalise_keys` 将 `lora_unet_*` 键名逆映射回 PEFT 参数名，随后查找同目录匹配的 `.state.safetensors` 或 `state.safetensors`，校验 `state_step == step` 后恢复优化器动量与 RNG 状态。[queue.py](<../moss_lora/queue.py>) 的 `run_pipeline` 可扫描工作区内所有 `metrics.jsonl` 未达目标步数的运行，先补齐缺失缓存，再按各自 `runs/<run>/config.yaml` 逐一续训。
 

@@ -45,6 +45,9 @@ class Trainer:
             str(self.config.model.dtype).lower(), torch.bfloat16
         )
         self.state = TrainState()
+        # Set by _maybe_compile: the uncompiled forward, so a preview can bypass
+        # the compiled wrapper instead of paying a fresh graph for its shape.
+        self._eager_forward = None
         self.cache_dir = config.cache.dir
         with open(os.path.join(self.cache_dir, "index.json"), encoding="utf-8") as f:
             self.index = json.load(f)
@@ -182,7 +185,16 @@ class Trainer:
             return
         model = getattr(getattr(self.model, "base_model", self.model), "model", self.model)
         try:
-            model.forward = torch.compile(model.forward, dynamic=True, fullgraph=False)
+            eager = model.forward
+            compiled = torch.compile(eager, dynamic=True, fullgraph=False)
+            model.forward = compiled
+            # Previews run through the eager forward. A sampling pass uses a batch
+            # and a shape the training loop never compiled, so torch.compile would
+            # spend minutes generating a graph for it -- a stall a user reads as a
+            # hang -- and sampling is too few steps for the compiled version to pay
+            # that back.
+            self._eager_forward = eager
+            self._compiled_forward = compiled
             self.log("compile: torch.compile on the transformer forward")
         except Exception as exc:  # pragma: no cover - depends on the install
             self.log(f"compile: failed ({type(exc).__name__}: {exc}), continuing eager")
@@ -1067,6 +1079,21 @@ class Trainer:
                 ))
         return torch.cat(images, 0) if len(images) > 1 else images[0]
 
+    @contextlib.contextmanager
+    def _preview_forward(self):
+        """Sample through the eager forward, then hand torch.compile back."""
+        model = getattr(getattr(self.model, "base_model", self.model), "model", self.model)
+        eager = getattr(self, "_eager_forward", None)
+        if eager is None:
+            yield
+            return
+        previous = model.forward
+        model.forward = eager
+        try:
+            yield
+        finally:
+            model.forward = previous
+
     def preview(self, step: int):
         path = os.path.join(self.cache_dir, "preview.safetensors")
         if not os.path.exists(path):
@@ -1083,16 +1110,17 @@ class Trainer:
         prompts = len(preview.prompts or []) or 1
         chunk = min(max(1, batch), prompts) if batch else prompts
         try:
-            try:
-                images = self._sample_preview(self._preview_codec(), chunk)
-            except torch.cuda.OutOfMemoryError:
-                # A preview must never kill a run that was training fine: drop to
-                # one prompt at a time and decode on the CPU, then try once more.
-                self.log("preview: out of memory -> one prompt at a time, CPU decode")
-                self._codec = None
-                self._vae_cpu_fallback = True
-                torch.cuda.empty_cache()
-                images = self._sample_preview(self._preview_codec(), 1)
+            with self._preview_forward():
+                try:
+                    images = self._sample_preview(self._preview_codec(), chunk)
+                except torch.cuda.OutOfMemoryError:
+                    # A preview must never kill a run that was training fine: drop
+                    # to one prompt at a time and decode on the CPU, then retry.
+                    self.log("preview: out of memory -> one prompt at a time, CPU decode")
+                    self._codec = None
+                    self._vae_cpu_fallback = True
+                    torch.cuda.empty_cache()
+                    images = self._sample_preview(self._preview_codec(), 1)
         finally:
             self.model.train(was_training)
             torch.cuda.empty_cache()
