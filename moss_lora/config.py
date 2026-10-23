@@ -167,6 +167,10 @@ class VramConfig:
     quantize_dit: str = "none"
     # storage format for the replaced Linears: nf4 (smallest) | fp8 (e4m3, safer)
     quantize_dtype: str = "nf4"
+    # quantization of the conditioning half (text projection, both modulations,
+    # time embedding, final projection): none (bf16) | fp8 | nf4. Off by default:
+    # a per-block modulation feeds every layer, so its rounding error compounds.
+    quantize_conditioning: str = "none"
     # fp16 only: let cuBLAS accumulate in fp16 (2x the bf16 tensor-core rate, less precise)
     fp16_accumulate: bool = False
     compile: bool = True   # torch.compile the block loop (~25% faster, dynamic shapes)
@@ -338,6 +342,9 @@ class Config:
             problems.append(problem("err.config.bin_tokens"))
         if str(self.train.optimizer).lower() not in ("adamw", "adamw8bit", "muon", "adafactor"):
             problems.append(problem("err.config.optimizer", value=self.train.optimizer))
+        if str(self.vram.quantize_conditioning).lower() not in ("none", "fp8", "nf4"):
+            problems.append(problem("err.config.quantize_conditioning",
+                                    value=self.vram.quantize_conditioning))
         if str(self.lora.init).lower() not in ("kaiming", "zero"):
             problems.append(problem("err.config.lora_init", value=self.lora.init))
         preview = self.preview

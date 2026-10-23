@@ -79,6 +79,7 @@ CODES: dict[str, str] = {
     "err.config.preview_shift": "样图的 shift 不能小于 0",
     "err.config.preview_steps": "样图的步数要大于 0",
     "err.config.preview_width": "样图的宽度要是 16 的正整数倍",
+    "err.config.quantize_conditioning": "conditioning 量化只有 none、fp8、nf4，现在填的是 {value}",
     "err.config.structure": "配置结构不对：{error}",
     "err.config.te_config_missing": "找不到文本编码器的 config.json 目录：{path}",
     "err.config.te_config_no_config": "那个目录里没有 config.json：{path}",
