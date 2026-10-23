@@ -341,6 +341,9 @@ export function markDirty(dirty = true) {
     profileDirty.className = `chip ${state.dirty ? 'chip-warn' : 'chip-muted'}`;
     profileDirty.textContent = state.dirty ? t('common.msg13') : t('common.saved');
   }
+  // The dashboard estimate watches the same edits; this is the one signal every
+  // form/YAML change and config load already goes through, so it needs no poll.
+  document.dispatchEvent(new CustomEvent('moss:config-dirty'));
 }
 
 let formSyncTimer = null;

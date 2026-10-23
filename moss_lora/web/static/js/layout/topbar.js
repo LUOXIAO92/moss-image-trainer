@@ -10,9 +10,16 @@ import { state } from '../core/state.js';
 
 export async function loadSystem() {
   const data = await api('/api/system');
+  const previousTotal = Number(state.system?.gpu?.total_gb);
   state.system = data;
   state.lastSystemAt = Date.now();
   renderSystemChips();
+  const total = Number(data?.gpu?.total_gb);
+  // The poll runs every two seconds; only a new card total changes what counts
+  // as over budget, so this fires once rather than asking on every tick.
+  if (Number.isFinite(total) && total > 0 && total !== previousTotal) {
+    document.dispatchEvent(new CustomEvent('moss:gpu-total-changed'));
+  }
 }
 
 export function renderSystemChips() {

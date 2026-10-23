@@ -29,7 +29,7 @@ import { TABS, TAB_LABEL_KEYS, state } from './core/state.js';
 import { bindEvents } from './events.js';
 import { loadSystem } from './layout/topbar.js';
 import { loadCache, renderCacheJob } from './pages/cache.js';
-import { loadActiveTraining, loadDashboard } from './pages/dashboard.js';
+import { initDashboardEstimate, loadActiveTraining, loadDashboard, scheduleEstimate } from './pages/dashboard.js';
 import { autoLoadDataset, loadCaptionPage, scanDataset, scanRegDataset } from './pages/dataset.js';
 import { loadExportPage, loadLoras } from './pages/export.js';
 import { loadSamples } from './pages/samples.js';
@@ -73,6 +73,9 @@ export async function route() {
   setTabState(tab);
   if (tab === 'dashboard') {
     await ensureDashboardConfigSelection();
+    // Entering the tab is a config refresh in practice: the form may have been
+    // edited on another tab while this card was hidden.
+    scheduleEstimate(0);
     if (!state.layoutLoaded) await loadDashboardLayout();
     await loadDashboard(state.dashboard.run, {});
     await loadActiveTraining();
@@ -240,6 +243,7 @@ async function boot() {
   }
   arrangeDashboardOrder();
   bindEvents();
+  initDashboardEstimate();
   initCharts();
   if (!location.hash) {
     history.replaceState(null, '', '#train');

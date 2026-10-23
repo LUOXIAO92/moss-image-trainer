@@ -39,6 +39,10 @@
 }
 .kpi .progress { margin-top: 8px; }
 #dash-eval-sub { white-space: pre-line; }
+/* The estimate is the one KPI that can say the config will not fit the card. */
+.kpi-estimate.is-over { border-color: rgba(251, 191, 36, .42); background: rgba(251, 191, 36, .07); }
+.kpi-estimate.is-over .kpi-value { color: var(--color-warning); }
+#dash-estimate-sub { white-space: pre-line; }
 .kpi-trend { color: var(--color-text-muted); font-size: var(--text-2xs); font-family: var(--font-mono); white-space: nowrap; }
 .kpi-trend.is-good { color: var(--color-success); }
 .kpi-trend.is-bad { color: var(--color-danger); }

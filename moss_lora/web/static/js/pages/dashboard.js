@@ -13,6 +13,7 @@ import { fmtDuration, fmtInt, fmtNum, fmtTime } from '../core/fmt.js';
 import { localeCode, t } from '../core/i18n.js';
 import { showAlert, showError } from '../core/notify.js';
 import { state, workspaceParam } from '../core/state.js';
+import { getCurrentYaml } from '../config/form.js';
 import { renderDashboardConfigOptions } from '../config/list.js';
 
 function dashboardSeries(rows) {
@@ -41,6 +42,169 @@ function setTrend(selector, text, tone = '') {
 function formatDelta(value, digits = 4) {
   if (!Number.isFinite(value)) return '--';
   return `${value >= 0 ? '+' : '−'}${Math.abs(value).toFixed(digits)}`;
+}
+
+const ESTIMATE_DEBOUNCE = 300;
+
+const estimate = {
+  timer: null,
+  seq: 0,
+  data: null,
+  yaml: '',
+  workspace: '',
+};
+
+function dashboardVisible() {
+  return String(location.hash || '').replace(/^#/, '') === 'dashboard';
+}
+
+function estimateText(key, fallback, vars = {}) {
+  const text = t(key, vars);
+  if (text !== key) return text;
+  // The key may not be in the installed packs yet; keep the Chinese copy here
+  // so the card never renders a bare key.
+  return String(fallback).replace(/\{(\w+)\}/g, (match, name) => (
+    Object.prototype.hasOwnProperty.call(vars, name) ? String(vars[name]) : match
+  ));
+}
+
+function formatGiB(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toFixed(1) : '--';
+}
+
+function cardTotalGiB() {
+  const total = Number(state.system?.gpu?.total_gb);
+  return Number.isFinite(total) && total > 0 ? total : null;
+}
+
+function measuredPeakGiB() {
+  // Only a live training run describes the config currently in the form; a
+  // viewed run's historical peak belongs to a different config.
+  if (state.job?.status !== 'running' || state.job?.kind !== 'train') return null;
+  let lastStep = -Infinity;
+  let peak = null;
+  for (const [step, meta] of state.series.meta.entries()) {
+    const index = Number(step);
+    if (!Number.isFinite(index) || index < lastStep) continue;
+    const device = Number(meta?.vram_device);
+    const allocated = Number(meta?.vram);
+    // Mirror the peak card: device-wide when the log line carries it, else the
+    // allocator peak from the live progress event.
+    const value = Number.isFinite(device) && device > 0
+      ? device
+      : (Number.isFinite(allocated) && allocated > 0 ? allocated : null);
+    if (value == null) continue;
+    lastStep = index;
+    peak = value;
+  }
+  return peak;
+}
+
+function blankEstimate() {
+  const card = $('#dash-estimate-card');
+  if (card) card.classList.remove('is-over');
+  setText('#dash-estimate', '--');
+  setText('#dash-estimate-sub', estimateText('dash.kpi.estimateBreakdown', '训练 {train} · 预览 {preview} · 卡 {card}', {
+    train: '--', preview: '--', card: '--',
+  }));
+}
+
+export function renderEstimateCard() {
+  const card = $('#dash-estimate-card');
+  if (!card) return;
+  const data = estimate.data;
+  // No loaded run config means there is no YAML to cost; an estimate of the
+  // defaults would describe a run the user cannot start.
+  if (!data || !state.configPath || estimate.workspace !== workspaceParam()) {
+    blankEstimate();
+    return;
+  }
+  const total = Number(data.total);
+  if (!Number.isFinite(total)) {
+    blankEstimate();
+    return;
+  }
+  const capacity = cardTotalGiB();
+  const over = capacity != null && total > capacity ? total - capacity : null;
+  card.classList.toggle('is-over', over != null);
+  setText('#dash-estimate', `${formatGiB(total)} GiB`);
+  const lines = [estimateText('dash.kpi.estimateBreakdown', '训练 {train} · 预览 {preview} · 卡 {card}', {
+    train: formatGiB(data.train),
+    preview: formatGiB(data.preview),
+    card: capacity == null ? '--' : formatGiB(capacity),
+  })];
+  if (over != null) {
+    lines.push(estimateText('dash.kpi.estimateOver', '预计超出显卡 {over} GiB', { over: formatGiB(over) }));
+  }
+  const measured = measuredPeakGiB();
+  if (measured != null) {
+    lines.push(estimateText('dash.kpi.estimateMeasured', '实测峰值 {peak} GiB', { peak: formatGiB(measured) }));
+  }
+  setText('#dash-estimate-sub', lines.join('\n'));
+}
+
+async function refreshEstimate(seq) {
+  if (!dashboardVisible()) return;
+  if (!state.profileName || !state.configPath) {
+    estimate.data = null;
+    renderEstimateCard();
+    return;
+  }
+  const workspace = workspaceParam();
+  const yaml = getCurrentYaml();
+  if (!yaml.trim()) {
+    estimate.data = null;
+    renderEstimateCard();
+    return;
+  }
+  if (estimate.data && estimate.yaml === yaml && estimate.workspace === workspace) {
+    renderEstimateCard();
+    return;
+  }
+  try {
+    const data = await api('/api/estimate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ yaml, workspace }),
+    });
+    if (seq !== estimate.seq) return;
+    estimate.data = data;
+    estimate.yaml = yaml;
+    estimate.workspace = workspace;
+    renderEstimateCard();
+  } catch (error) {
+    // A 404 means the workspace is gone and a 400 means the YAML is mid-edit;
+    // both are normal here, so the card goes blank without a toast or a log.
+    if (seq !== estimate.seq) return;
+    estimate.data = null;
+    estimate.yaml = '';
+    estimate.workspace = workspace;
+    renderEstimateCard();
+  }
+}
+
+export function scheduleEstimate(delay = ESTIMATE_DEBOUNCE) {
+  if (!dashboardVisible()) return;
+  clearTimeout(estimate.timer);
+  // Invalidate any answer still in flight: it was asked for an older form.
+  estimate.seq += 1;
+  const seq = estimate.seq;
+  estimate.timer = setTimeout(() => {
+    estimate.timer = null;
+    refreshEstimate(seq).catch(() => {});
+  }, Math.max(0, Number(delay) || 0));
+}
+
+export function initDashboardEstimate() {
+  // The form marks dirty on every edit; follow that signal instead of polling.
+  document.addEventListener('moss:config-dirty', () => scheduleEstimate());
+  // The card total arrives with /api/system after boot. Re-render the warning
+  // state from the answer already on screen, or ask once if there is none.
+  document.addEventListener('moss:gpu-total-changed', () => {
+    if (estimate.data) renderEstimateCard();
+    else scheduleEstimate(0);
+  });
 }
 
 function runRunState(data, activeOverride = null, liveStep = null) {
@@ -667,4 +831,7 @@ export function renderDashboard(data) {
   // The config picker follows the viewed run; it used to only re-render when a
   // config changed, which is how the two selectors drifted apart.
   renderDashboardConfigOptions();
+  // The measured peak lives in the live series, so refresh the suffix on each
+  // dashboard poll without asking /api/estimate again.
+  renderEstimateCard();
 }
