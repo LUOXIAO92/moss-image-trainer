@@ -3,7 +3,7 @@
  * split from web/static/app.js, source 913-1562 (32 non-contiguous spans, see .tmp/js-map.json); behaviour unchanged
  * ========================================================================= */
 
-import { FIELD_DEFS, LAYER_COUNT, LORA_MODULES, absoluteWorkspacePath, arrayFromPrompts, compactLayerRange, defaultCacheDir, defaultRegCacheDir, displayCacheValue, displayRegCacheValue, parseLayerRange, parseIntList, resolvedCacheBase } from './model.js';
+import { FIELD_DEFS, LAYER_COUNT, LORA_MODULES, absoluteWorkspacePath, arrayFromPrompts, compactLayerRange, defaultCacheDir, defaultRegCacheDir, displayCacheValue, displayRegCacheValue, parseLayerRange, parseIntList, residentToSwap, resolvedCacheBase, swapToResident } from './model.js';
 import { dumpYaml, parseYaml } from './yaml.js';
 import { $, $$, clamp, deletePath, escapeHtml, getPath, setPath, setText } from '../core/dom.js';
 import { fmtLr } from '../core/fmt.js';
@@ -234,8 +234,161 @@ export function syncQuantizeControls() {
   }
 }
 
+// The config stores offloaded blocks; the form asks for resident ones. A blank
+// field keeps vram.blocks_to_swap out of the YAML so the preset still decides.
+function syncResidentBlocksControl(config = state.config) {
+  const input = $('#cfg-resident-blocks');
+  if (!input) return;
+  const resident = swapToResident(getPath(config, 'vram.blocks_to_swap'));
+  input.value = resident == null ? '' : String(resident);
+}
+
+// A value the select does not list (float32, a shifted sigma mode) stays
+// visible as a one-off option instead of blanking the control and losing the
+// key on the next save.
+function syncSelectValue(select, value, fallback = '') {
+  if (!select) return;
+  for (const option of select.querySelectorAll('option[data-config-value]')) option.remove();
+  const raw = value == null ? '' : String(value);
+  if (raw && !Array.from(select.options).some((option) => option.value === raw)) {
+    const option = document.createElement('option');
+    option.value = raw;
+    option.textContent = raw;
+    option.dataset.configValue = 'true';
+    select.append(option);
+  }
+  select.value = raw || fallback;
+}
+
+const PRESET_TIERS = ['32', '24', '16', '12', '8', '6'];
+
+// The preset line is built in JS, so it cannot carry inline data-i18n text.
+// These Chinese strings are its fallback until the language packs have the
+// keys; the translations win as soon as they exist.
+const PRESET_FALLBACK = {
+  'train.preset.fromPreset': '预设',
+  'train.preset.overridden': '你改过',
+  'train.preset.on': '开',
+  'train.preset.off': '关',
+  'train.preset.quantize': '量化 {value}（{source}）',
+  'train.preset.conditioning': 'conditioning {value}（{source}）',
+  'train.preset.resident': '常驻 {count} 层（{source}）',
+  'train.preset.checkpointing': '梯度检查点 {state}（{source}）',
+  'train.preset.compile': 'compile {state}（{source}）',
+  'train.preset.optimizer8bit': '8bit 优化器 {state}（{source}）',
+  'train.preset.autoLine': '按显卡自动选：{tier}G · {summary}',
+  'train.preset.explicit': '预设 {tier}G 生效：{summary}',
+};
+
+function presetT(key, vars = {}) {
+  const entry = state.i18n.entries?.[key];
+  const template = typeof entry === 'string' ? entry : PRESET_FALLBACK[key];
+  if (typeof template !== 'string') return key;
+  return template.replace(/\{(\w+)\}/g, (match, name) => (
+    Object.prototype.hasOwnProperty.call(vars, name) ? String(vars[name]) : match
+  ));
+}
+
+// Mirrors moss_lora/config.py::apply_preset: the first tier that is at most
+// card_gb + 1 wins, and cards below 6 GB fall back to the 6 GB tier.
+function presetTierForCard(totalGb) {
+  const card = Number(totalGb);
+  if (!Number.isFinite(card) || card <= 0) return '';
+  for (const tier of PRESET_TIERS) {
+    if (card >= Number(tier) - 1) return tier;
+  }
+  return '6';
+}
+
+function presetSource(fromPreset) {
+  return fromPreset ? presetT('train.preset.fromPreset') : presetT('train.preset.overridden');
+}
+
+function presetOnOff(value) {
+  return value ? presetT('train.preset.on') : presetT('train.preset.off');
+}
+
+function residentValue(value) {
+  return Math.max(0, Math.min(LAYER_COUNT, Math.round(Number(value) || 0)));
+}
+
+function presetBool(value) {
+  return value === true || String(value).toLowerCase() === 'true';
+}
+
+// What the resolved preset sets, and which of those knobs the config
+// overrides. The tokens report the preset values: a knob is 预设 when the
+// config sits at its "follow the preset" sentinel/default (auto checkpointing,
+// -1/blank blocks, false optimizer, none quantization) or already equals the
+// preset, and 你改过 when it carries a different deliberate value.
+export function updatePresetSummary() {
+  const line = $('#vram-preset-summary');
+  if (!line) return;
+  const config = state.config && typeof state.config === 'object' ? state.config : {};
+  const vram = config.vram || {};
+  const selected = String($('#cfg-vram-preset')?.value || vram.preset || 'auto').trim();
+  const automatic = selected === '' || selected === 'auto';
+  const tier = automatic ? presetTierForCard(state.system?.gpu?.total_gb) : selected.replace(/GB$/i, '');
+  const preset = tier && state.presets ? state.presets[tier] : null;
+  if (!preset) {
+    line.textContent = '';
+    return;
+  }
+
+  const presetResident = LAYER_COUNT - residentValue(preset.blocks_to_swap);
+  const residentRaw = String($('#cfg-resident-blocks')?.value ?? '').trim();
+  const residentCount = residentRaw === '' ? null : swapToResident(residentToSwap(residentRaw));
+  const residentFromPreset = residentCount == null || residentCount === presetResident;
+
+  const checkpointRaw = String($('#cfg-grad-ckpt')?.value || vram.gradient_checkpointing || 'auto');
+  const presetCheckpoint = presetBool(preset.gradient_checkpointing);
+  const checkpointValue = checkpointRaw === 'true' ? true : checkpointRaw === 'false' ? false : null;
+  const checkpointFromPreset = checkpointRaw === 'auto' || checkpointValue === presetCheckpoint;
+
+  const quantizeRaw = String($('#cfg-quantize-dit')?.value || vram.quantize_dit || 'none');
+  const presetQuantize = String(preset.quantize_dit || 'none');
+  const quantizeFromPreset = quantizeRaw === 'none' || quantizeRaw === presetQuantize;
+  const quantizeDtype = String($('#cfg-quantize-dtype')?.value || vram.quantize_dtype || 'nf4');
+  const quantizeText = presetQuantize === 'none'
+    ? presetT('train.preset.off')
+    : `${quantizeDtype}·${presetQuantize}`;
+  const quantizeSourceFromPreset = quantizeFromPreset
+    && (presetQuantize === 'none' || quantizeDtype === 'nf4');
+
+  const optimizerRaw = Boolean(vram.optimizer_in_8bit);
+  const presetOptimizer = presetBool(preset.optimizer_in_8bit);
+  const optimizerFromPreset = !optimizerRaw || optimizerRaw === presetOptimizer;
+
+  const compileRaw = vram.compile;
+  const compileValue = compileRaw == null
+    ? true
+    : !(compileRaw === false || String(compileRaw).toLowerCase() === 'false');
+  const presetCompile = presetBool(preset.compile);
+  // compile has no "follow the preset" sentinel: true is the backend default,
+  // so only an explicit false against a compiling preset counts as an override.
+  const compileFromPreset = compileValue || !presetCompile;
+
+  const conditioning = String($('#cfg-quantize-conditioning')?.value || vram.quantize_conditioning || 'none');
+  const parts = [
+    presetT('train.preset.quantize', { value: quantizeText, source: presetSource(quantizeSourceFromPreset) }),
+  ];
+  if (conditioning !== 'none') {
+    parts.push(presetT('train.preset.conditioning', { value: conditioning, source: presetSource(false) }));
+  }
+  parts.push(presetT('train.preset.resident', { count: presetResident, source: presetSource(residentFromPreset) }));
+  parts.push(presetT('train.preset.checkpointing', { state: presetOnOff(presetCheckpoint), source: presetSource(checkpointFromPreset) }));
+  parts.push(presetT('train.preset.compile', { state: presetOnOff(presetCompile), source: presetSource(compileFromPreset) }));
+  parts.push(presetT('train.preset.optimizer8bit', { state: presetOnOff(presetOptimizer), source: presetSource(optimizerFromPreset) }));
+
+  const summary = parts.join(' · ');
+  line.textContent = automatic
+    ? presetT('train.preset.autoLine', { tier, summary })
+    : presetT('train.preset.explicit', { tier, summary });
+}
+
 export function syncFormFromConfig(config) {
   for (const field of FIELD_DEFS) {
+    if (field.type === 'resident') continue;
     const element = document.getElementById(field.id);
     if (!element) continue;
     const raw = getPath(config, field.path);
@@ -251,6 +404,9 @@ export function syncFormFromConfig(config) {
   syncCachePathControl(config);
   syncAttentionControls();
   syncQuantizeControls();
+  syncResidentBlocksControl(config);
+  syncSelectValue($('#cfg-dtype'), getPath(config, 'model.dtype'), 'bfloat16');
+  syncSelectValue($('#cfg-sigma-mode'), getPath(config, 'train.sigma.mode'), '');
   const checkpoint = getPath(config, 'vram.gradient_checkpointing');
   const checkpointField = $('#cfg-grad-ckpt');
   if (checkpointField) {
@@ -278,11 +434,13 @@ export function syncFormFromConfig(config) {
   updateLrEffective();
   resetModelProbes();
   updateOutputPreview();
+  updatePresetSummary();
 }
 
 export function readFormIntoConfig() {
   if (!state.config || typeof state.config !== 'object') state.config = {};
   for (const field of FIELD_DEFS) {
+    if (field.type === 'resident') continue;
     const element = document.getElementById(field.id);
     if (!element) continue;
     const raw = String(element.value || '').trim();
@@ -303,6 +461,13 @@ export function readFormIntoConfig() {
       value = raw;
     }
     setPath(state.config, field.path, value);
+  }
+  const residentElement = $('#cfg-resident-blocks');
+  if (residentElement) {
+    const raw = String(residentElement.value || '').trim();
+    const swap = raw === '' ? null : residentToSwap(raw);
+    if (swap == null) deletePath(state.config, 'vram.blocks_to_swap');
+    else setPath(state.config, 'vram.blocks_to_swap', swap);
   }
   const promptsElement = $('#cfg-prompts');
   if (promptsElement) {
@@ -329,6 +494,7 @@ export function readFormIntoConfig() {
   readLayerControlsIntoConfig();
   updateLrEffective();
   updateOutputPreview();
+  updatePresetSummary();
   return state.config;
 }
 

@@ -152,6 +152,14 @@
               <span class="field-help" id="cfg-model-vae-help" data-i18n="train.model.vaeHelp">FLUX.2 VAE 的 .safetensors 文件。</span>
               <span class="model-status" id="cfg-model-vae-status" aria-live="polite" data-i18n="train.model.notProbed">未探测</span>
             </div>
+            <label class="field span2" for="cfg-dtype">
+              <span class="field-label" data-i18n="train.model.dtype">训练精度</span>
+              <select id="cfg-dtype" aria-describedby="cfg-dtype-help">
+                <option value="bfloat16" data-i18n="train.model.dtypeBf16">bfloat16（默认）</option>
+                <option value="float16" data-i18n="train.model.dtypeFp16">float16（显卡不支持 bf16 时）</option>
+              </select>
+              <span class="field-help" id="cfg-dtype-help" data-i18n="train.model.dtypeHelp">fp16 用于不支持 bf16 的显卡；这里不需要 loss scaling，但数值上更不耐受。</span>
+            </label>
           </div>
         </fieldset>
 
@@ -222,6 +230,12 @@
                 <option value="6">6 GB</option>
               </select>
             </label>
+            <label class="field" for="cfg-resident-blocks">
+              <span class="field-label" data-i18n="train.params.residentBlocks">常驻层数</span>
+              <input id="cfg-resident-blocks" type="number" min="0" max="42" step="1" inputmode="numeric" placeholder="留空 = 自动（按预设）" aria-describedby="cfg-resident-blocks-help">
+              <span class="field-help" id="cfg-resident-blocks-help" data-i18n="train.params.residentHelp">调低常驻层数 = 用 PCIe 带宽换显存，每步约慢 15%；只在显卡装不下时才调低，训练遇到 OOM 时训练器会自己继续调低。</span>
+            </label>
+            <p class="field-help preset-summary span2" id="vram-preset-summary"></p>
             <label class="field" for="cfg-grad-ckpt">
               <span class="field-label" data-i18n="train.params.checkpointing">梯度检查点</span>
               <select id="cfg-grad-ckpt" aria-describedby="cfg-grad-ckpt-help">
@@ -260,6 +274,72 @@
           </div>
           <p class="field-help lr-effective" id="lr-effective" data-i18n="train.params.effectiveDefault">调度：constant · warmup 50 步 · 峰值学习率 5.00e-5</p>
         </fieldset>
+
+        <details class="advanced-layers" id="advanced-defaults">
+          <summary><span data-i18n="train.defaults.title">更多参数（默认值即可）</span><span class="mono muted" data-i18n="train.defaults.hint">留空 = 使用默认值</span></summary>
+          <div class="advanced-body">
+            <div class="form-grid form-grid-3">
+              <label class="field" for="cfg-sigma-mode">
+                <span class="field-label" data-i18n="train.defaults.sigmaMode">噪声采样模式</span>
+                <select id="cfg-sigma-mode" aria-describedby="cfg-sigma-mode-help">
+                  <option value="" data-i18n="train.defaults.sigmaModeDefault">默认（logit_normal）</option>
+                  <option value="logit_normal">logit_normal</option>
+                  <option value="uniform">uniform</option>
+                </select>
+                <span class="field-help" id="cfg-sigma-mode-help" data-i18n="train.defaults.sigmaModeHelp">默认 logit_normal；uniform 为均匀采样。</span>
+              </label>
+              <label class="field" for="cfg-sigma-mu">
+                <span class="field-label" data-i18n="train.defaults.sigmaMu">sigma μ</span>
+                <input id="cfg-sigma-mu" type="number" step="0.01" inputmode="decimal" placeholder="-1.09">
+              </label>
+              <label class="field" for="cfg-sigma-sigma">
+                <span class="field-label" data-i18n="train.defaults.sigmaSigma">sigma σ</span>
+                <input id="cfg-sigma-sigma" type="number" step="0.01" inputmode="decimal" placeholder="0.95">
+              </label>
+              <label class="field" for="cfg-sigma-cutoff">
+                <span class="field-label" data-i18n="train.defaults.sigmaCutoff">sigma cutoff</span>
+                <input id="cfg-sigma-cutoff" type="number" step="0.01" inputmode="decimal" placeholder="0.95">
+              </label>
+              <label class="field" for="cfg-sigma-uniform-mix">
+                <span class="field-label" data-i18n="train.defaults.sigmaUniformMix">uniform 混合</span>
+                <input id="cfg-sigma-uniform-mix" type="number" step="0.01" inputmode="decimal" placeholder="0.01">
+              </label>
+              <label class="field" for="cfg-weight-decay">
+                <span class="field-label" data-i18n="train.defaults.weightDecay">weight decay</span>
+                <input id="cfg-weight-decay" type="number" min="0" step="0.001" inputmode="decimal" placeholder="0.01">
+              </label>
+              <label class="field" for="cfg-max-grad-norm">
+                <span class="field-label" data-i18n="train.defaults.maxGradNorm">梯度裁剪</span>
+                <input id="cfg-max-grad-norm" type="number" min="0" step="0.1" inputmode="decimal" placeholder="1.0">
+              </label>
+              <label class="field" for="cfg-caption-dropout">
+                <span class="field-label" data-i18n="train.defaults.captionDropout">提示词丢弃率</span>
+                <input id="cfg-caption-dropout" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.05">
+              </label>
+              <label class="field" for="cfg-ema">
+                <span class="field-label" data-i18n="train.defaults.ema">EMA</span>
+                <input id="cfg-ema" type="number" min="0" step="0.001" inputmode="decimal" placeholder="0">
+              </label>
+              <label class="field" for="cfg-eval-batches">
+                <span class="field-label" data-i18n="train.defaults.evalBatches">验证 batch</span>
+                <input id="cfg-eval-batches" type="number" min="0" step="1" inputmode="numeric" placeholder="8">
+              </label>
+              <label class="field" for="cfg-eval-holdout">
+                <span class="field-label" data-i18n="train.defaults.evalHoldout">验证集留出比例</span>
+                <input id="cfg-eval-holdout" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.05">
+              </label>
+              <label class="field" for="cfg-log-every">
+                <span class="field-label" data-i18n="train.defaults.logEvery">日志间隔（步）</span>
+                <input id="cfg-log-every" type="number" min="1" step="1" inputmode="numeric" placeholder="1">
+              </label>
+              <label class="field" for="cfg-epochs">
+                <span class="field-label" data-i18n="train.defaults.epochs">训练轮数 epochs</span>
+                <input id="cfg-epochs" type="number" min="0" step="1" inputmode="numeric" placeholder="0" aria-describedby="cfg-epochs-help">
+                <span class="field-help" id="cfg-epochs-help" data-i18n="train.defaults.epochsHelp">0 = 按步数训练；非 0 时忽略步数。</span>
+              </label>
+            </div>
+          </div>
+        </details>
 
         <details class="advanced-layers" id="advanced-layers">
           <summary><span data-i18n="train.advanced.title">高级配置：Attention / 数据集 / LoRA</span><span class="mono muted" id="layer-summary" data-i18n="train.advanced.layerSummaryDefault">全部 42 层 · 全部模块</span></summary>
