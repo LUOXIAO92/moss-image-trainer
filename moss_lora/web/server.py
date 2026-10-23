@@ -17,8 +17,8 @@ from fastapi.staticfiles import StaticFiles
 from starlette.responses import FileResponse
 
 from .deps import STATIC
-from .routers import (config, dataset, export, files, i18n, jobs, samples, settings,
-                      system, validate, workspaces)
+from .routers import (config, dataset, estimate, export, files, i18n, jobs, samples,
+                      settings, system, validate, workspaces)
 
 # The front end ships as loose files with no build step and no asset hashes, so
 # the browser caches modules by URL alone. A conditional request then answers
@@ -75,6 +75,9 @@ def create_app() -> FastAPI:
     app.include_router(files.router)
     app.include_router(validate.router)
     app.include_router(samples.router)
+    # Appended last: the routes above keep the first-appearance order, and this
+    # literal path cannot shadow anything.
+    app.include_router(estimate.router)
     _flatten_included_routes(app)
 
     @app.get("/favicon.ico")
