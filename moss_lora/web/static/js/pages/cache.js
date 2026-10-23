@@ -244,11 +244,11 @@ export async function stopCacheBuild() {
   }
 }
 
-export function readCacheParts() {
+export function readCacheSelection() {
   const parts = [];
   if ($('#cache-part-latent')?.checked) parts.push('latent');
   if ($('#cache-part-text')?.checked) parts.push('text');
-  return parts;
+  return { parts, overwrite: Boolean($('#cache-overwrite')?.checked) };
 }
 
 export function updateCacheStartState() {
@@ -258,14 +258,14 @@ export function updateCacheStartState() {
     || Boolean(state.activeTraining)
     || diskJobRunning(state.cache.job);
   const busy = running || state.busy;
-  for (const id of ['cache-part-latent', 'cache-part-text']) {
+  for (const id of ['cache-part-latent', 'cache-part-text', 'cache-overwrite']) {
     const checkbox = $(`#${id}`);
     if (!checkbox) continue;
     checkbox.disabled = busy;
     const row = checkbox.closest('.cache-part');
     if (row) row.classList.toggle('is-disabled', busy);
   }
-  const parts = readCacheParts();
+  const parts = readCacheSelection().parts;
   let hint = '';
   if (!parts.length) hint = t('cache.selectOne');
   else if (!state.profileName) hint = t('job.msg29');
@@ -426,7 +426,7 @@ export function renderCacheJob() {
 }
 
 export function startCacheJob() {
-  const parts = readCacheParts();
+  const { parts } = readCacheSelection();
   if (!parts.length) {
     updateCacheStartState();
     return;
@@ -436,5 +436,7 @@ export function startCacheJob() {
     $('#cfg-cache-dir')?.focus();
     return;
   }
-  startJob('cache', { parts }).catch(() => {});
+  // startJob reads the checkboxes again so the payload and the button state
+  // always come from the same source.
+  startJob('cache').catch(() => {});
 }

@@ -90,6 +90,7 @@
 .cache-part-copy strong { color: var(--color-text); font-size: var(--text-xs); font-weight: 600; }
 .cache-part-copy .field-help { margin: 0; }
 .cache-part.is-disabled { opacity: .58; cursor: not-allowed; }
+.cache-overwrite { margin-top: 8px; }
 .cache-run-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 14px; }
 #btn-cache-start:disabled {
   border-color: var(--color-border);

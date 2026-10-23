@@ -81,6 +81,9 @@ def cmd_cache(args):
     if problems:
         print("config problems:\n  " + "\n  ".join(p.render() for p in problems))
         return 2
+    # The flag forces a rebuild; without it the YAML value (default False) still
+    # decides, so a config that sets cache.overwrite keeps working unchanged.
+    config.cache.overwrite = bool(getattr(args, "overwrite", False) or config.cache.overwrite)
     with _GpuLock(config, "cache"):
         builder = CacheBuilder(config)
         print(f"dataset: {len(builder.items)} images -> {builder.dir}")
@@ -694,6 +697,8 @@ def build_parser():
     p_cache.add_argument("--preset")
     p_cache.add_argument("--latents-only", action="store_true")
     p_cache.add_argument("--text-only", action="store_true")
+    p_cache.add_argument("--overwrite", action="store_true",
+                         help="rebuild cache files that already exist")
     p_cache.add_argument("--batch-size", dest="cache_batch", type=int, default=None,
                          help="latent encode batch (default: 80%% of free VRAM, clamped to 4)")
     p_cache.add_argument("--workers", type=int, default=6, help="image loading threads")

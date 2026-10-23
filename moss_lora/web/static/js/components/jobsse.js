@@ -15,7 +15,7 @@ import { jobLabel, t } from '../core/i18n.js';
 import { showAlert, showError, showSuccess } from '../core/notify.js';
 import { isCaptionJob, state } from '../core/state.js';
 import { currentTab, focusLogPanel } from '../main.js';
-import { loadCache, readCacheParts, stopCacheBuild, updateCacheStartState } from '../pages/cache.js';
+import { loadCache, readCacheSelection, stopCacheBuild, updateCacheStartState } from '../pages/cache.js';
 import { loadActiveTraining, loadDashboard } from '../pages/dashboard.js';
 import { readCaptionSelection, refreshDatasetAfterCaption, updateCaptionStartState } from '../pages/dataset.js';
 import { loadLoras, updateExportStatus } from '../pages/export.js';
@@ -268,7 +268,7 @@ export async function startJob(kind, options = {}) {
   }
   if (state.busy) return false;
   const captionSelection = kind === 'caption' ? readCaptionSelection() : null;
-  const cacheSelection = kind === 'cache' ? { parts: readCacheParts() } : null;
+  const cacheSelection = kind === 'cache' ? readCacheSelection() : null;
   if (kind === 'caption' && (!captionSelection.datasets.length || !captionSelection.styles.length)) {
     updateCaptionStartState();
     showAlert({
@@ -354,7 +354,10 @@ export async function startJob(kind, options = {}) {
           styles: captionSelection.styles,
           overwrite: captionSelection.overwrite,
         } : {}),
-        ...(kind === 'cache' ? { parts: cacheSelection.parts } : {}),
+        ...(kind === 'cache' ? {
+          parts: cacheSelection.parts,
+          overwrite: cacheSelection.overwrite,
+        } : {}),
       }),
     });
     state.logs = [];
