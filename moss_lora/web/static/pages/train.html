@@ -44,6 +44,26 @@
     </div>
   </div>
 
+  <section class="panel run-browser" id="run-browser" aria-labelledby="run-browser-title">
+    <header class="panel-head">
+      <div>
+        <h2 id="run-browser-title"><span data-i18n="dash.run">运行记录</span><span class="run-browser-ws mono" id="run-browser-ws"></span></h2>
+        <p class="panel-desc"><span class="mono" id="run-browser-count"></span></p>
+      </div>
+      <button class="btn btn-ghost btn-sm" id="btn-runs-refresh" type="button" data-i18n="common.refresh">刷新</button>
+    </header>
+    <div class="run-browser-actions">
+      <label class="field-inline" for="train-run-select">
+        <span data-i18n="workspace.runsTitle">运行记录</span>
+        <select id="train-run-select" class="select-compact" aria-label="选择运行记录" data-i18n-aria="workspace.runsTitle"></select>
+      </label>
+      <button class="btn btn-ghost btn-sm" id="btn-run-config" type="button" data-i18n="runConfig.title">运行记录配置</button>
+      <button class="btn btn-ghost btn-sm" id="btn-run-log" type="button" data-i18n="job.viewLog">查看日志</button>
+    </div>
+    <p class="dash-config-line" id="train-run-meta">--</p>
+    <p class="panel-desc hidden" id="run-list-empty" data-i18n="train.noRuns">暂无 run</p>
+  </section>
+
   <section class="panel setup-panel hidden" id="setup-panel" aria-labelledby="setup-title">
     <header class="panel-head">
       <div>
