@@ -324,7 +324,8 @@ class Trainer:
         model = getattr(getattr(self.model, "base_model", self.model), "model", self.model)
         if not getattr(model, "gradient_checkpointing", False):
             raise RuntimeError("blocks_to_swap needs gradient checkpointing")
-        self._swap = BlockSwap(model.layers, count, device=self.device)
+        self._swap = BlockSwap(model.layers, count, device=self.device,
+                               window=int(getattr(self.config.vram, "swap_window", 2) or 2))
         model.block_swap = self._swap
         freed = sum(p.numel() * p.element_size() for i in self._swap.params for p in self._swap.params[i])
         self.log(f"block swap: {count} blocks on CPU ({freed/2**30:.1f} GiB offloaded)")
@@ -535,7 +536,8 @@ class Trainer:
         self.config.vram.blocks_to_swap = nxt
         from .offload import BlockSwap
 
-        model.block_swap = BlockSwap(model.layers, nxt, device=self.device)
+        model.block_swap = BlockSwap(model.layers, nxt, device=self.device,
+                                     window=int(getattr(self.config.vram, "swap_window", 2) or 2))
         self._swap = model.block_swap
         torch.cuda.empty_cache()
         return True
@@ -983,10 +985,10 @@ class Trainer:
             return self._preview
         from safetensors.torch import load_file
 
-        from .lora_file import lora_modules
+        from .lora_file import lora_alphas, lora_modules
 
         checkpoint = load_file(os.path.expanduser(path))
-        alphas = {name[:-6]: float(value) for name, value in checkpoint.items() if name.endswith(".alpha")}
+        alphas = lora_alphas(checkpoint)
         user_scale = float(getattr(self.config.preview, "lora_scale", 1.0) or 1.0)
         root = getattr(getattr(self.model, "base_model", None), "model", self.model)
         for module_name, (down, up) in sorted(lora_modules(checkpoint).items()):
@@ -999,7 +1001,7 @@ class Trainer:
                 self.log(f"preview lora: no module {module_name} in this model, skipped")
                 continue
             rank = int(down.shape[0]) or 1
-            alpha = alphas.get("lora_unet_" + module_name.replace(".", "_"), float(rank))
+            alpha = alphas.get(module_name, float(rank))
             self._preview.append((
                 target,
                 down.to(self.device, dtype=self.dtype),

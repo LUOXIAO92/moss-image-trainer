@@ -23,6 +23,12 @@ _KOHYA_KEY = re.compile(
 )
 # text_embedder 适配器只在 lora.include_text_embedder 打开时存在；键名同样是
 # kohya 风格，但模块路径是 text_embedder.blocks.<n>.<proj>。
+_KOHYA_ALPHA = re.compile(
+    r"^lora_unet_layers_(\d+)_proj_(q|k|v|o|ffn_up_gate|ffn_down)\.alpha$"
+)
+KOHYA_TEXT_ALPHA = re.compile(
+    r"^lora_unet_text_embedder_blocks_(\d+)_(qkv|proj|ffn_up|ffn_gate|ffn_down)\.alpha$"
+)
 _KOHYA_TEXT_KEY = re.compile(
     r"^lora_unet_text_embedder_blocks_(\d+)_(qkv|proj|ffn_up|ffn_gate|ffn_down)\."
     r"lora_(down|up)\.weight$"
@@ -61,11 +67,40 @@ def lora_modules(checkpoint: dict) -> dict[str, tuple[torch.Tensor, torch.Tensor
         if ".lora_" not in name:
             continue
         module, _, tail = name.partition(".lora_")
-        module = module.replace("base_model.model.", "")
+        # PEFT checkpoints prefix with base_model.model., ComfyUI/diffusers LoRA
+        # files with diffusion_model.; both name the module the same way after it.
+        module = module.replace("base_model.model.", "").replace("diffusion_model.", "", 1)
         kind = tail.split(".")[0]
+        # PEFT names the pair A/B, every other layout calls them down/up.
+        kind = {"down": "A", "up": "B"}.get(kind, kind)
         parts.setdefault(module, {})[kind] = tensor
     return {module: (pair["A"], pair["B"]) for module, pair in parts.items()
             if "A" in pair and "B" in pair}
+
+
+def lora_alphas(checkpoint: dict) -> dict[str, float]:
+    """Per-module alpha, whatever prefix the file uses.
+
+    A missing alpha means "alpha = rank", which is what the caller assumes, so
+    this only reports the ones the file actually carries.
+    """
+    out: dict[str, float] = {}
+    for name, tensor in checkpoint.items():
+        if not name.endswith(".alpha"):
+            continue
+        layer = _KOHYA_ALPHA.match(name)
+        if layer:
+            index, projection = layer.groups()
+            out[f"layers.{index}.proj.{projection}"] = float(tensor)
+            continue
+        text = KOHYA_TEXT_ALPHA.match(name)
+        if text:
+            block, projection = text.groups()
+            out[f"text_embedder.blocks.{block}.{projection}"] = float(tensor)
+            continue
+        module = name[:-6].replace("base_model.model.", "").replace("diffusion_model.", "", 1)
+        out[module] = float(tensor)
+    return out
 
 
 def kohya_key(module: str) -> str:

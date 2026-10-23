@@ -161,6 +161,9 @@ class VramConfig:
     preset: str = "auto"        # auto | 32 | 24 | 16 | 12 | 8 | 6
     gradient_checkpointing: str = "auto"
     blocks_to_swap: int = -1    # -1 = from preset
+    # how many streamed blocks may sit on the card at once (2 = one computing,
+    # one prefetching); larger values only help if a copy ever outruns a block
+    swap_window: int = 2
     optimizer_in_8bit: bool = False
     # weight-only quantization of the frozen DiT: none (bf16) | ffn | all
     quantize_dit: str = "none"

@@ -12,10 +12,13 @@ import torch
 
 
 class BlockSwap:
-    def __init__(self, blocks, count: int, device="cuda"):
+    def __init__(self, blocks, count: int, device="cuda", window: int = 1):
         self.blocks = blocks
         self.start = max(0, len(blocks) - int(count))
         self.device = device
+        # Hard cap on how many streamed blocks may sit on the card at once: an
+        # uncapped policy would walk the whole model back up.
+        self.window = max(1, int(window or 1))
         self.params: dict[int, list[torch.nn.Parameter]] = {}
         for index in range(self.start, len(blocks)):
             params = [p for p in blocks[index].parameters() if p.requires_grad is False]
@@ -33,6 +36,8 @@ class BlockSwap:
     def load(self, index: int):
         if index not in self.params or index in self.loaded:
             return
+        while len(self.loaded) >= self.window:
+            self.release(min(self.loaded))
         for param in self.params[index]:
             param.data = param.data.to(self.device, non_blocking=True)
         self.loaded.add(index)
