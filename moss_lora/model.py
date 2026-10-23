@@ -68,9 +68,22 @@ class _TorchOps:
 
 
 def _module_dtype(module) -> torch.dtype:
-    """Compute dtype of a linear, tolerating quantized (non-float) weights."""
+    """Compute dtype of a linear, tolerating quantized (non-float) weights.
+
+    fp8 storage is still floating point, so the dtype check alone would hand the
+    blocks a float8 compute dtype and blow up the first multiply; the storage
+    formats name the dtype their forward actually computes in.
+    """
     base = getattr(module, "base_layer", module)
     dtype = base.weight.dtype
+    stored = tuple(
+        candidate for candidate in (getattr(torch, "float8_e4m3fn", None),
+                                    getattr(torch, "float8_e5m2", None))
+        if candidate is not None
+    )
+    if dtype in stored:
+        compute = getattr(base, "compute_dtype", None)
+        return compute if isinstance(compute, torch.dtype) else torch.bfloat16
     if dtype.is_floating_point:
         return dtype
     compute = getattr(base, "compute_dtype", None)  # bitsandbytes Linear4bit
@@ -336,15 +349,8 @@ class MOSSImageTransformer(nn.Module):
             cu_seqlens, max_seqlens = None, None
         mod, head = self._time_mods(timestep, device)
         for index, layer in enumerate(self.layers):
-            if index in self.skip_layers:
-                continue
-            if checkpoint_blocks and self.training:
-                x = checkpoint(
-                    layer, x, rope, mod, mask, cu_seqlens, max_seqlens,
-                    use_reentrant=False,
-                )
-            else:
-                x = layer(x, rope, mod, mask, cu_seqlens, max_seqlens)
+            x = self._run_block(layer, index, x, rope, mod, mask, cu_seqlens, max_seqlens,
+                                checkpoint_blocks=checkpoint_blocks)
         outputs, offset = [], 0
         for span, latent in zip(spans, latents):
             height, width = latent.shape[-2:]
@@ -399,14 +405,8 @@ class MOSSImageTransformer(nn.Module):
         mask = None if bool(token_mask.all()) else token_mask[:, None, None, :]
         mod, head = self._time_mods(timestep, device)
         for index, layer in enumerate(self.layers):
-            if index in self.skip_layers:
-                continue
-            if checkpoint_blocks and self.training:
-                x = checkpoint(
-                    layer, x, rope, mod, mask, None, None, use_reentrant=False
-                )
-            else:
-                x = layer(x, rope, mod, mask)
+            x = self._run_block(layer, index, x, rope, mod, mask, None, None,
+                                checkpoint_blocks=checkpoint_blocks)
 
         outputs = []
         for index, (height, width) in enumerate(sizes):
@@ -418,17 +418,33 @@ class MOSSImageTransformer(nn.Module):
             outputs.append(part.transpose(1, 2).reshape(1, channels, height, width))
         return outputs
 
-    def _run_block(self, layer, index, x, rope, mod):
-        """One block with the configured swap/checkpoint strategy."""
+    def _run_block(self, layer, index, x, rope, mod, *extra, checkpoint_blocks=None):
+        """One block with the configured swap/checkpoint strategy.
+
+        Every path that walks the blocks goes through here: a loop that calls the
+        layer directly would bypass the swap and fail on offloaded weights, and it
+        would also drop the mask arguments the attention needs.
+        """
         if index in self.skip_layers:
             return x
-        if (self.block_swap is not None and self.training
-                and self.block_swap.is_swapped(index)):
-            # offloaded blocks are always recomputed (the weights are gone by backward)
-            return self.block_swap(layer, index, x, rope, mod)
-        if not (self.gradient_checkpointing and self.training):
-            return layer(x, rope, mod)
-        return checkpoint(layer, x, rope, mod, use_reentrant=False)
+        if self.block_swap is not None and self.block_swap.is_swapped(index):
+            if self.training:
+                # offloaded blocks are always recomputed (the weights are gone by backward)
+                return self.block_swap(layer, index, x, rope, mod, *extra)
+            # Sampling runs without a graph, so the block can be streamed in and
+            # out directly; without this branch a preview on a streamed run would
+            # meet weights that are still on the host.
+            self.block_swap.load(index)
+            try:
+                with torch.no_grad():
+                    return layer(x, rope, mod, *extra)
+            finally:
+                self.block_swap.release(index)
+        if checkpoint_blocks is None:
+            checkpoint_blocks = self.gradient_checkpointing
+        if not (checkpoint_blocks and self.training):
+            return layer(x, rope, mod, *extra)
+        return checkpoint(layer, x, rope, mod, *extra, use_reentrant=False)
 
     def _forward_batched(self, hidden_states, times, context, height, width, mod, head):
         """One forward for the whole batch; requires equal text lengths.

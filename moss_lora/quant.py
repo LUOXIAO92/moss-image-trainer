@@ -42,8 +42,9 @@ class FP8Linear(nn.Module):
     only for inference.
     """
 
-    def __init__(self, linear: nn.Linear):
+    def __init__(self, linear: nn.Linear, compute_dtype: torch.dtype = torch.bfloat16):
         super().__init__()
+        self.compute_dtype = compute_dtype
         weight = linear.weight.detach().float()
         scale = weight.abs().amax(dim=1, keepdim=True).clamp_min(1e-8) / FP8_MAX
         self.register_buffer("weight", (weight / scale).to(torch.float8_e4m3fn), persistent=False)
@@ -55,7 +56,7 @@ class FP8Linear(nn.Module):
         self.out_features = linear.out_features
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        dtype = x.dtype if x.dtype in (torch.bfloat16, torch.float16, torch.float32) else torch.bfloat16
+        dtype = x.dtype if x.dtype in (torch.bfloat16, torch.float16, torch.float32) else self.compute_dtype
         weight = self.weight.to(dtype) * self.scale.to(dtype)
         bias = self.bias.to(dtype) if self.bias is not None else None
         return torch.nn.functional.linear(x.to(dtype), weight, bias)
@@ -139,4 +140,4 @@ def quantize_fp8(
     if scope not in ("ffn", "all"):
         return 0
     targets = _frozen_linears(model, scope, skip, only)
-    return _replace(model, targets, FP8Linear)
+    return _replace(model, targets, lambda module: FP8Linear(module, compute_dtype=dtype))

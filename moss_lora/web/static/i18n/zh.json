@@ -1175,7 +1175,7 @@
  "train.preview.uncondHelp": "留空默认 [22]；官方推荐 22 / 24 / 26，多层用逗号分隔。",
  "train.preview.vaeCpu": "CPU（省显存）",
  "train.preview.vaeDevice": "VAE 解码位置",
- "train.preview.vaeDeviceHelp": "CPU 解码只占主机内存，单张慢几秒，不占显存。",
+ "train.preview.vaeDeviceHelp": "CPU 解码只占主机内存，单张慢几秒，不占显存；CPU 上没有 fp16 卷积加速，所以 CPU 解码固定用 fp32。",
  "train.preview.vaeDtype": "VAE 精度",
  "train.preview.vaeDtypeHelp": "fp16 只作用于样图解码，肉眼几乎看不出差别，但不是逐位一致。",
  "train.preview.vaeFp16": "fp16（显存减半）",

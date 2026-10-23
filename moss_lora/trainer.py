@@ -103,11 +103,23 @@ class Trainer:
 
     def load(self):
         self._configure_precision()
-        self.log(f"loading transformer {self.config.model.dit}")
-        self.model = load_transformer(self.config.model.dit, dtype=self.dtype, device=self.device)
+        scope = str(getattr(self.config.vram, "quantize_dit", "none") or "none").lower()
+        # Building the model on the card costs the full bf16 footprint for as long
+        # as it takes to quantize it, and a card that needs nf4 cannot afford that
+        # instant. The quantized path therefore assembles the model in host memory
+        # and moves the packed result up afterwards.
+        on_host = scope != "none"
+        self.log(f"loading transformer {self.config.model.dit}"
+                 + (" (host memory, quantize before upload)" if on_host else ""))
+        self.model = load_transformer(
+            self.config.model.dit, dtype=self.dtype, device="cpu" if on_host else self.device)
         self.model.train()
         self._attach_lora()
         self._maybe_quantize()
+        if on_host:
+            self.model.to(self.device)
+            torch.cuda.empty_cache()
+            self.log(f"uploaded quantized transformer: {self._memory_stats()['device']:.1f} GiB on the card")
         self._set_checkpointing(bool(self.config.vram.gradient_checkpointing))
         self._setup_block_swap()
         self._maybe_compile()
@@ -949,7 +961,14 @@ class Trainer:
         on_cpu = (str(getattr(preview, "vae_device", "gpu")).lower() == "cpu"
                   or getattr(self, "_vae_cpu_fallback", False))
         device = "cpu" if on_cpu else self.device
-        dtype = torch.float16 if str(getattr(preview, "vae_dtype", "fp32")).lower() == "fp16" else torch.float32
+        wanted = str(getattr(preview, "vae_dtype", "fp32")).lower()
+        if on_cpu and wanted == "fp16":
+            # CPU fp16 convolution is emulated or missing in every backend we run
+            # on, so it is slower than fp32 and saves nothing: the card is already
+            # out of the picture.
+            self.log("preview vae: fp16 on CPU falls back to fp32 (no fp16 conv kernels)")
+            wanted = "fp32"
+        dtype = torch.float16 if wanted == "fp16" else torch.float32
         self._codec = LatentCodec(load_vae(self.config.model.vae, dtype=dtype, device=device))
         self.log(f"preview vae: {str(dtype).split('.')[-1]} on {device}")
         return self._codec
@@ -1064,7 +1083,6 @@ class Trainer:
         finally:
             self.model.train(was_training)
             torch.cuda.empty_cache()
-        images = torch.cat(images, 0) if len(images) > 1 else images[0]
         out_dir = os.path.join(self.out_dir, "samples")
         os.makedirs(out_dir, exist_ok=True)
         paths = []

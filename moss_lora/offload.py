@@ -44,18 +44,22 @@ class BlockSwap:
             param.data = param.data.to("cpu", non_blocking=True)
         self.loaded.discard(index)
 
-    def __call__(self, block, index, x, rope, mod):
-        return _SwapCheckpoint.apply(x, block, rope, mod, self, index, self._dummy)
+    def __call__(self, block, index, x, rope, mod, *extra):
+        # ``extra`` carries whatever the block's forward takes beyond the common
+        # three (mask, cu_seqlens, max_seqlens); dropping them silently changed
+        # attention for every non-packed path.
+        return _SwapCheckpoint.apply(x, block, rope, mod, self, index, self._dummy, *extra)
 
 
 class _SwapCheckpoint(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, x, block, rope, mod, swap, index, dummy):
+    def forward(ctx, x, block, rope, mod, swap, index, dummy, *extra):
         ctx.save_for_backward(x, rope, mod)
         ctx.block, ctx.swap, ctx.index = block, swap, index
+        ctx.extra = extra
         swap.load(index)
         with torch.no_grad():
-            out = block(x, rope, mod)
+            out = block(x, rope, mod, *extra)
         swap.release(index)
         return out
 
@@ -66,7 +70,8 @@ class _SwapCheckpoint(torch.autograd.Function):
         swap.load(index)
         with torch.enable_grad():
             x = x.detach().requires_grad_(True)
-            out = block(x, rope, mod)
+            out = block(x, rope, mod, *ctx.extra)
             out.backward(grad_out)
         swap.release(index)
-        return (x.grad if ctx.needs_input_grad[0] else None), None, None, None, None, None, None
+        # one None per non-tensor input: block, rope, mod, swap, index, dummy, extras
+        return (x.grad if ctx.needs_input_grad[0] else None,) + (None,) * (6 + len(ctx.extra))
