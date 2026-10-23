@@ -41,8 +41,8 @@ def api_i18n_template(base: str = i18n_pack.DEFAULT_CODE):
 def api_i18n_pack(code: str):
     try:
         wanted = i18n_pack.normalize_code(code)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc))
+    except i18n_pack.LanguageError as exc:
+        raise fail(400, exc.code, **exc.params) from None
     users = i18n_pack.entries(i18n_pack.load_user(wanted))
     values = i18n_pack.merged(wanted)
     return {
@@ -58,14 +58,14 @@ def api_i18n_pack(code: str):
 async def api_i18n_save(code: str, request: Request):
     try:
         wanted = i18n_pack.normalize_code(code)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc))
+    except i18n_pack.LanguageError as exc:
+        raise fail(400, exc.code, **exc.params) from None
     body = await request.json()
     payload = body.get("pack") if isinstance(body, dict) and isinstance(body.get("pack"), dict) else body
     try:
         saved = i18n_pack.save_pack(wanted, payload)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc))
+    except i18n_pack.LanguageError as exc:
+        raise fail(400, exc.code, **exc.params) from None
     return {"ok": True, **saved}
 
 
@@ -73,8 +73,8 @@ async def api_i18n_save(code: str, request: Request):
 def api_i18n_delete(code: str):
     try:
         wanted = i18n_pack.normalize_code(code)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc))
+    except i18n_pack.LanguageError as exc:
+        raise fail(400, exc.code, **exc.params) from None
     result = i18n_pack.delete_pack(wanted)
     settings, _ = _settings_snapshot()
     current = i18n_pack.resolve((settings.get("ui") or {}).get("language"))
@@ -88,8 +88,10 @@ async def api_i18n_current(request: Request):
     body = await request.json()
     try:
         code = i18n_pack.normalize_code(body.get("code"))
-    except (ValueError, AttributeError) as exc:
-        raise HTTPException(400, str(exc))
+    except (i18n_pack.LanguageError, AttributeError) as exc:
+        if isinstance(exc, i18n_pack.LanguageError):
+            raise fail(400, exc.code, **exc.params) from None
+        raise fail(400, "err.lang.code_invalid") from None
     known = i18n_pack.pack_languages()
     if code not in known:
         raise fail(404, "err.lang.unknown", code=code)

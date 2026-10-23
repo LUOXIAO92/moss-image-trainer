@@ -46,10 +46,23 @@ def _read_json(path: str) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+class LanguageError(ValueError):
+    """A language code or pack the loader rejected, as a code the UI translates.
+
+    It subclasses ``ValueError`` so callers that only care about failure keep
+    working, while the web layer can hand the code straight to ``fail()``.
+    """
+
+    def __init__(self, code: str, **params):
+        super().__init__(code)
+        self.code = code
+        self.params = params
+
+
 def normalize_code(value: str) -> str:
     code = str(value or "").strip().lower()
     if not CODE_RE.match(code):
-        raise ValueError("语言代码只能是小写字母、数字和短横线（2–8 位），例如 ru、pt-br")
+        raise LanguageError("err.lang.code_invalid")
     return code
 
 
@@ -146,7 +159,7 @@ def save_pack(code: str, payload: dict) -> dict:
     name = str(incoming.get("$name") or LANGUAGE_NAMES.get(code, code)).strip() or code
     values = entries(incoming)
     if not values:
-        raise ValueError("语言包是空的：至少要有 $name 和一条 key")
+        raise LanguageError("err.lang.pack_empty")
     data = {"$code": code, "$name": name}
     data.update(dict(sorted(values.items())))
     os.makedirs(USER_DIR, exist_ok=True)

@@ -604,6 +604,8 @@
  "err.job.not_running": "このタスクはすでに実行されていません",
  "err.job.stop_failed": "停止信号を送れませんでした：{error}",
  "err.job.yaml_required": "設定がありません。YAML を渡すか、実行を指定してください",
+ "err.lang.code_invalid": "言語コードは小文字の英字・数字・ハイフンのみ、2〜8 文字です（例: ru、pt-br）",
+ "err.lang.pack_empty": "言語パックが空です：$name と最低 1 つのキーが必要です",
  "err.lang.unknown": "その言語はありません：{code}",
  "err.layout.not_object": "レイアウトのデータ形式が正しくありません",
  "err.name.charset.config": "設定名には英数字とドット・アンダースコア・ハイフンのみ、1〜64 文字で指定してください",

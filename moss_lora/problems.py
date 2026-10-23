@@ -101,6 +101,8 @@ CODES: dict[str, str] = {
     "err.job.stop_failed": "发不出停止信号：{error}",
     "err.job.yaml_required": "没有配置内容：传一份 YAML，或指定一个运行",
     "err.lang.unknown": "没有这个语言：{code}",
+    "err.lang.code_invalid": "语言代码只能用小写字母、数字和短横线，2 到 8 位，比如 ru、pt-br",
+    "err.lang.pack_empty": "语言包是空的：至少要有 $name 和一条 key",
     "err.layout.not_object": "布局数据格式不对",
     "err.name.charset.config": "配置名称只能使用字母、数字、点、下划线和短横线，长度 1 到 64 个字符",
     "err.name.charset.name": "名称只能使用字母、数字、点、下划线和短横线，长度 1 到 64 个字符",

@@ -604,6 +604,8 @@
  "err.job.not_running": "This job is no longer running",
  "err.job.stop_failed": "Could not send the stop signal: {error}",
  "err.job.yaml_required": "No config given: send a YAML body, or name a run",
+ "err.lang.code_invalid": "A language code may only use lowercase letters, digits and hyphens, 2 to 8 characters, such as ru or pt-br",
+ "err.lang.pack_empty": "The language pack is empty: it needs $name and at least one key",
  "err.lang.unknown": "No such language: {code}",
  "err.layout.not_object": "The layout data is not in the expected shape",
  "err.name.charset.config": "A config name may only use letters, digits, dots, underscores and hyphens, 1 to 64 characters",
