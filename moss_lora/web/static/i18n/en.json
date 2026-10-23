@@ -355,7 +355,7 @@
  "dash.desc": "View loss trends, generalization gap, samples, and job logs",
  "dash.eyebrow": "Training monitor",
  "dash.kpi.estimate": "Estimated VRAM",
- "dash.kpi.estimateBreakdown": "Train {train} · Preview {preview} · Card {card}",
+ "dash.kpi.estimateBreakdown": "Train {train} · Preview {preview} · Context {context} · Card {card}",
  "dash.kpi.estimateMeasured": "Measured peak {peak} GiB",
  "dash.kpi.estimateOver": "Estimated to exceed the card by {over} GiB",
  "dash.kpi.evalFirst": "{delta} vs first{pct}",

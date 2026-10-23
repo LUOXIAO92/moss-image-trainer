@@ -105,9 +105,10 @@ function blankEstimate() {
   const card = $('#dash-estimate-card');
   if (card) card.classList.remove('is-over');
   setText('#dash-estimate', '--');
-  setText('#dash-estimate-sub', estimateText('dash.kpi.estimateBreakdown', '训练 {train} · 预览 {preview} · 卡 {card}', {
-    train: '--', preview: '--', card: '--',
-  }));
+  setText('#dash-estimate-sub', estimateText('dash.kpi.estimateBreakdown',
+    '训练 {train} · 预览 {preview} · 上下文 {context} · 卡 {card}', {
+      train: '--', preview: '--', context: '--', card: '--',
+    }));
 }
 
 export function renderEstimateCard() {
@@ -129,11 +130,15 @@ export function renderEstimateCard() {
   const over = capacity != null && total > capacity ? total - capacity : null;
   card.classList.toggle('is-over', over != null);
   setText('#dash-estimate', `${formatGiB(total)} GiB`);
-  const lines = [estimateText('dash.kpi.estimateBreakdown', '训练 {train} · 预览 {preview} · 卡 {card}', {
-    train: formatGiB(data.train),
-    preview: formatGiB(data.preview),
-    card: capacity == null ? '--' : formatGiB(capacity),
-  })];
+  // The context term is why the total sits above the training and preview peaks;
+  // without it the card reads as an over-estimate next to the measured one.
+  const lines = [estimateText('dash.kpi.estimateBreakdown',
+    '训练 {train} · 预览 {preview} · 上下文 {context} · 卡 {card}', {
+      train: formatGiB(data.train),
+      preview: formatGiB(data.preview),
+      context: formatGiB(data.context),
+      card: capacity == null ? '--' : formatGiB(capacity),
+    })];
   if (over != null) {
     lines.push(estimateText('dash.kpi.estimateOver', '预计超出显卡 {over} GiB', { over: formatGiB(over) }));
   }

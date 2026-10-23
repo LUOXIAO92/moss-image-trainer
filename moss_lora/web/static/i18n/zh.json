@@ -355,7 +355,7 @@
  "dash.desc": "查看损失趋势、泛化差距、样图与任务日志。",
  "dash.eyebrow": "训练监控",
  "dash.kpi.estimate": "显存预估",
- "dash.kpi.estimateBreakdown": "训练 {train} · 预览 {preview} · 卡 {card}",
+ "dash.kpi.estimateBreakdown": "训练 {train} · 预览 {preview} · 上下文 {context} · 卡 {card}",
  "dash.kpi.estimateMeasured": "实测峰值 {peak} GiB",
  "dash.kpi.estimateOver": "预计超出显卡 {over} GiB",
  "dash.kpi.evalFirst": "较首次 {delta}{pct}",

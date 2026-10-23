@@ -355,7 +355,7 @@
  "dash.desc": "損失の推移、検証ギャップ、サンプル画像、タスクログを確認します。",
  "dash.eyebrow": "学習モニター",
  "dash.kpi.estimate": "メモリ推定",
- "dash.kpi.estimateBreakdown": "学習 {train} · プレビュー {preview} · カード {card}",
+ "dash.kpi.estimateBreakdown": "学習 {train} · プレビュー {preview} · コンテキスト {context} · カード {card}",
  "dash.kpi.estimateMeasured": "実測ピーク {peak} GiB",
  "dash.kpi.estimateOver": "グラフィックカードの容量を {over} GiB 超過する見込み",
  "dash.kpi.evalFirst": "初回比 {delta}{pct}",

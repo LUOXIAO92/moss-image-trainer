@@ -355,7 +355,7 @@
  "dash.desc": "손실 추세, 검증 격차, 샘플 이미지 및 작업 로그를 확인합니다.",
  "dash.eyebrow": "학습 모니터링",
  "dash.kpi.estimate": "VRAM 예상",
- "dash.kpi.estimateBreakdown": "학습 {train} · 미리보기 {preview} · 카드 {card}",
+ "dash.kpi.estimateBreakdown": "학습 {train} · 미리보기 {preview} · 컨텍스트 {context} · 카드 {card}",
  "dash.kpi.estimateMeasured": "실측 피크 {peak} GiB",
  "dash.kpi.estimateOver": "그래픽 카드보다 {over} GiB 초과할 것으로 보입니다",
  "dash.kpi.evalFirst": "최초 대비 {delta}{pct}",
