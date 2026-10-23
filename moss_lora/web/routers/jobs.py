@@ -77,8 +77,10 @@ async def api_start(request: Request):
     if kind == "caption":
         # 只勾了正则集时，训练集路径空着也没关系
         if "train" in datasets:
-            if not config.dataset.path or not os.path.isdir(os.path.expanduser(config.dataset.path)):
-                raise fail(400, "err.dataset.missing", path=config.dataset.path or "(空)")
+            if not config.dataset.path:
+                raise fail(400, "err.config.dataset_path_empty")
+            if not os.path.isdir(os.path.expanduser(config.dataset.path)):
+                raise fail(400, "err.dataset.missing", path=config.dataset.path)
         problems = []
     if kind == "cache" and "text" in parts and not str(config.model.text_encoder or "").strip():
         if not problems:
