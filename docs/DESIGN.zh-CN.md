@@ -351,6 +351,7 @@ WebUI 后端采用「路由层 → 服务层 → 共享状态与任务注册表�
 9. 预检处理函数回归（[test_validate_router.py](<../tests/test_validate_router.py>)）：用 ASGI 传输分别向 `POST /api/validate` 投递一份合法 YAML 和一份坏 YAML，守住那个让所有合法预检都变成 `UnboundLocalError` 的局部变量遮蔽 bug。
 10. 错误键完整性（[test_error_keys.py](<../tests/test_error_keys.py>)）：解析每个 `problem()` 调用点，与错误清单比对错误码，并要求每个错误码在 `zh.json` 里都有对应键、且 `{placeholder}` 集合与该码的参数一致，新的失败模式因此不可能带着未翻译的提示上线。
 11. 流式加载正确性（[test_offload_stream.py](<../tests/test_offload_stream.py>)）：让一个两块的玩具 Transformer 在训练与 eval 两种模式下走 `BlockSwap`，断言流式与常驻权重产出相同输出、主机副本用后即释放、预取路径不会把分配器已回收的缓冲区交出去。
+12. 预估接口隔离（[test_estimate_router.py](<../tests/test_estimate_router.py>)）：在把 `detect_vram_gb` 打桩成直接报错的前提下用合法 YAML 调用 `POST /api/estimate`，证明处理函数是从 nvidia-smi 探测拿容量来解 `vram.preset: auto`、绝不会在 Web 进程里创建 CUDA 上下文；同时校验返回的训练、样图与合计三项数值自洽，以及拿不到驱动回答时会降级而不是报错。
 
 前端回归测试与拆分等价性检查由 [smoke.mjs](<../tests/ui/smoke.mjs>) 及路由展平机制保障：
 - 后端拆分等价性：[server.py](<../moss_lora/web/server.py>) 通过 `_flatten_included_routes` 将拆分后的 11 个子路由原地展开进 `app.router.routes`，保证路由匹配顺序与拆分前的单文件 `app.py` 逐条一致，同时保留 [app.py](<../moss_lora/web/app.py>) 作为兼容导出垫片。

@@ -431,15 +431,21 @@ VRAM_PRESETS: dict[str, dict[str, Any]] = {
 }
 
 
-def apply_preset(config: Config, vram_gb: float | None = None) -> Config:
-    """Fill ``vram`` defaults from the card size unless the user overrode them."""
+def apply_preset(config: Config, vram_gb: float | None = None, *, detect: bool = True) -> Config:
+    """Fill ``vram`` defaults from the card size unless the user overrode them.
+
+    ``detect=False`` keeps the call out of ``torch.cuda``: the WebUI resolves the
+    capacity from nvidia-smi and passes it in, and falls back to the dataclass
+    defaults when the driver cannot answer. A CUDA context in the web process
+    would hold VRAM that the run being predicted for needs.
+    """
     if config.vram.preset != "auto":
         key = str(config.vram.preset).replace("GB", "")
         preset = VRAM_PRESETS.get(key, {})
         for field_name, value in preset.items():
             setattr(config.vram, field_name, value)
         return config
-    if vram_gb is None:
+    if vram_gb is None and detect:
         vram_gb = detect_vram_gb()
     if vram_gb is None:
         return config

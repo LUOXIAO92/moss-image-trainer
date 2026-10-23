@@ -14,6 +14,7 @@ from fastapi import APIRouter, Request
 from ...config import apply_preset
 from ...memory import estimate_vram
 from ..errors import fail
+from ..services.system import gpu_total_gb
 from ..services.workspace import _config_from_data, _resolve_workspace
 
 router = APIRouter()
@@ -43,7 +44,8 @@ async def api_estimate(request: Request):
     except Exception as exc:  # malformed types are a bad request, not a server fault
         raise fail(400, "err.config.structure", error=exc)
     # Same resolution a job gets, so a preset looks identical in the estimate and
-    # in the run it would start. On a host with no GPU the preset stays "auto"
-    # and estimate_vram falls back to its bf16/no-swap defaults.
-    apply_preset(config)
+    # in the run it would start. The capacity comes from nvidia-smi rather than
+    # detect_vram_gb(), because the latter would create a CUDA context in the web
+    # process and hold VRAM that the job it is predicting for needs.
+    apply_preset(config, gpu_total_gb(), detect=False)
     return estimate_vram(config)

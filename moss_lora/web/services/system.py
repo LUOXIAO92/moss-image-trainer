@@ -23,6 +23,46 @@ def _dir_size(path: str) -> int:
                 pass
     return total
 
+GPU_QUERY = ("name,memory.total,memory.used,utilization.gpu,"
+             "temperature.gpu,power.draw,power.limit")
+
+
+def _nvidia_smi(query: str) -> list[str]:
+    """Rows from ``nvidia-smi``, without ever touching torch.cuda.
+
+    The web process must not create a CUDA context: it would pin hundreds of MB
+    of VRAM while a training subprocess needs the card. ``mem_get_info()`` and
+    ``torch.cuda.is_available()`` both create one, so every VRAM number the
+    server reports comes from this subprocess instead.
+    """
+    import subprocess as _sp
+
+    out = _sp.run(
+        ["nvidia-smi", f"--query-gpu={query}", "--format=csv,noheader,nounits"],
+        capture_output=True, text=True, timeout=5,
+    ).stdout.strip().splitlines()
+    # 没有 GPU / 驱动被禁（WSL 掉 /dev/dxg）时 nvidia-smi 会把错误打到 stdout，
+    # 行里没有逗号；别让它变成 IndexError 糊在 /api/system 上。
+    return [line for line in out if line.count(",") >= 2]
+
+
+def gpu_total_gb() -> float | None:
+    """Total VRAM of the first card in GB, or None when the driver cannot say.
+
+    Used to resolve ``vram.preset: auto`` outside a GPU process, so the estimate
+    matches the tier a real run would pick.
+    """
+    # Three columns on purpose: the row filter needs a comma count that a
+    # one-column query ("memory.total") would never reach.
+    rows = _nvidia_smi("index,name,memory.total")
+    if not rows:
+        return None
+    try:
+        return float(rows[0].split(",")[-1].strip()) / 1024
+    except (IndexError, ValueError):
+        return None
+
+
 def _system() -> dict:
     info: dict[str, Any] = {"python": sys.executable, "torch": "", "cuda": "", "gpu": {}}
     try:
@@ -30,19 +70,7 @@ def _system() -> dict:
 
         info["torch"] = torch.__version__
         info["cuda"] = torch.version.cuda or ""
-        # Query the driver instead of torch.cuda: mem_get_info() would create a CUDA
-        # context in the web process and pin several hundred MB of VRAM just for stats.
-        import subprocess as _sp
-
-        out = _sp.run(
-            ["nvidia-smi",
-             "--query-gpu=name,memory.total,memory.used,utilization.gpu,temperature.gpu,power.draw,power.limit",
-             "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=5,
-        ).stdout.strip().splitlines()
-        # 没有 GPU / 驱动被禁（WSL 掉 /dev/dxg）时 nvidia-smi 会把错误打到 stdout，
-        # 行里没有逗号；别让它变成 IndexError 糊在 /api/system 上。
-        rows = [line for line in out if line.count(",") >= 2]
+        rows = _nvidia_smi(GPU_QUERY)
         if rows:
             parts = [part.strip() for part in rows[0].split(",")]
             name, total_mb, used_mb = parts[0], parts[1], parts[2]
