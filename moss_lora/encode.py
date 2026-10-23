@@ -94,14 +94,19 @@ def run_encode_text(
     if not pending and not preview_only and not want_preview:
         return 0
 
-    if batch_size is None:
-        from .memory import free_gib, text_batch
-
-        batch_size = text_batch()
-        log(f"encode-text: batch {batch_size} (free {free_gib():.1f} GiB)")
     encoder = _text_encoder(config, text_model)
     if quantize != "none":
         log(f"quantize: {encoder.quantize(quantize)} layers -> {quantize}")
+    if batch_size is None:
+        from .memory import free_gib, text_batch
+
+        # Size the batch after the encoder is on the device. Sizing it first read
+        # the empty card's 30 GiB, chose 64 prompts, and then asked for activation
+        # room next to an 18 GB model -- which is what ran the card out of memory.
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        batch_size = text_batch()
+        log(f"encode-text: batch {batch_size} (free {free_gib():.1f} GiB after loading the encoder)")
     encode = lambda texts: encoder.encode(texts, batch_size=batch_size)  # noqa: E731
     if preview_only:
         pending = []

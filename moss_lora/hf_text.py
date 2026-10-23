@@ -62,20 +62,21 @@ def _shard_files(directory: str) -> list[str]:
     )
 
 
-def _load_text_weights(source: str, dtype: torch.dtype = torch.bfloat16, config_hint: str = "",
-                       device: str = "cpu") -> dict[str, torch.Tensor]:
-    """Load the text tower from a HF directory, a packed file, or ConvRot int8 weights.
+def _iter_text_weights(source: str, dtype: torch.dtype = torch.bfloat16, config_hint: str = "",
+                       device: str = "cpu"):
+    """Yield ``(name, tensor)`` one at a time so the caller can stream them in.
 
     ``device`` decides where dequantisation runs. On the host, 9B int8 parameters
     become a ~36 GB float32 working set and pin every core for a minute; on the
-    device the same arithmetic takes seconds and never materialises that copy.
+    device the same arithmetic takes seconds. Streaming matters just as much as
+    where the math happens: holding a full 18 GB bf16 copy beside the 18 GB model
+    is what overflowed a 32 GB card.
     """
     from safetensors import safe_open
 
     from . import convrot
 
     files, _config_dir = _weights_files(source, config_hint)
-    state: dict[str, torch.Tensor] = {}
     for path in files:
         with safe_open(path, "pt") as handle:
             keys = list(handle.keys())
@@ -95,11 +96,16 @@ def _load_text_weights(source: str, dtype: torch.dtype = torch.bfloat16, config_
                         scale_key = key[: -len(".weight")] + ".weight_scale"
                         scale = handle.get_tensor(scale_key) if scale_key in keys else torch.tensor(1.0)
                         marker = markers.get(key[: -len(".weight")], {})
-                        state[name] = convrot.dequantize(tensor.to(device), scale.to(device),
-                                                         256, marker).to(dtype)
+                        yield name, convrot.dequantize(tensor.to(device), scale.to(device),
+                                                       256, marker).to(dtype)
                     elif tensor.dtype in (torch.bfloat16, torch.float16, torch.float32):
-                        state[name] = tensor.to(device=device, dtype=dtype)
-    return state
+                        yield name, tensor.to(device=device, dtype=dtype)
+
+
+def _load_text_weights(source: str, dtype: torch.dtype = torch.bfloat16, config_hint: str = "",
+                       device: str = "cpu") -> dict[str, torch.Tensor]:
+    """The whole text tower as one dict. Prefer ``_iter_text_weights`` for a 9B model."""
+    return dict(_iter_text_weights(source, dtype=dtype, config_hint=config_hint, device=device))
 
 
 def load_text_model(directory: str, dtype: torch.dtype = torch.bfloat16, device: str = "cuda",
@@ -120,10 +126,23 @@ def load_text_model(directory: str, dtype: torch.dtype = torch.bfloat16, device:
         config = Qwen3_5Config.from_pretrained(resolved_config, local_files_only=True).text_config
     # A 9B random init on CPU costs ~58s of pure host work; do it on the device instead.
     build_on = device if torch.cuda.is_available() and str(device).startswith("cuda") else "cpu"
-    state = _load_text_weights(directory, dtype=dtype, config_hint=config_dir, device=build_on)
     with torch.device(build_on):
         model = Qwen3_5TextModel(config)
-    unexpected = model.load_state_dict(state, strict=False).unexpected_keys
+    # Build first, then copy one tensor at a time. Dequantising into a dict first
+    # kept an 18 GB bf16 copy alive next to the 18 GB model, which is enough to
+    # overflow a 32 GB card and did.
+    targets = dict(model.named_parameters())
+    targets.update(model.named_buffers())
+    unexpected = []
+    with torch.no_grad():
+        for name, tensor in _iter_text_weights(directory, dtype=dtype, config_hint=config_dir,
+                                               device=build_on):
+            target = targets.get(name)
+            if target is None:
+                unexpected.append(name)
+                continue
+            target.copy_(tensor)
+            del tensor
     if unexpected:
         raise RuntimeError(f"unexpected text-encoder weights: {unexpected[:4]}")
     model = model.to(device=device, dtype=dtype).eval()
