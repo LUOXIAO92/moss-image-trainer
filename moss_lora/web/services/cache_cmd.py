@@ -14,7 +14,6 @@ from ..errors import fail
 
 
 CACHE_PARTS = ("latent", "text")
-CACHE_PART_LABELS = {"latent": "latent 缓存", "text": "文本编码"}
 
 
 def _cache_parts(body: dict) -> list[str]:

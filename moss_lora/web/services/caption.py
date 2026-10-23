@@ -83,7 +83,6 @@ def _caption_env(job_env: dict, caption: dict) -> dict:
 
 
 CAPTION_STYLES = ("tag_caption", "official")
-CAPTION_STYLE_LABELS = {"tag_caption": "tag + caption", "official": "官方描述"}
 CAPTION_DATASETS = ("train", "reg")
 
 
