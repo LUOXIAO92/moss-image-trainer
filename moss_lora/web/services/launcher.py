@@ -23,14 +23,20 @@ def _python() -> str:
     """The bundled interpreter is the only interpreter; no discovery/UI."""
     return sys.executable
 
-def _command(kind: str, config_path: str, parts: list[str] | None = None) -> list[str]:
+def _command(kind: str, config_path: str, parts: list[str] | None = None,
+             overwrite: bool = False) -> list[str]:
     python = _python()
     if kind == "cache":
+        selected = parts or CACHE_PARTS
         steps = []
-        if "latent" in (parts or CACHE_PARTS):
-            steps.append(f'"{python}" -m moss_lora.cli cache --config "{config_path}"')
-        if "text" in (parts or CACHE_PARTS):
-            steps.append(f'"{python}" -m moss_lora.cli encode-text --config "{config_path}"')
+        # Overwrite applies per selected phase. The text step only exists when
+        # the text part is checked, so a latents-only rebuild never re-encodes
+        # captions just because the checkbox was on.
+        flag = " --overwrite" if overwrite else ""
+        if "latent" in selected:
+            steps.append(f'"{python}" -m moss_lora.cli cache --config "{config_path}"{flag}')
+        if "text" in selected:
+            steps.append(f'"{python}" -m moss_lora.cli encode-text --config "{config_path}"{flag}')
         if len(steps) == 1:
             return ["bash", "-c", steps[0]]
         # 先 latent 再文本，任一失败即停

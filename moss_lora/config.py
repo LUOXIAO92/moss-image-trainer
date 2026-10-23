@@ -79,10 +79,8 @@ class CacheConfig:
     dir: str = ""
     # 正则集的缓存单独放（留空 = <dir>/reg）；训练时两边的逐条文件一起读
     reg_dir: str = ""
-    text_max_length: int = 4096
-    text_dtype: str = "bfloat16"
-    latent_dtype: str = "float16"
-    latent_sample: bool = False
+    # Rebuild sample files that already exist. The only cache knob the builder
+    # reads: text length is MAX_TOKENS in hf_text and dtypes follow the models.
     overwrite: bool = False
     # 0 = pick from free VRAM. A fixed number keeps re-encodes comparable: the
     # same caption comes back a few 1e-4 apart at batch 1 and at batch 64.

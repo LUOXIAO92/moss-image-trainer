@@ -42,6 +42,7 @@ async def api_start(request: Request):
         raise fail(400, "err.job.kind_unknown", kind=kind)
     datasets, styles, overwrite = _caption_selection(body) if kind == "caption" else ([], [], False)
     parts = _cache_parts(body) if kind == "cache" else []
+    cache_overwrite = kind == "cache" and bool(body.get("overwrite"))
     workspace = _resolve_workspace(body.get("workspace"))
     text = body.get("yaml") or ""
     run_arg = str(body.get("run") or "").strip()
@@ -207,7 +208,8 @@ async def api_start(request: Request):
         config_path=snapshot,
         command=(_caption_command(config, settings.get("caption") or {}, log_dir, stamp,
                                   datasets, styles, overwrite)
-                 if kind == "caption" else _command(kind, snapshot, parts)),
+                 if kind == "caption" else _command(kind, snapshot, parts,
+                                                    overwrite=cache_overwrite)),
         profile=workspace,
         workspace=workspace,
         run_name=run_label,

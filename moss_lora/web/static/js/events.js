@@ -339,7 +339,7 @@ export function bindEvents() {
 
   $('#btn-cache-refresh')?.addEventListener('click', () => loadCache());
   $('#btn-cache-start')?.addEventListener('click', startCacheJob);
-  for (const id of ['cache-part-latent', 'cache-part-text']) {
+  for (const id of ['cache-part-latent', 'cache-part-text', 'cache-overwrite']) {
     const input = document.getElementById(id);
     if (input) input.addEventListener('change', updateCacheStartState);
   }
