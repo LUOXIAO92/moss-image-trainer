@@ -2,11 +2,13 @@
 
     .venv/bin/python tests/test_preset_auto.py
 
-An explicit tier overwrites every field in `VRAM_PRESETS`, so `preset: 8` and
-`preset: auto` on an 8 GB card have to agree. The one field without a "follow
-the preset" sentinel is `compile`: it defaults to true, so auto can only ever
-turn it off -- which is exactly what the streaming tiers need, because a compiled
-block loop that copies weights between host and card re-traces on every shape.
+An explicit tier and `preset: auto` have to agree on what "take it from the
+preset" means: both fill only the fields that still hold their sentinel, so a
+deliberate `quantize_dtype` or `blocks_to_swap` survives picking a tier. The one
+field without a sentinel is `compile`: it defaults to true, so a preset can only
+ever turn it off -- which is exactly what the streaming tiers need, because a
+compiled block loop that copies weights between host and card re-traces on every
+shape it has not seen.
 
 The check also pins the boundary arithmetic (a card one GB below a tier still
 gets that tier) and that `detect=False` never touches `torch.cuda`.
@@ -44,13 +46,25 @@ def main() -> int:
         else:
             assert config.vram.compile is True, (tier, config.vram.compile)
 
-    # An explicit tier wins over everything, including compile.
+    # An explicit tier fills what is unset and keeps what the user chose. compile
+    # is the exception: the tier can turn it off and never on.
     config = Config()
     config.vram.preset = "8"
     config.vram.compile = True
     config.vram.blocks_to_swap = 3
+    config.vram.quantize_dtype = "fp8"
     config = apply_preset(config)
-    assert config.vram.compile is False and config.vram.blocks_to_swap == 42, config.vram
+    assert config.vram.compile is False, config.vram
+    assert config.vram.blocks_to_swap == 3, config.vram
+    assert config.vram.quantize_dit == "all", config.vram
+    assert config.vram.quantize_dtype == "fp8", config.vram
+    assert config.vram.optimizer_in_8bit is True, config.vram
+
+    # A tier that cannot be resolved changes nothing.
+    config = fresh()
+    config.vram.preset = "nonsense"
+    config = apply_preset(config, 31.0)
+    assert config.vram.blocks_to_swap == -1 and config.vram.quantize_dit == "none", config.vram
 
     # Auto leaves deliberate choices alone: only sentinels are filled.
     config = fresh()

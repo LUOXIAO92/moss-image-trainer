@@ -316,11 +316,12 @@ function presetBool(value) {
   return value === true || String(value).toLowerCase() === 'true';
 }
 
-// What the resolved preset sets, and which of those knobs the config
-// overrides. The tokens report the preset values: a knob is 预设 when the
+// What is in effect and where each value came from: a knob is 预设 when the
 // config sits at its "follow the preset" sentinel/default (auto checkpointing,
 // -1/blank blocks, false optimizer, none quantization) or already equals the
-// preset, and 你改过 when it carries a different deliberate value.
+// preset, and 你改过 when the config carries a different deliberate value. The
+// token always shows the value that will run, so a run that quantizes does not
+// read as "quantize off" above the word "you changed it".
 export function updatePresetSummary() {
   const line = $('#vram-preset-summary');
   if (!line) return;
@@ -345,18 +346,24 @@ export function updatePresetSummary() {
   const checkpointValue = checkpointRaw === 'true' ? true : checkpointRaw === 'false' ? false : null;
   const checkpointFromPreset = checkpointRaw === 'auto' || checkpointValue === presetCheckpoint;
 
+  // "none" and a blank field both mean "take the quantization from the preset",
+  // so the effective value is what the run would use, which is the preset's when
+  // the field is unset (or literally "none").
   const quantizeRaw = String($('#cfg-quantize-dit')?.value || vram.quantize_dit || 'none');
   const presetQuantize = String(preset.quantize_dit || 'none');
+  const quantizeEffective = quantizeRaw === 'none' ? presetQuantize : quantizeRaw;
   const quantizeFromPreset = quantizeRaw === 'none' || quantizeRaw === presetQuantize;
   const quantizeDtype = String($('#cfg-quantize-dtype')?.value || vram.quantize_dtype || 'nf4');
-  const quantizeText = presetQuantize === 'none'
+  const quantizeText = quantizeEffective === 'none'
     ? presetT('train.preset.off')
-    : `${quantizeDtype}·${presetQuantize}`;
+    : `${quantizeDtype}·${quantizeEffective}`;
   const quantizeSourceFromPreset = quantizeFromPreset
-    && (presetQuantize === 'none' || quantizeDtype === 'nf4');
+    && (quantizeEffective === 'none' || quantizeDtype === 'nf4');
 
   const optimizerRaw = Boolean(vram.optimizer_in_8bit);
   const presetOptimizer = presetBool(preset.optimizer_in_8bit);
+  // false is the "unset" value here, so the preset decides until the user turns
+  // the 8-bit optimizer on.
   const optimizerFromPreset = !optimizerRaw || optimizerRaw === presetOptimizer;
 
   const compileRaw = vram.compile;
@@ -364,8 +371,9 @@ export function updatePresetSummary() {
     ? true
     : !(compileRaw === false || String(compileRaw).toLowerCase() === 'false');
   const presetCompile = presetBool(preset.compile);
-  // compile has no "follow the preset" sentinel: true is the backend default,
-  // so only an explicit false against a compiling preset counts as an override.
+  // compile has no "follow the preset" sentinel: true is the backend default and
+  // a preset can only turn it off, which the streaming tiers need.
+  const compileEffective = compileValue && presetCompile;
   const compileFromPreset = compileValue || !presetCompile;
 
   const conditioning = String($('#cfg-quantize-conditioning')?.value || vram.quantize_conditioning || 'none');
@@ -375,10 +383,22 @@ export function updatePresetSummary() {
   if (conditioning !== 'none') {
     parts.push(presetT('train.preset.conditioning', { value: conditioning, source: presetSource(false) }));
   }
-  parts.push(presetT('train.preset.resident', { count: presetResident, source: presetSource(residentFromPreset) }));
-  parts.push(presetT('train.preset.checkpointing', { state: presetOnOff(presetCheckpoint), source: presetSource(checkpointFromPreset) }));
-  parts.push(presetT('train.preset.compile', { state: presetOnOff(presetCompile), source: presetSource(compileFromPreset) }));
-  parts.push(presetT('train.preset.optimizer8bit', { state: presetOnOff(presetOptimizer), source: presetSource(optimizerFromPreset) }));
+  parts.push(presetT('train.preset.resident', {
+    count: residentCount == null ? presetResident : residentCount,
+    source: presetSource(residentFromPreset),
+  }));
+  parts.push(presetT('train.preset.checkpointing', {
+    state: presetOnOff(checkpointValue == null ? presetCheckpoint : checkpointValue),
+    source: presetSource(checkpointFromPreset),
+  }));
+  parts.push(presetT('train.preset.compile', {
+    state: presetOnOff(compileEffective),
+    source: presetSource(compileFromPreset),
+  }));
+  parts.push(presetT('train.preset.optimizer8bit', {
+    state: presetOnOff(optimizerRaw || presetOptimizer),
+    source: presetSource(optimizerFromPreset),
+  }));
 
   const summary = parts.join(' · ');
   line.textContent = automatic

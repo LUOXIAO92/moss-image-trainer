@@ -231,7 +231,7 @@ Sidecar 文件固定采用 `schema: 2` 结构，容纳两个互不干扰的风�
 | `16` / `12` | `true` | `ffn` | `0` | `false` | `true` |
 | `8` / `6` | `true` | `all` | `42` | `true` | `false` |
 
-`vram.preset` 指定档位时，`apply_preset` 覆盖上表五个字段，档位值优先于手改的默认值。设为 `auto` 时，档位取 `32, 24, 16, 12, 8, 6` 中第一个超不超过检测到的显卡容量 1 GB 的值。训练页会打印最终选中的档位，并逐个标注该字段来自预设还是被用户改过，生效配置不靠猜。
+`apply_preset` 只填那些还写着“跟随预设”的字段——`gradient_checkpointing: auto`、`blocks_to_swap: -1`、`optimizer_in_8bit: false`、`quantize_dit: none`——显式写死的值一律不动，所以手调过的选择不会因为换档位而被丢掉。`compile` 没有可判断的“未设置”值，因此档位只能把它关掉，流式档位正是这么做的。设为 `auto` 时，档位取 `32, 24, 16, 12, 8, 6` 中第一个超不超过检测到的显卡容量 1 GB 的值。训练页会打印最终选中的档位、每一项的生效值，以及它来自预设还是用户手改，真正会跑的配置不靠猜。
 
 各项机制的底层行为如下：
 - 精度与累加器：`model.dtype` 默认 `bfloat16`；设为 `float16` 时自动启用 `GradScaler`，若同时开启 `vram.fp16_accumulate: true`，则设置 `torch.backends.cuda.matmul.allow_fp16_accumulation = True` 以换取消费级显卡更高的半精度 Tensor Core 吞吐。

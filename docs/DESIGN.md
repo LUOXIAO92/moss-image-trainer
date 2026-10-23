@@ -232,7 +232,7 @@ VRAM controls are centralized in `VRAM_PRESETS` (`auto|32|24|16|12|8|6`) in [con
 | `16` / `12` | `true` | `ffn` | `0` | `false` | `true` |
 | `8` / `6` | `true` | `all` | `42` | `true` | `false` |
 
-`apply_preset` overwrites all five fields when `vram.preset` names a tier, so a tier value beats a hand-edited default. With `auto`, the tier is the first of `32, 24, 16, 12, 8, 6` that exceeds the detected card capacity by no more than 1 GB. The training page prints the resolved tier and tags each field as preset-supplied or user-overridden, so the active configuration is never a guess.
+`apply_preset` fills the fields that still hold their "take it from the preset" value -- `gradient_checkpointing: auto`, `blocks_to_swap: -1`, `optimizer_in_8bit: false`, `quantize_dit: none` -- and leaves anything set explicitly alone, so a deliberate choice survives picking a tier. `compile` has no unset value to test, so a preset can only turn it off, and the streaming tiers do. With `auto`, the tier is the first of `32, 24, 16, 12, 8, 6` that exceeds the detected card capacity by no more than 1 GB. The training page prints the resolved tier, each effective value, and whether it came from the preset or from the user, so the configuration that will run is never a guess.
 
 Underlying mechanisms operate as follows:
 - Precision and accumulators: `model.dtype` defaults to `bfloat16`; setting `float16` enables `GradScaler` automatically, and pairing it with `vram.fp16_accumulate: true` sets `torch.backends.cuda.matmul.allow_fp16_accumulation = True` for higher half-precision Tensor Core throughput on consumer GPUs.

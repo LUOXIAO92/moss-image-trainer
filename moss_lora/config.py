@@ -429,29 +429,35 @@ VRAM_PRESETS: dict[str, dict[str, Any]] = {
 
 
 def apply_preset(config: Config, vram_gb: float | None = None, *, detect: bool = True) -> Config:
-    """Fill ``vram`` defaults from the card size unless the user overrode them.
+    """Fill the ``vram`` fields that still say "take it from the preset".
+
+    A field the user set explicitly keeps its value: the preset is a starting
+    point, not an override, so picking a tier never discards a deliberate
+    ``quantize_dtype`` or a hand-tuned ``blocks_to_swap``. The exception is
+    ``compile``, which has no unset value to test against; a preset can only turn
+    it off, and the streaming tiers do -- a compiled block loop that copies
+    weights between host and card re-traces on every shape it has not seen.
 
     ``detect=False`` keeps the call out of ``torch.cuda``: the WebUI resolves the
     capacity from nvidia-smi and passes it in, and falls back to the dataclass
     defaults when the driver cannot answer. A CUDA context in the web process
     would hold VRAM that the run being predicted for needs.
     """
+    preset: dict[str, Any] | None = None
     if config.vram.preset != "auto":
-        key = str(config.vram.preset).replace("GB", "")
-        preset = VRAM_PRESETS.get(key, {})
-        for field_name, value in preset.items():
-            setattr(config.vram, field_name, value)
-        return config
-    if vram_gb is None and detect:
-        vram_gb = detect_vram_gb()
-    if vram_gb is None:
-        return config
-    for size in ("32", "24", "16", "12", "8", "6"):
-        if vram_gb >= int(size) - 1:
-            preset = VRAM_PRESETS[size]
-            break
+        preset = VRAM_PRESETS.get(str(config.vram.preset).replace("GB", ""))
     else:
-        preset = VRAM_PRESETS["6"]
+        if vram_gb is None and detect:
+            vram_gb = detect_vram_gb()
+        if vram_gb is not None:
+            for size in ("32", "24", "16", "12", "8", "6"):
+                if vram_gb >= int(size) - 1:
+                    preset = VRAM_PRESETS[size]
+                    break
+            else:
+                preset = VRAM_PRESETS["6"]
+    if preset is None:
+        return config
     if config.vram.gradient_checkpointing == "auto":
         config.vram.gradient_checkpointing = preset["gradient_checkpointing"]
     else:
@@ -462,9 +468,6 @@ def apply_preset(config: Config, vram_gb: float | None = None, *, detect: bool =
         config.vram.optimizer_in_8bit = preset["optimizer_in_8bit"]
     if config.vram.quantize_dit == "none":
         config.vram.quantize_dit = preset["quantize_dit"]
-    # compile has no "unset" value to test against, so auto only ever turns it
-    # off. The streaming tiers do: a compiled block loop that copies weights
-    # between host and card re-traces on every shape it has not seen.
     if preset["compile"] is False:
         config.vram.compile = False
     return config
