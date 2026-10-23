@@ -65,10 +65,11 @@ def check_config_fields():
     config = Config.from_dict({"cache": {"text_batch": 32, "vae_batch": 2}})
     assert config.cache.text_batch == 32, config.cache.text_batch
     assert config.cache.vae_batch == 2, config.cache.vae_batch
-    assert not [p for p in config.validate() if "cache." in p], config.validate()
+    assert not [p for p in config.validate() if p.code == "err.config.cache_batch"], config.validate()
 
     bad = Config.from_dict({"cache": {"text_batch": -1}})
-    assert any("cache.text_batch" in p for p in bad.validate()), bad.validate()
+    assert any(p.code == "err.config.cache_batch" and p.params.get("field") == "cache.text_batch"
+                for p in bad.validate()), bad.validate()
 
 
 def main():

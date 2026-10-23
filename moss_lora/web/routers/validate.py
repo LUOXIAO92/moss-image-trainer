@@ -12,7 +12,8 @@ from ...config import expand
 from ..deps import ROOT, _rel
 from ..services.cache_cmd import _cache_summary
 from ..services.workspace import _config_from_data, _resolve_workspace, _workspace_target_run
-from ..errors import error_detail, render
+from ..errors import error_detail
+from ...problems import Problem, problem
 
 router = APIRouter()
 
@@ -49,14 +50,11 @@ async def api_validate(request: Request):
 
     workspace = _resolve_workspace(body.get("workspace"))
 
-    problems: list[str] = []
-    warnings: list[str] = []
-    problem_codes: list[dict | None] = []
-    warning_codes: list[dict | None] = []
+    problems: list[Problem] = []
+    warnings: list[Problem] = []
     try:
         config = _config_from_data(workspace, data)
         problems = config.validate()
-        problem_codes = [None] * len(problems)
     except Exception as exc:  # malformed types must not 500 the UI
         return {"ok": False,
                 "yaml_error": {**error_detail("err.config.structure", error=exc),
@@ -67,52 +65,51 @@ async def api_validate(request: Request):
     if reg_path:
         reg_full = reg_path if os.path.isabs(reg_path) else os.path.abspath(os.path.join(ROOT, reg_path))
         if not os.path.isdir(reg_full):
-            problems.append(f"dataset.reg_path not found: {reg_full}")
-            problem_codes.append(None)
+            problems.append(problem("err.dataset.reg_path_missing", path=reg_full))
     if int(config.dataset.reg_repeat or 1) < 1:
-        problems.append(render("err.dataset.reg_repeat"))
-        problem_codes.append({"code": "err.dataset.reg_repeat", "params": {}})
+        problems.append(problem("err.dataset.reg_repeat"))
 
     cache = _cache_summary(config) if config.cache.dir else {
         "dir": "", "items": 0, "ready": False, "index_ready": False,
         "preview_ready": False, "index_mtime": None,
     }
     if not config.cache.dir:
-        problems.append(render("err.cache.dir_empty"))
-        problem_codes.append({"code": "err.cache.dir_empty", "params": {}})
+        problems.append(problem("err.cache.dir_empty"))
 
     prompts = [p for p in (config.preview.prompts or []) if str(p).strip()]
     if not prompts and not (cache or {}).get("preview_ready"):
-        warnings.append(render("err.warning.prompts_empty"))
-        warning_codes.append({"code": "err.warning.prompts_empty", "params": {}})
+        warnings.append(problem("err.warning.prompts_empty"))
     if not config.train.eval_every:
-        warnings.append(render("err.warning.eval_off"))
-        warning_codes.append({"code": "err.warning.eval_off", "params": {}})
+        warnings.append(problem("err.warning.eval_off"))
     if not config.train.sample_every:
-        warnings.append(render("err.warning.samples_off"))
-        warning_codes.append({"code": "err.warning.samples_off", "params": {}})
+        warnings.append(problem("err.warning.samples_off"))
 
     # 缓存的问题单独说清楚，否则预检只是「不通过」而没有理由
     cache_problem = None
     if config.cache.dir and cache:
         if not cache.get("index_ready"):
-            cache_problem = {"code": "err.cache.not_built", "params": {"dir": cache.get("dir")}}
+            cache_problem = problem("err.cache.not_built", dir=cache.get("dir"))
         elif cache.get("legacy_index"):
-            cache_problem = {"code": "err.cache.legacy", "params": {"dir": cache.get("dir")}}
+            cache_problem = problem("err.cache.legacy", dir=cache.get("dir"))
         elif cache.get("missing_text"):
-            cache_problem = {"code": "err.cache.missing_text",
-                             "params": {"dir": cache.get("dir"),
-                                        "missing": cache["missing_text"],
-                                        "items": cache.get("items", 0)}}
+            cache_problem = problem("err.cache.missing_text", dir=cache.get("dir"),
+                                    missing=cache["missing_text"], items=cache.get("items", 0))
     if cache_problem:
-        problems.append(render(cache_problem["code"], cache_problem["params"]))
-        problem_codes.append(cache_problem)
+        problems.append(cache_problem)
 
     # First missing step wins.  The training page owns the three model paths,
     # so model problems point back there; dataset/cache have their own tabs.
-    model_problems = [item for item in problems if item.startswith("model.")]
-    dataset_problems = [item for item in problems if item.startswith("dataset.")]
-    reg_problems = [item for item in dataset_problems if item.startswith("dataset.reg_")]
+    model_codes = {
+        "err.config.field_empty", "err.config.field_variable", "err.config.field_missing",
+        "err.config.text_encoder_no_config", "err.config.text_encoder_kind",
+        "err.config.te_config_missing", "err.config.te_config_no_config",
+    }
+    reg_codes = {"err.dataset.reg_path_missing", "err.dataset.reg_repeat"}
+    dataset_codes = {"err.config.dataset_path_empty", "err.dataset.missing",
+                     "err.config.caption_source"}
+    model_problems = [item for item in problems if item.code in model_codes]
+    reg_problems = [item for item in problems if item.code in reg_codes]
+    dataset_problems = [item for item in problems if item.code in dataset_codes]
     focus_field = ""
     if model_problems:
         for key, field_id in (("dit", "cfg-model-dit"), ("vae", "cfg-model-vae"), ("text_encoder", "cfg-model-te")):
@@ -140,10 +137,10 @@ async def api_validate(request: Request):
         "workspace": workspace_label,
         "ok": ok,
         "yaml_error": None,
-        "problems": problems,
-        "problem_codes": problem_codes,
-        "warnings": warnings,
-        "warning_codes": warning_codes,
+        "problems": [item.render() for item in problems],
+        "problem_codes": [item.detail() for item in problems],
+        "warnings": [item.render() for item in warnings],
+        "warning_codes": [item.detail() for item in warnings],
         "cache": cache,
         "next_tab": next_tab,
         "focus_field": focus_field,

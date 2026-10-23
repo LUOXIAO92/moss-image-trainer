@@ -13,7 +13,7 @@ from ... import settings as runtime_settings
 from ..deps import SETTINGS_REL, _settings_snapshot
 from ..services.settings_svc import (_blank_default_prompts, _caption_prompt_defaults,
                                      _caption_service_view, _plan_api_key, probe_model)
-from ..errors import fail
+from ..errors import error_detail, fail
 
 router = APIRouter()
 
@@ -58,8 +58,10 @@ async def api_settings_post(request: Request):
     if errors:
         return JSONResponse(
             {
-                "detail": "设置校验失败，未保存",
-                "errors": errors,
+                # Field-keyed detail so the browser can show each problem next to
+                # the input it belongs to, in the reader's language.
+                "detail": error_detail("err.settings.invalid"),
+                "errors": {field: item.detail() for field, item in errors.items()},
                 "warnings": warnings,
                 "status": runtime_settings.settings_status(payload),
             },

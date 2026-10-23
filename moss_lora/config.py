@@ -13,6 +13,8 @@ import re
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from typing import Any
 
+from .problems import Problem, problem
+
 DEFAULT_MODELS_ROOT = ""
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
@@ -257,104 +259,102 @@ class Config:
     def copy(self) -> "Config":
         return copy.deepcopy(self)
 
-    def validate(self) -> list[str]:
+    def validate(self) -> list["Problem"]:
         """Path/parameter problems. An empty ``text_encoder`` means the text
-        embeddings were produced elsewhere and the trainer only reads the cache."""
-        problems = []
+        embeddings were produced elsewhere and the trainer only reads the cache.
+
+        Each entry is a code plus parameters, not a sentence: the CLI renders it
+        in Chinese, the WebUI translates the same code, and neither has to parse
+        the other's text.
+        """
+        problems: list[Problem] = []
         if not self.dataset.path:
-            problems.append("dataset.path is empty")
+            problems.append(problem("err.config.dataset_path_empty"))
         elif not os.path.isdir(self.dataset.path):
-            problems.append(f"dataset.path not found: {self.dataset.path}")
+            problems.append(problem("err.dataset.missing", path=self.dataset.path))
         for key in ("dit", "vae"):
             path = expand(getattr(self.model, key))
+            field = f"model.{key}"
             if not path:
-                problems.append(f"model.{key} is empty")
+                problems.append(problem("err.config.field_empty", field=field))
             elif "${" in path:
-                problems.append(f"model.{key} uses an unresolved variable: {path}")
+                problems.append(problem("err.config.field_variable", field=field, path=path))
             elif not os.path.exists(path):
-                problems.append(f"model.{key} not found: {path}")
+                problems.append(problem("err.config.field_missing", field=field, path=path))
         text_encoder = expand(self.model.text_encoder)
         if text_encoder and "${" in text_encoder:
-            problems.append(f"model.text_encoder uses an unresolved variable: {text_encoder}")
+            problems.append(problem("err.config.field_variable", field="model.text_encoder",
+                                    path=text_encoder))
         elif text_encoder and not os.path.exists(text_encoder):
-            problems.append(f"model.text_encoder not found: {text_encoder}")
+            problems.append(problem("err.config.field_missing", field="model.text_encoder",
+                                    path=text_encoder))
         elif text_encoder and os.path.isdir(text_encoder):
             if not os.path.isfile(os.path.join(text_encoder, "config.json")):
-                problems.append(f"model.text_encoder directory has no config.json: {text_encoder}")
+                problems.append(problem("err.config.text_encoder_no_config", path=text_encoder))
         elif text_encoder and not text_encoder.lower().endswith(".safetensors"):
-            problems.append(f"model.text_encoder must be a HF directory or .safetensors: {text_encoder}")
+            problems.append(problem("err.config.text_encoder_kind", path=text_encoder))
         te_config = expand(self.model.text_encoder_config)
         if te_config and not os.path.isdir(te_config):
-            problems.append(f"model.text_encoder_config not found: {te_config}")
+            problems.append(problem("err.config.te_config_missing", path=te_config))
         elif te_config and not os.path.isfile(os.path.join(te_config, "config.json")):
-            problems.append(f"model.text_encoder_config has no config.json: {te_config}")
+            problems.append(problem("err.config.te_config_no_config", path=te_config))
         if self.lora.rank <= 0:
-            problems.append("lora.rank must be positive")
+            problems.append(problem("err.config.lora_rank"))
         for layer in self.lora.layers or []:
             try:
                 index = int(layer)
             except (TypeError, ValueError):
-                problems.append(f"lora.layers contains a non-integer: {layer!r}")
+                problems.append(problem("err.config.lora_layer_int", layer=layer))
                 continue
             if index < 0 or index > 41:
-                problems.append(f"lora.layers index out of range 0..41: {index}")
+                problems.append(problem("err.config.lora_layer_range", index=index))
         if self.train.batch_size <= 0 or self.train.grad_accum <= 0:
-            problems.append("batch_size and grad_accum must be positive")
+            problems.append(problem("err.config.batch_size"))
         for key in ("text_batch", "vae_batch"):
             value = getattr(self.cache, key, 0) or 0
             if int(value) < 0:
-                problems.append(f"cache.{key} must be 0 (auto) or a positive number")
+                problems.append(problem("err.config.cache_batch", field=f"cache.{key}"))
         source = str(getattr(self.dataset, "moss_caption_source", "tag_caption"))
         if source not in ("tag_caption", "official_long", "official_medium", "official_short"):
-            problems.append(
-                "dataset.moss_caption_source must be "
-                "tag_caption|official_long|official_medium|official_short: "
-                f"{source!r}"
-            )
+            problems.append(problem("err.config.caption_source", value=source))
         if str(self.train.attention).lower() not in ("auto", "flash", "sdpa"):
-            problems.append(f"train.attention must be auto|flash|sdpa: {self.train.attention!r}")
+            problems.append(problem("err.config.attention", value=self.train.attention))
         if str(self.train.batch_mode).lower() not in ("auto", "packed", "padded"):
-            problems.append(
-                f"train.batch_mode must be auto|packed|padded: {self.train.batch_mode!r}"
-            )
+            problems.append(problem("err.config.batch_mode", value=self.train.batch_mode))
         if int(self.train.bin_tokens or 0) < 0:
-            problems.append("train.bin_tokens must be >= 0 (0 = 自动)")
+            problems.append(problem("err.config.bin_tokens"))
         if str(self.train.optimizer).lower() not in ("adamw", "adamw8bit", "muon", "adafactor"):
-            problems.append(
-                "train.optimizer must be adamw|adamw8bit|muon|adafactor: "
-                f"{self.train.optimizer!r}"
-            )
+            problems.append(problem("err.config.optimizer", value=self.train.optimizer))
         if str(self.lora.init).lower() not in ("kaiming", "zero"):
-            problems.append(f"lora.init must be kaiming|zero: {self.lora.init!r}")
+            problems.append(problem("err.config.lora_init", value=self.lora.init))
         preview = self.preview
         for name in ("steps", "width", "height", "seed"):
             if not isinstance(getattr(preview, name), int):
-                problems.append(f"preview.{name} must be an integer")
+                problems.append(problem("err.config.preview_int", field=name))
         for name in ("guidance", "shift"):
             if not isinstance(getattr(preview, name), (int, float)):
-                problems.append(f"preview.{name} must be a number")
+                problems.append(problem("err.config.preview_number", field=name))
         if isinstance(preview.steps, int) and preview.steps <= 0:
-            problems.append("preview.steps must be positive")
+            problems.append(problem("err.config.preview_steps"))
         if isinstance(preview.width, int) and (preview.width <= 0 or preview.width % 16):
-            problems.append("preview.width must be a positive multiple of 16")
+            problems.append(problem("err.config.preview_width"))
         if isinstance(preview.height, int) and (preview.height <= 0 or preview.height % 16):
-            problems.append("preview.height must be a positive multiple of 16")
+            problems.append(problem("err.config.preview_height"))
         if isinstance(preview.guidance, (int, float)) and preview.guidance < 0:
-            problems.append("preview.guidance must be non-negative")
+            problems.append(problem("err.config.preview_guidance"))
         if isinstance(preview.shift, (int, float)) and preview.shift < 0:
-            problems.append("preview.shift must be non-negative")
+            problems.append(problem("err.config.preview_shift"))
         if isinstance(preview.seed, int) and preview.seed < -1:
-            problems.append("preview.seed must be -1 or a non-negative integer")
+            problems.append(problem("err.config.preview_seed"))
         for layer in preview.uncond_skip_layers or []:
             try:
                 index = int(layer)
             except (TypeError, ValueError):
-                problems.append(f"preview.uncond_skip_layers contains a non-integer: {layer!r}")
+                problems.append(problem("err.config.uncond_layer_int", layer=layer))
                 continue
             if index < 0 or index > 41:
-                problems.append(f"preview.uncond_skip_layers index out of range 0..41: {index}")
+                problems.append(problem("err.config.uncond_layer_range", index=index))
         return problems
-
 
 def _build(cls, data: dict):
     """Dataclass construction that tolerates unknown keys and nested dicts."""

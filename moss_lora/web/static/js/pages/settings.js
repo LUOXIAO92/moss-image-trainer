@@ -4,7 +4,7 @@
  * ========================================================================= */
 
 import { getCurrentYaml, updateOutputPreview } from '../config/form.js';
-import { api, describeError } from '../core/api.js';
+import { api, describeDetail, describeError } from '../core/api.js';
 import { $, escapeHtml, getPath, setHidden, setText } from '../core/dom.js';
 import { fmtBytesFromMb, fmtInt } from '../core/fmt.js';
 import { fetchI18nState, languageName, refreshLocalizedUi, renderLanguageSelectors, t } from '../core/i18n.js';
@@ -291,17 +291,21 @@ export function clearSettingsErrors() {
 function showSettingsErrors(errors = {}, warnings = []) {
   const box = $('#settings-alert');
   if (!box) return;
+  // Each value is `{code, params, message}` from the server; the sentence is
+  // rendered in the reader's language, and the field name precedes it as a token
+  // rather than a full-width colon, which only reads right in Chinese.
+  const entries = Object.entries(errors).map(([path, payload]) => [path, describeDetail(payload) || '']);
   box.classList.remove('hidden');
   setText('#settings-alert-title', t('settings.unsaved'));
-  setText('#settings-alert-text', warnings.length ? warnings.join('；') : t('settings.msg1'));
+  setText('#settings-alert-text', warnings.length ? warnings.join(' · ') : t('settings.msg1'));
   const list = $('#settings-error-list');
   if (list) {
-    list.innerHTML = Object.entries(errors).map(([path, message]) => {
+    list.innerHTML = entries.map(([path, message]) => {
       const id = SETTINGS_FIELD_MAP[path];
-      return `<li>${id ? `<button type="button" class="form-error-link" data-settings-field="${escapeHtml(id)}">` : ''}${escapeHtml(path)}：${escapeHtml(message)}${id ? '</button>' : ''}</li>`;
+      return `<li>${id ? `<button type="button" class="form-error-link" data-settings-field="${escapeHtml(id)}">` : ''}<code>${escapeHtml(path)}</code> ${escapeHtml(message)}${id ? '</button>' : ''}</li>`;
     }).join('');
   }
-  for (const [path, message] of Object.entries(errors)) {
+  for (const [path, message] of entries) {
     const id = SETTINGS_FIELD_MAP[path];
     if (!id) continue;
     const input = settingsField(id);

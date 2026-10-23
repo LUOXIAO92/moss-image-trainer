@@ -31,6 +31,8 @@ from typing import Any
 
 import yaml
 
+from .problems import Problem, problem
+
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SETTINGS_PATH = os.path.join(PROJECT_ROOT, "settings.yaml")
 EXAMPLE_PATH = os.path.join(PROJECT_ROOT, "settings.example.yaml")
@@ -288,24 +290,26 @@ def merge_settings(current: dict, patch: dict) -> dict:
     return _merge(normalize(current), patch if isinstance(patch, dict) else {})
 
 
-def validate_settings(data: dict) -> tuple[dict[str, str], list[str], dict[str, Any]]:
+def validate_settings(data: dict) -> tuple[dict[str, "Problem"], list[str], dict[str, Any]]:
     """Return ``(errors, warnings, status)`` for an unsaved payload.
 
     Missing paths are warnings: the workspace root may be created later, and the
-    three model file paths live in each workspace's config.
+    three model file paths live in each workspace's config. Each error is a code
+    plus parameters, keyed by the settings field it belongs to, so the browser can
+    put a translated sentence next to that field.
     """
     candidate = normalize(data)
-    errors: dict[str, str] = {}
+    errors: dict[str, Problem] = {}
     warnings: list[str] = []
     status = _settings_status(candidate)
 
     workspaces = candidate["paths"].get("workspaces", "")
     if not workspaces:
-        errors["paths.workspaces"] = "工作区根目录不能为空"
+        errors["paths.workspaces"] = problem("err.settings.workspaces_empty")
     else:
         resolved = resolve_path(str(workspaces))
         if os.path.exists(resolved) and not os.path.isdir(resolved):
-            errors["paths.workspaces"] = f"工作区根路径不是目录：{resolved}"
+            errors["paths.workspaces"] = problem("err.settings.workspaces_not_dir", path=resolved)
     return errors, warnings, status
 
 

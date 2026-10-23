@@ -74,9 +74,12 @@ def cmd_cache(args):
     from .cache import CacheBuilder
 
     config = _load(args)
-    problems = [p for p in config.validate() if not p.startswith("dataset.")]
+    # The cache command tunes one dataset at a time; a broken dataset path is the
+    # cache builder's own error, not a reason to refuse before it starts.
+    problems = [p for p in config.validate()
+                if p.code not in ("err.config.dataset_path_empty", "err.dataset.missing")]
     if problems:
-        print("config problems:\n  " + "\n  ".join(problems))
+        print("config problems:\n  " + "\n  ".join(p.render() for p in problems))
         return 2
     with _GpuLock(config, "cache"):
         builder = CacheBuilder(config)

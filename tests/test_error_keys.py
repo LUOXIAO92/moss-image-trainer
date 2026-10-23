@@ -17,7 +17,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from moss_lora.web.errors import CODES  # noqa: E402
+from moss_lora.problems import CODES  # noqa: E402
 
 I18N_DIR = os.path.join(ROOT, "moss_lora", "web", "static", "i18n")
 MANIFEST = os.path.join(ROOT, ".tmp", "err-manifest.json")
@@ -28,14 +28,14 @@ PLACEHOLDER_RE = re.compile(r"\{(\w+)\}")
 
 
 def used_codes() -> set[str]:
-    """Every ``err.*`` string literal the web layer can emit."""
+    """Every ``err.*`` string literal the package can emit."""
     codes: set[str] = set()
-    for dirpath, _dirs, names in os.walk(os.path.join(ROOT, "moss_lora", "web")):
+    for dirpath, _dirs, names in os.walk(os.path.join(ROOT, "moss_lora")):
         if "__pycache__" in dirpath:
             continue
         for name in sorted(names):
-            if not name.endswith(".py") or name == "errors.py":
-                continue  # errors.py holds the registry itself, not a raise site
+            if not name.endswith(".py") or name in ("problems.py", "errors.py"):
+                continue  # those two hold the registry, not a raise site
             path = os.path.join(dirpath, name)
             tree = ast.parse(open(path, encoding="utf-8").read())
             for node in ast.walk(tree):

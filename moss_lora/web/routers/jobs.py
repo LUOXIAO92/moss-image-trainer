@@ -29,7 +29,7 @@ from ..services.workspace import (_config_from_data, _resolve_workspace, _run_co
                                   _run_is_live, _section, _workspace_cache_dir, _workspace_dir,
                                   _workspace_logs_dir, _workspace_root, _workspace_runs_dir,
                                   _workspace_target_run)
-from ..errors import fail, render
+from ..errors import fail, problem
 
 router = APIRouter()
 
@@ -83,9 +83,9 @@ async def api_start(request: Request):
     if kind == "cache" and "text" in parts and not str(config.model.text_encoder or "").strip():
         if not problems:
             raise fail(400, "err.cache.text_encoder_required")
-        problems.append(render("err.cache.text_encoder_required"))
+        problems.append(problem("err.cache.text_encoder_required"))
     if problems:
-        raise fail(400, "err.config.invalid", problems="；".join(problems))
+        raise fail(400, "err.config.invalid", problems="；".join(p.render() for p in problems))
 
     profile = workspace
     python = _python()
