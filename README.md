@@ -84,7 +84,14 @@ Common helper subcommands:
 
 # Sequentially resume unfinished training runs in a workspace
 .venv/bin/python -m moss_lora.cli queue --workspace "$WS"
+
+# Start a run that survives an SSH disconnect, then read it the way the dashboard does
+.venv/bin/python -m moss_lora.cli train --config "$WS/workspace.yaml" --detach
+.venv/bin/python -m moss_lora.cli status
+.venv/bin/python -m moss_lora.cli status --workspace my-lora --live --json
 ```
+
+`status` reads the workspace files directly: no server, no cached state. The dashboard, `GET /api/jobs`, and this command all project the same heartbeat, so a run started in a terminal shows up in the browser and a run started in the browser shows up in the terminal. [docs/RUNTIME-CONTRACT.md](<docs/RUNTIME-CONTRACT.md>) defines the files and the test that keeps the three in step.
 
 ## Configuration
 

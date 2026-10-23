@@ -3,6 +3,7 @@
 __pycache__/
 *.pyc
 *.pyo
+*.egg-info/
 
 # ---- 本机配置（不含 example 模板）----
 settings.yaml

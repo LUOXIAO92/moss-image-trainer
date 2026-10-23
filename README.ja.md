@@ -84,7 +84,14 @@ WS=workspaces/<WORKSPACE>
 
 # ワークスペース内の未完了の学習タスクを順次再開
 .venv/bin/python -m moss_lora.cli queue --workspace "$WS"
+
+# SSH 切断後も続く学習を開始し、ダッシュボードと同じ方法で状態を読む
+.venv/bin/python -m moss_lora.cli train --config "$WS/workspace.yaml" --detach
+.venv/bin/python -m moss_lora.cli status
+.venv/bin/python -m moss_lora.cli status --workspace my-lora --live --json
 ```
+
+`status` はワークスペースのファイルを直接読みます。サーバーもキャッシュも使いません。ダッシュボード、`GET /api/jobs`、このコマンドは同じハートビートを投影するため、ターミナルで開始した実行はブラウザに現れ、ブラウザで開始した実行はターミナルに現れます。ファイルの定義と三者を一致させ続けるテストは [docs/RUNTIME-CONTRACT.md](<docs/RUNTIME-CONTRACT.md>) にあります。
 
 ## 設定
 

@@ -84,7 +84,14 @@ WS=workspaces/<WORKSPACE>
 
 # 작업 공간 내 미완료 학습 작업을 순차적으로 재개
 .venv/bin/python -m moss_lora.cli queue --workspace "$WS"
+
+# SSH 연결이 끊겨도 계속되는 학습을 시작하고, 대시보드와 같은 방식으로 상태를 읽기
+.venv/bin/python -m moss_lora.cli train --config "$WS/workspace.yaml" --detach
+.venv/bin/python -m moss_lora.cli status
+.venv/bin/python -m moss_lora.cli status --workspace my-lora --live --json
 ```
+
+`status` 는 워크스페이스 파일을 직접 읽습니다. 서버도 캐시도 쓰지 않습니다. 대시보드, `GET /api/jobs`, 이 명령은 같은 하트비트를 투영하므로 터미널에서 시작한 실행은 브라우저에 나타나고, 브라우저에서 시작한 실행은 터미널에 나타납니다. 파일 정의와 세 가지 읽기를 일치시키는 테스트는 [docs/RUNTIME-CONTRACT.md](<docs/RUNTIME-CONTRACT.md>) 에 있습니다.
 
 ## 구성
 

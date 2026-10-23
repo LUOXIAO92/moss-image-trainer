@@ -84,7 +84,14 @@ WS=workspaces/<WORKSPACE>
 
 # 顺序续跑工作区内未完成的训练任务
 .venv/bin/python -m moss_lora.cli queue --workspace "$WS"
+
+# 起一个掉线也继续跑的训练，再用看板同款的方式读它的状态
+.venv/bin/python -m moss_lora.cli train --config "$WS/workspace.yaml" --detach
+.venv/bin/python -m moss_lora.cli status
+.venv/bin/python -m moss_lora.cli status --workspace my-lora --live --json
 ```
+
+`status` 直接读工作区文件：不连服务，不读缓存。看板、`GET /api/jobs` 和这条命令投影的是同一份心跳，所以终端里起的运行会出现在浏览器里，浏览器里起的运行也会出现在终端里。[docs/RUNTIME-CONTRACT.zh-CN.md](<docs/RUNTIME-CONTRACT.zh-CN.md>) 规定这些文件，以及保证三者一致的那个测试。
 
 ## 配置
 
