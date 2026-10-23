@@ -182,6 +182,16 @@ class PreviewConfig:
     shift: float = 5.0
     uncond_skip_layers: list = field(default_factory=lambda: [22])
     seed: int = 42
+    # A second LoRA applied only while sampling: the usual use is a distilled
+    # "turbo" adapter that turns 50 steps into 4-8 with guidance 1.
+    lora: str = ""
+    lora_scale: float = 1.0
+    # Prompts per sampling forward; 0 = all at once. One at a time flattens the
+    # sampling peak at the cost of proportional time.
+    batch: int = 0
+    # Where the fp32 VAE decodes: gpu keeps the preview fast, cpu keeps it small.
+    vae_device: str = "gpu"     # gpu | cpu
+    vae_dtype: str = "fp32"     # fp32 | fp16 — fp16 halves decode memory, not bit-exact
 
 
 @dataclass
@@ -348,6 +358,18 @@ class Config:
             problems.append(problem("err.config.preview_shift"))
         if isinstance(preview.seed, int) and preview.seed < -1:
             problems.append(problem("err.config.preview_seed"))
+        if int(getattr(preview, "batch", 0) or 0) < 0:
+            problems.append(problem("err.config.preview_batch"))
+        vae_device = str(getattr(preview, "vae_device", "gpu")).lower()
+        if vae_device not in ("gpu", "cpu"):
+            problems.append(problem("err.config.preview_vae_device", value=preview.vae_device))
+        vae_dtype = str(getattr(preview, "vae_dtype", "fp32")).lower()
+        if vae_dtype not in ("fp32", "fp16"):
+            problems.append(problem("err.config.preview_vae_dtype", value=preview.vae_dtype))
+        extra_lora = expand(str(getattr(preview, "lora", "") or "")).strip()
+        if extra_lora and not os.path.exists(os.path.expanduser(extra_lora)):
+            problems.append(problem("err.config.field_missing", field="preview.lora",
+                                    path=extra_lora))
         for layer in preview.uncond_skip_layers or []:
             try:
                 index = int(layer)
@@ -382,12 +404,20 @@ def _build(cls, data: dict):
 # VRAM presets: index is the card size in GB
 # ---------------------------------------------------------------------------
 VRAM_PRESETS: dict[str, dict[str, Any]] = {
-    "32": {"gradient_checkpointing": True, "blocks_to_swap": 0, "optimizer_in_8bit": False, "quantize_dit": "none"},
-    "24": {"gradient_checkpointing": True, "blocks_to_swap": 0, "optimizer_in_8bit": False, "quantize_dit": "none"},
-    "16": {"gradient_checkpointing": True, "blocks_to_swap": 0, "optimizer_in_8bit": False, "quantize_dit": "none"},
-    "12": {"gradient_checkpointing": True, "blocks_to_swap": 0, "optimizer_in_8bit": False, "quantize_dit": "ffn"},
-    "8": {"gradient_checkpointing": True, "blocks_to_swap": 0, "optimizer_in_8bit": False, "quantize_dit": "all"},
-    "6": {"gradient_checkpointing": True, "blocks_to_swap": 20, "optimizer_in_8bit": True, "quantize_dit": "all"},
+    "32": {"gradient_checkpointing": True, "blocks_to_swap": 0, "optimizer_in_8bit": False,
+           "quantize_dit": "none", "compile": True},
+    "24": {"gradient_checkpointing": True, "blocks_to_swap": 0, "optimizer_in_8bit": False,
+           "quantize_dit": "none", "compile": True},
+    "16": {"gradient_checkpointing": True, "blocks_to_swap": 0, "optimizer_in_8bit": False,
+           "quantize_dit": "none", "compile": True},
+    "12": {"gradient_checkpointing": True, "blocks_to_swap": 0, "optimizer_in_8bit": False,
+           "quantize_dit": "ffn", "compile": True},
+    # 8 GB and below: the base weights must leave bf16, and the compiled block
+    # loop costs workspace the card does not have.
+    "8": {"gradient_checkpointing": True, "blocks_to_swap": 0, "optimizer_in_8bit": True,
+          "quantize_dit": "all", "compile": False},
+    "6": {"gradient_checkpointing": True, "blocks_to_swap": 42, "optimizer_in_8bit": True,
+          "quantize_dit": "all", "compile": False},
 }
 
 

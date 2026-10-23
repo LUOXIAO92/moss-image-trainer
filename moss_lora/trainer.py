@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import math
+import contextlib
 import hashlib
 import os
 import time
@@ -512,12 +513,14 @@ class Trainer:
     def _degrade_memory(self) -> bool:
         """OOM fallback: move more blocks to CPU and retry the step."""
         current = int(self.config.vram.blocks_to_swap or 0)
-        if current >= 40:
+        model = getattr(getattr(self.model, "base_model", self.model), "model", self.model)
+        total = len(getattr(model, "layers", ()) or ()) or 42
+        # Everything can stream: past this point there is nothing left to give.
+        if current >= total:
             return False
-        nxt = min(40, current + 8 if current else 8)
+        nxt = min(total, current + 8 if current else 8)
         self.log(f"out of memory -> blocks_to_swap {current} -> {nxt}, retrying")
         self.config.vram.blocks_to_swap = nxt
-        model = getattr(getattr(self.model, "base_model", self.model), "model", self.model)
         from .offload import BlockSwap
 
         model.block_swap = BlockSwap(model.layers, nxt, device=self.device)
@@ -933,31 +936,135 @@ class Trainer:
         return written
 
     # -- preview ---------------------------------------------------------
-    def preview(self, step: int):
+    def _preview_codec(self):
+        """The decode half of the VAE, on the device and dtype the config asks for.
+
+        fp32 on the GPU is the default and matches the cache path bit for bit; a
+        small card can move it to the CPU or drop it to fp16, which halves the
+        decode memory at the cost of exactness no one sees in a preview.
+        """
+        if getattr(self, "_codec", None) is not None:
+            return self._codec
+        preview = self.config.preview
+        on_cpu = (str(getattr(preview, "vae_device", "gpu")).lower() == "cpu"
+                  or getattr(self, "_vae_cpu_fallback", False))
+        device = "cpu" if on_cpu else self.device
+        dtype = torch.float16 if str(getattr(preview, "vae_dtype", "fp32")).lower() == "fp16" else torch.float32
+        self._codec = LatentCodec(load_vae(self.config.model.vae, dtype=dtype, device=device))
+        self.log(f"preview vae: {str(dtype).split('.')[-1]} on {device}")
+        return self._codec
+
+    def _preview_lora(self):
+        """Load the extra sampling-only adapter once and resolve it to modules."""
+        if getattr(self, "_preview", None) is not None:
+            return self._preview
+        self._preview = []
+        path = str(getattr(self.config.preview, "lora", "") or "").strip()
+        if not path:
+            return self._preview
+        from safetensors.torch import load_file
+
+        from .lora_file import lora_modules
+
+        checkpoint = load_file(os.path.expanduser(path))
+        alphas = {name[:-6]: float(value) for name, value in checkpoint.items() if name.endswith(".alpha")}
+        user_scale = float(getattr(self.config.preview, "lora_scale", 1.0) or 1.0)
+        root = getattr(getattr(self.model, "base_model", None), "model", self.model)
+        for module_name, (down, up) in sorted(lora_modules(checkpoint).items()):
+            target = root
+            for part in module_name.split("."):
+                target = getattr(target, part, None)
+                if target is None:
+                    break
+            if target is None or not hasattr(target, "weight"):
+                self.log(f"preview lora: no module {module_name} in this model, skipped")
+                continue
+            rank = int(down.shape[0]) or 1
+            alpha = alphas.get("lora_unet_" + module_name.replace(".", "_"), float(rank))
+            self._preview.append((
+                target,
+                down.to(self.device, dtype=self.dtype),
+                up.to(self.device, dtype=self.dtype),
+                user_scale * float(alpha) / rank,
+            ))
+        self.log(f"preview lora: {len(self._preview)} modules from {os.path.basename(path)}")
+        return self._preview
+
+    @contextlib.contextmanager
+    def _preview_adapter(self):
+        """Add the sampling-only delta through hooks: no state on the model."""
+        handles = []
+        for module, down, up, scale in self._preview_lora():
+            def hook(module, inputs, output, down=down, up=up, scale=scale):
+                delta = torch.nn.functional.linear(
+                    torch.nn.functional.linear(inputs[0].to(down.dtype), down), up) * scale
+                return output + delta.to(output.dtype)
+
+            handles.append(module.register_forward_hook(hook))
+        try:
+            yield
+        finally:
+            for handle in handles:
+                handle.remove()
+
+    def _sample_preview(self, codec, chunk: int) -> torch.Tensor:
+        """Run the sampler over the cached prompts, ``chunk`` prompts per pass."""
         from .sampling import sample
 
+        preview = self.config.preview
+        data = load_file(os.path.join(self.cache_dir, "preview.safetensors"))
+        embeds = data["embeds"].to(self.device, self.dtype)
+        mask = data["mask"].to(self.device)
+        negative = data["negative_embeds"].to(self.device, self.dtype)
+        negative_mask = data["negative_mask"].to(self.device)
+        images = []
+        with self._preview_adapter():
+            for start in range(0, embeds.shape[0], chunk):
+                pick = slice(start, min(start + chunk, embeds.shape[0]))
+                # the cache holds one negative row for every prompt, but a single
+                # row is broadcast by sample(); a chunk must not slice it away
+                neg_pick = pick if negative.shape[0] == embeds.shape[0] else slice(None)
+                images.append(sample(
+                    self.model, codec, embeds[pick], mask[pick],
+                    negative[neg_pick], negative_mask[neg_pick],
+                    height=preview.width, width=preview.height,
+                    steps=preview.steps, guidance=preview.guidance,
+                    shift=preview.shift,
+                    uncond_skip_layers=tuple(int(x) for x in (preview.uncond_skip_layers or ())),
+                    generator=torch.Generator("cpu").manual_seed(preview.seed),
+                    dtype=self.dtype,
+                ))
+        return torch.cat(images, 0) if len(images) > 1 else images[0]
+
+    def preview(self, step: int):
         path = os.path.join(self.cache_dir, "preview.safetensors")
         if not os.path.exists(path):
             return None
         from PIL import Image
 
-        data = load_file(path)
-        if getattr(self, "_codec", None) is None:
-            self._codec = LatentCodec(load_vae(self.config.model.vae, dtype=torch.float32, device=self.device))
-        codec = self._codec
+        preview = self.config.preview
         was_training = self.model.training
         self.model.eval()
-        embeds = data["embeds"].to(self.device, self.dtype)
-        images = sample(
-            self.model, codec, embeds, data["mask"].to(self.device),
-            data["negative_embeds"].to(self.device, self.dtype), data["negative_mask"].to(self.device),
-            height=self.config.preview.height, width=self.config.preview.width,
-            steps=self.config.preview.steps, guidance=self.config.preview.guidance,
-            shift=self.config.preview.shift,
-            uncond_skip_layers=tuple(int(x) for x in (self.config.preview.uncond_skip_layers or ())),
-            generator=torch.Generator("cpu").manual_seed(self.config.preview.seed),
-            dtype=self.dtype,
-        )
+        # 0 = one forward for every prompt; 1 = one prompt at a time, which keeps
+        # the sampling peak flat on a card that cannot hold all of them at once.
+        batch = int(getattr(preview, "batch", 0) or 0)
+        prompts = len(preview.prompts or []) or 1
+        chunk = min(max(1, batch), prompts) if batch else prompts
+        try:
+            try:
+                images = self._sample_preview(self._preview_codec(), chunk)
+            except torch.cuda.OutOfMemoryError:
+                # A preview must never kill a run that was training fine: drop to
+                # one prompt at a time and decode on the CPU, then try once more.
+                self.log("preview: out of memory -> one prompt at a time, CPU decode")
+                self._codec = None
+                self._vae_cpu_fallback = True
+                torch.cuda.empty_cache()
+                images = self._sample_preview(self._preview_codec(), 1)
+        finally:
+            self.model.train(was_training)
+            torch.cuda.empty_cache()
+        images = torch.cat(images, 0) if len(images) > 1 else images[0]
         out_dir = os.path.join(self.out_dir, "samples")
         os.makedirs(out_dir, exist_ok=True)
         paths = []
@@ -966,7 +1073,6 @@ class Trainer:
             target = os.path.join(out_dir, f"step{step:06d}_{index}.png")
             Image.fromarray(pixels).save(target)
             paths.append(target)
-        self.model.train(was_training)
         self.log(f"preview -> {paths}")
         return paths
 

@@ -362,6 +362,37 @@
               <span class="field-label" data-i18n="train.preview.height">样图高度</span>
               <input id="cfg-preview-height" type="number" min="64" step="16" inputmode="numeric" placeholder="1024" aria-describedby="cfg-preview-size-help">
             </label>
+            <label class="field span2" for="cfg-preview-lora">
+              <span class="field-label" data-i18n="train.preview.lora">加速 LoRA</span>
+              <input id="cfg-preview-lora" type="text" spellcheck="false" autocomplete="off" placeholder="/path/to/turbo.safetensors" aria-describedby="cfg-preview-lora-help">
+              <span class="field-help" id="cfg-preview-lora-help" data-i18n="train.preview.loraHelp">只在生成样图时叠加，不影响训练。蒸馏 LoRA 一般 4–8 步、引导强度 1，预览的显存和时间都能降一个数量级。</span>
+            </label>
+            <label class="field" for="cfg-preview-lora-scale">
+              <span class="field-label" data-i18n="train.preview.loraScale">加速 LoRA 强度</span>
+              <input id="cfg-preview-lora-scale" type="number" min="0" step="0.05" inputmode="decimal" placeholder="1.0" aria-describedby="cfg-preview-lora-scale-help">
+              <span class="field-help" id="cfg-preview-lora-scale-help" data-i18n="train.preview.loraScaleHelp">留空使用 1.0。</span>
+            </label>
+            <label class="field" for="cfg-preview-batch">
+              <span class="field-label" data-i18n="train.preview.batch">每次采样几条</span>
+              <input id="cfg-preview-batch" type="number" min="0" step="1" inputmode="numeric" placeholder="0" aria-describedby="cfg-preview-batch-help">
+              <span class="field-help" id="cfg-preview-batch-help" data-i18n="train.preview.batchHelp">0 = 全部提示词一次跑完；显存紧张填 1，逐条采样，峰值最平。</span>
+            </label>
+            <label class="field" for="cfg-preview-vae-device">
+              <span class="field-label" data-i18n="train.preview.vaeDevice">VAE 解码位置</span>
+              <select id="cfg-preview-vae-device" aria-describedby="cfg-preview-vae-help">
+                <option value="gpu" data-i18n="train.preview.vaeGpu">GPU（默认，最快）</option>
+                <option value="cpu" data-i18n="train.preview.vaeCpu">CPU（省显存）</option>
+              </select>
+              <span class="field-help" id="cfg-preview-vae-help" data-i18n="train.preview.vaeDeviceHelp">CPU 解码只占主机内存，单张慢几秒，不占显存。</span>
+            </label>
+            <label class="field" for="cfg-preview-vae-dtype">
+              <span class="field-label" data-i18n="train.preview.vaeDtype">VAE 精度</span>
+              <select id="cfg-preview-vae-dtype" aria-describedby="cfg-preview-vae-dtype-help">
+                <option value="fp32" data-i18n="train.preview.vaeFp32">fp32（默认，逐位一致）</option>
+                <option value="fp16" data-i18n="train.preview.vaeFp16">fp16（显存减半）</option>
+              </select>
+              <span class="field-help" id="cfg-preview-vae-dtype-help" data-i18n="train.preview.vaeDtypeHelp">fp16 只作用于样图解码，肉眼几乎看不出差别，但不是逐位一致。</span>
+            </label>
             <label class="field span2" for="cfg-preview-uncond">
               <span class="field-label">Uncond skip layers</span>
               <input id="cfg-preview-uncond" type="text" spellcheck="false" autocomplete="off" placeholder="22" aria-describedby="cfg-preview-uncond-help">

@@ -46,6 +46,11 @@ export const FIELD_DEFS = [
   { id: 'cfg-preview-height', path: 'preview.height', type: 'number', label: 'train.preview.height', min: 64, integer: true, default: 1024, blankDefault: true, multipleOf: 16 },
   { id: 'cfg-preview-uncond', path: 'preview.uncond_skip_layers', type: 'intlist', label: 'Uncond skip layers', min: 0, max: 41, default: [22], blankDefault: true },
   { id: 'cfg-preview-negative', path: 'preview.negative_prompt', type: 'text', label: 'train.preview.negative', default: '' },
+  { id: 'cfg-preview-lora', path: 'preview.lora', type: 'text', label: 'train.preview.lora', default: '' },
+  { id: 'cfg-preview-lora-scale', path: 'preview.lora_scale', type: 'float', label: 'train.preview.loraScale', min: 0, default: 1.0, blankDefault: true },
+  { id: 'cfg-preview-batch', path: 'preview.batch', type: 'number', label: 'train.preview.batch', min: 0, integer: true, default: 0, blankDefault: true },
+  { id: 'cfg-preview-vae-device', path: 'preview.vae_device', type: 'text', label: 'train.preview.vaeDevice', default: 'gpu' },
+  { id: 'cfg-preview-vae-dtype', path: 'preview.vae_dtype', type: 'text', label: 'train.preview.vaeDtype', default: 'fp32' },
 ];
 
 export const FIELD_BY_ID = new Map(FIELD_DEFS.map((field) => [field.id, field]));
