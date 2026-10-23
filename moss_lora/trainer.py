@@ -333,8 +333,7 @@ class Trainer:
         model = getattr(getattr(self.model, "base_model", self.model), "model", self.model)
         if not getattr(model, "gradient_checkpointing", False):
             raise RuntimeError("blocks_to_swap needs gradient checkpointing")
-        self._swap = BlockSwap(model.layers, count, device=self.device,
-                               window=int(getattr(self.config.vram, "swap_window", 2) or 2))
+        self._swap = BlockSwap(model.layers, count, device=self.device)
         model.block_swap = self._swap
         freed = sum(p.numel() * p.element_size() for i in self._swap.params for p in self._swap.params[i])
         self.log(f"block swap: {count} blocks on CPU ({freed/2**30:.1f} GiB offloaded)")
@@ -545,8 +544,10 @@ class Trainer:
         self.config.vram.blocks_to_swap = nxt
         from .offload import BlockSwap
 
-        model.block_swap = BlockSwap(model.layers, nxt, device=self.device,
-                                     window=int(getattr(self.config.vram, "swap_window", 2) or 2))
+        # The swap being replaced may still have a download queued on its copy
+        # stream; drain every stream before its pinned buffers are rebound.
+        torch.cuda.synchronize(self.device)
+        model.block_swap = BlockSwap(model.layers, nxt, device=self.device)
         self._swap = model.block_swap
         torch.cuda.empty_cache()
         return True

@@ -435,6 +435,10 @@ class MOSSImageTransformer(nn.Module):
             # out directly; without this branch a preview on a streamed run would
             # meet weights that are still on the host.
             self.block_swap.load(index)
+            self.block_swap.wait(index)
+            # Sampling walks the blocks upwards exactly once, so the upload worth
+            # overlapping with this block's compute is the next block's.
+            self.block_swap.prefetch(index + 1)
             try:
                 with torch.no_grad():
                     return layer(x, rope, mod, *extra)
