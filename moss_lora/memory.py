@@ -94,11 +94,12 @@ ADAMW_BYTES_PER_PARAM = 8.0
 EIGHT_BIT_BYTES_PER_PARAM = 3.0
 EMA_BYTES_PER_PARAM = 4.0
 
-# Allocator workspaces, and the prefetch window that keeps two streamed blocks
-# on the card while the third is being copied in.
+# Allocator workspaces, plus the weights a streamed run keeps on the card: the
+# block being computed, the one being copied in by the lookahead, and the one
+# buffer set the pool holds for the next upload.
 WORKSPACE_GIB = 0.5
 COMPILE_WORKSPACE_GIB = 0.2
-SWAP_WINDOW_BLOCKS = 2
+SWAP_WINDOW_BLOCKS = 3
 
 # Sampling keeps no autograd graph, so its activations are smaller than the
 # training ones. The VAE decode is the fp32 Flux2 cost already used by
@@ -161,8 +162,9 @@ def _resident_blocks(vram) -> int:
     swapped = max(0, min(TOTAL_BLOCKS, _whole(getattr(vram, "blocks_to_swap", 0) or 0)))
     if swapped == 0:
         return TOTAL_BLOCKS
-    # Streamed blocks leave the card, but the prefetch window keeps two of them
-    # resident; stream every block and the window is all that is left.
+    # Streamed blocks leave the card, but the lookahead and its buffer pool keep
+    # three of them resident; stream every block and those three are all that is
+    # left.
     return min(TOTAL_BLOCKS, TOTAL_BLOCKS - swapped + SWAP_WINDOW_BLOCKS)
 
 

@@ -138,6 +138,8 @@ def check_streaming(model, latent, context):
 
         check_window(swap)
         print("window cap                  : ok  two blocks resident, prefetch is a no-op there")
+        check_pool(swap)
+        print("buffer pool                 : ok  a walk reuses one released set of GPU buffers")
     finally:
         model.block_swap = None
 
@@ -158,6 +160,35 @@ def check_window(swap):
     swap.release(2)
     assert not swap.resident, list(swap.resident)
     torch.cuda.synchronize()
+
+
+def check_pool(swap):
+    """A walk must stop allocating after the pool warms up.
+
+    Without the pool, every load allocates a block's worth of GPU storage and
+    every release frees it: 84 transients per step on the real model, which the
+    caching allocator never coalesces, so the reserved footprint climbs until the
+    card is full. Here the allocation count is the invariant.
+    """
+    created = []
+    real_empty_like = torch.empty_like
+
+    def counting_empty_like(*args, **kwargs):
+        created.append(1)
+        return real_empty_like(*args, **kwargs)
+
+    torch.empty_like = counting_empty_like
+    try:
+        for index in range(BLOCKS):
+            swap.prefetch(index)
+            swap.wait(index)
+            swap.release(index)
+    finally:
+        torch.empty_like = real_empty_like
+    torch.cuda.synchronize()
+    # One set per distinct block layout, plus the single pooled spare.
+    assert len(created) <= BLOCKS, f"{len(created)} allocations for {BLOCKS} blocks: the pool is not used"
+    assert len(created) <= 2, f"{len(created)} allocations for one repeated layout"
 
 
 def main():

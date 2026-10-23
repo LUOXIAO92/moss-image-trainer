@@ -26,7 +26,7 @@ no shared sampler coefficient can lift it back to 6.6 without pushing the
 streamed row past 4.3 GiB.
 
 The rest of the file locks down the rules that are easy to break silently: the
-context is added exactly once, the streaming window keeps two blocks, a preview
+context is added exactly once, the streaming path keeps three blocks' weights (window plus pool), a preview
 on the CPU is smaller than one on the GPU, guidance 1 skips the unconditional
 branch, the batch factor applies only when set, and an adapter path is never
 stat-ed.
@@ -128,7 +128,7 @@ CALIBRATION = [
             },
         },
         3.4,
-        3.9,
+        3.94,
     ),
     (
         "nf4 all + 8-step turbo preview",
@@ -183,11 +183,11 @@ def check_shape() -> None:
 def check_streaming_window() -> None:
     resident = lambda swap: estimate_vram(make(vram={"blocks_to_swap": swap}))["resident_blocks"]
     assert resident(0) == 42
-    assert resident(40) == 4, resident(40)  # 2 kept + 2 prefetch
-    assert resident(42) == 2, resident(42)
+    assert resident(40) == 5, resident(40)  # 2 kept + 2 lookahead + 1 pooled
+    assert resident(42) == 3, resident(42)
     # Never more than the whole model, whatever the config asks for.
     assert resident(1) == 42, resident(1)
-    assert estimate_vram(make(vram={"blocks_to_swap": 42}))["streamed_blocks"] == 40
+    assert estimate_vram(make(vram={"blocks_to_swap": 42}))["streamed_blocks"] == 39
 
 
 def check_preview_decoding() -> None:

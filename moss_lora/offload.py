@@ -10,6 +10,13 @@ through the recompute) and then copies block k back into its pinned host
 buffers. A copy is a small fraction of a block's compute, so this lookahead
 hides essentially all of it. Two blocks may be resident at once, the one being
 computed and the one being uploaded.
+
+Every block in the stack has the same tensor shapes, so one released set of GPU
+buffers is kept and handed to the next upload. Without that pool each pass
+allocates and frees a block's worth of storage 84 times per step, and under the
+caching allocator those transients never coalesce: the reserved footprint climbs
+step after step and the run ends up holding the memory that streaming was meant
+to give back.
 """
 
 from __future__ import annotations
@@ -21,6 +28,12 @@ import torch
 # yet, and every slot costs a full block of VRAM, so this is fixed rather than a
 # user-facing setting.
 WINDOW = 2
+
+# Released GPU buffer sets kept for the next upload. One is enough: during a walk
+# two sets are live (one computing, one uploading) and the third is the one just
+# released, which the next prefetch takes. Every kept set costs a block of VRAM,
+# so this stays at one.
+POOL_SETS = 1
 
 
 class BlockSwap:
@@ -45,6 +58,8 @@ class BlockSwap:
         self.resident: dict[int, list[torch.Tensor]] = {}
         self.upload_done: dict[int, torch.cuda.Event] = {}
         self.download_done: dict[int, torch.cuda.Event] = {}
+        # shape/dtype signature -> sets of GPU buffers released by earlier blocks
+        self.pool: dict[tuple, list[list[torch.Tensor]]] = {}
         # a Function whose inputs never require grad produces outputs without a
         # grad_fn; this dummy keeps the graph alive (torch.utils.checkpoint does the same)
         self._dummy = torch.zeros(1, device=self._device, requires_grad=True)
@@ -65,10 +80,27 @@ class BlockSwap:
             self.host[index] = host
         return host
 
+    @staticmethod
+    def _key(host: list[torch.Tensor]) -> tuple:
+        return tuple((tuple(buffer.shape), buffer.dtype) for buffer in host)
+
+    def _borrow(self, host: list[torch.Tensor]) -> list[torch.Tensor] | None:
+        """A released buffer set with the same shapes, or None to allocate one."""
+        key = self._key(host)
+        bucket = self.pool.get(key)
+        return bucket.pop() if bucket else None
+
+    def _give_back(self, host: list[torch.Tensor], tensors: list[torch.Tensor]) -> None:
+        bucket = self.pool.setdefault(self._key(host), [])
+        if len(bucket) < POOL_SETS:
+            bucket.append(tensors)
+
     def _upload(self, index: int) -> None:
         host = self._staging(index)
         compute = self._compute_stream()
-        tensors = [torch.empty_like(buffer, device=self._device) for buffer in host]
+        tensors = self._borrow(host)
+        if tensors is None:
+            tensors = [torch.empty_like(buffer, device=self._device) for buffer in host]
         previous = self.download_done.get(index)
         # The allocator's promise is stream-ordered, and these tensors are written
         # by the copy stream. Their storage may be recycled from a tensor the
@@ -86,11 +118,11 @@ class BlockSwap:
                 tensor.copy_(buffer, non_blocking=True)
             uploaded = torch.cuda.Event()
             uploaded.record()
-        # The compute stream reads these tensors, and the host drops its reference
-        # at release; the allocator must not recycle the storage while either
-        # stream can still touch it.
+        # The set is written by the copy stream and read by the compute stream.
+        # Recording the copy stream keeps a set that gets evicted from the pool
+        # from being recycled before that write lands; the compute stream is the
+        # allocation stream, so it needs no record.
         for tensor in tensors:
-            tensor.record_stream(compute)
             tensor.record_stream(self.copy_stream)
         self.upload_done[index] = uploaded
         self.resident[index] = tensors
@@ -147,6 +179,7 @@ class BlockSwap:
         for tensor in tensors:
             tensor.record_stream(self.copy_stream)
         self.download_done[index] = downloaded
+        self._give_back(host, tensors)
         for param, buffer in zip(self.params[index], host):
             param.data = buffer
 
