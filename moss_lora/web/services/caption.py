@@ -39,9 +39,13 @@ def resolve_api_key(caption: dict) -> tuple[str, str]:
     return "", "none"
 
 def _probe_service(base_url: str, key: str) -> tuple[str, str, list[str]]:
-    """ok / unauthorized / unreachable / error：拿 /models 验一次地址和密钥。"""
+    """ok / unauthorized / unreachable / no_base_url / error: probe /models once.
+
+    The detail is a short machine token (``HTTP 401``, ``URLError``) that the
+    caller drops into a translated sentence, never a message of its own.
+    """
     if not base_url:
-        return "unreachable", "还没填服务地址", []
+        return "no_base_url", "", []
     url = base_url.rstrip("/") + "/models"
     request = urllib.request.Request(url, headers={"Authorization": f"Bearer {key}"})
     try:

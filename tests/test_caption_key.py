@@ -35,14 +35,17 @@ def main() -> int:
     assert (key, source) == ("key_from_env", "env"), (key, source)
 
     # 直接填密钥：不落盘，只进内存
-    error, note, stored, literal = A._plan_api_key(dict(DEAD), "key_literal_123")
+    error, notes, stored, literal = A._plan_api_key(dict(DEAD), "key_literal_123")
     assert not error and stored == "" and literal == "key_literal_123", (error, stored, literal)
-    assert "不写进设置文件" in note, note
+    # 提示是 code + 参数，不是拼好的句子：设置页按当前语言渲染
+    codes = [item.code for item in notes]
+    assert codes[:2] == ["err.settings.key_literal_note", "err.settings.key_unreachable"], codes
+    assert "写进设置文件" in notes[0].render(), notes[0].render()
     deps._LITERAL_API_KEY = literal
     assert A.resolve_api_key({"api_key": ""}) == ("key_literal_123", "literal")
 
     # 空串 = 清空；不带这个键 = 保持原样（由 merge 保证，这里只验清空）
-    assert A._plan_api_key(dict(DEAD), "") == (None, "", "", "")
+    assert A._plan_api_key(dict(DEAD), "") == (None, [], "", "")
     deps._LITERAL_API_KEY = ""
 
     # 旧版 settings.yaml 里直接存的密钥仍然可用（长得不像变量名）

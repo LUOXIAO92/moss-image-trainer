@@ -43,12 +43,13 @@ async def api_settings_post(request: Request):
     settings_snapshot, _ = _settings_snapshot()
     payload = runtime_settings.merge_settings(settings_snapshot, payload)
     _blank_default_prompts(payload)
-    key_error = key_note = ""
+    key_error = None
+    key_notes: list = []
     stored_key = None
     literal_key = ""
     if "api_key" in submitted_caption:
         # 探测服务是阻塞 IO，丢到线程里，别卡住事件循环
-        key_error, key_note, stored_key, literal_key = await asyncio.to_thread(
+        key_error, key_notes, stored_key, literal_key = await asyncio.to_thread(
             _plan_api_key, payload.get("caption") or {}, str(submitted_caption.get("api_key") or ""))
         if key_error:
             code, params = key_error
@@ -67,8 +68,8 @@ async def api_settings_post(request: Request):
             },
             status_code=400,
         )
-    if key_note:
-        warnings = list(warnings) + [key_note]
+    if key_notes:
+        warnings = list(warnings) + [item.detail() for item in key_notes]
     with deps._SETTINGS_LOCK:
         if stored_key is not None:
             deps._LITERAL_API_KEY = literal_key

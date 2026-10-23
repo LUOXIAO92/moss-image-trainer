@@ -14,6 +14,7 @@ from ...config import expand
 from ..deps import ROOT
 from .caption import _caption_prompt_defaults, _probe_service, resolve_api_key
 from ..errors import fail
+from ...problems import Problem, problem
 
 
 def _save_language(code: str) -> None:
@@ -51,35 +52,55 @@ def _caption_service_view(settings: dict) -> dict:
     }
 
 
-def _plan_api_key(caption: dict, raw: str) -> tuple[tuple[str, dict] | None, str, str, str]:
-    """填环境变量名就存名字；填密钥就只记在内存里，不落盘；密钥被拒直接报错。"""
+def _plan_api_key(caption: dict, raw: str) -> tuple[tuple[str, dict] | None, list[Problem], str, str]:
+    """填环境变量名就存名字；填密钥就只记在内存里，不落盘；密钥被拒直接报错。
+
+    The notes come back as problems, not sentences: the settings page shows them
+    under the key field, so they have to follow the reader's language.
+    """
     base_url = str(caption.get("base_url") or "").strip()
     raw = raw.strip()
     if not raw:
-        return None, "", "", ""
+        return None, [], "", ""
     model = str(caption.get("model") or "").strip()
 
-    def mismatch(ids: list[str]) -> str:
+    def mismatch(ids: list[str]) -> list[Problem]:
         if not ids or not model or model in ids:
-            return ""
-        return f"服务里没有模型 {model}（现有：{', '.join(ids[:4])}），跑的时候会失败"
+            return []
+        return [problem("err.settings.model_missing", model=model, ids=", ".join(ids[:4]))]
 
     env_value = os.environ.get(raw, "").strip()
     if env_value:
         kind, detail, ids = _probe_service(base_url, env_value)
         if kind == "unauthorized":
-            return ("err.settings.key_invalid", {"reason": detail}), "", "", ""
-        note = "" if kind == "ok" else f"环境变量 {raw} 已保存，但服务暂时没连上（{detail}）"
-        warn = "；".join(part for part in (note, mismatch(ids)) if part)
-        return None, warn, raw, ""
+            return ("err.settings.key_invalid", {"reason": detail}), [], "", ""
+        if kind == "ok":
+            notes = []
+        elif kind == "no_base_url":
+            notes = [problem("err.caption.no_endpoint")]
+        else:
+            notes = [problem("err.settings.key_env_unreachable", name=raw, reason=detail)]
+        return None, notes + mismatch(ids), raw, ""
     kind, detail, ids = _probe_service(base_url, raw)
     if kind == "unauthorized":
-        return ("err.settings.key_rejected", {}), "", "", ""
-    note = "填的是密钥本身，只在本次运行有效、不写进设置文件；想要长期生效请填环境变量名"
-    if kind == "unreachable":
-        note += f"（服务当前连不上：{detail}）"
-    warn = "；".join(part for part in (note, mismatch(ids)) if part)
-    return None, warn, "", raw
+        return ("err.settings.key_rejected", {}), [], "", ""
+    notes = [problem("err.settings.key_literal_note")]
+    if kind == "no_base_url":
+        notes.append(problem("err.caption.no_endpoint"))
+    elif kind == "unreachable":
+        notes.append(problem("err.settings.key_unreachable", reason=detail))
+    return None, notes + mismatch(ids), "", raw
+
+def _reject(result: dict, code: str, **params) -> dict:
+    """Mark a probe result as failed with a code the settings page can translate.
+
+    ``reason`` stays as the rendered Chinese so a client that ignores the code
+    still shows a sentence; ``reason_detail`` is what the UI actually renders.
+    """
+    item = problem(code, **params)
+    result.update({"ok": False, "reason": item.render(), "reason_detail": item.detail()})
+    return result
+
 
 async def probe_model(request: Request):
     """Check one model path without loading it (files or a HF model directory)."""
@@ -89,10 +110,10 @@ async def probe_model(request: Request):
     if kind not in ("dit", "text_encoder", "vae"):
         raise fail(400, "err.settings.model_kind")
     if not raw:
-        return {"ok": False, "kind": kind, "path": "", "reason": "路径为空"}
+        return _reject({"kind": kind, "path": ""}, "err.settings.path_empty")
     expanded = expand(raw)
     if "${" in expanded:
-        return {"ok": False, "kind": kind, "path": expanded, "reason": "路径包含未展开的 ${MODELS}；请设置 MODELS 环境变量，或直接填绝对路径"}
+        return _reject({"kind": kind, "path": expanded}, "err.settings.path_variable")
     full = os.path.abspath(os.path.join(ROOT, os.path.expanduser(expanded))) if not os.path.isabs(expanded) else os.path.abspath(os.path.expanduser(expanded))
     exists = os.path.exists(full)
     result = {
@@ -102,26 +123,25 @@ async def probe_model(request: Request):
         "reason": "",
     }
     if not exists:
-        result["reason"] = f"路径不存在：{full}"
-        return result
+        return _reject(result, "err.settings.path_missing", path=full)
     if kind == "text_encoder":
         if result["is_file"]:
             if not full.lower().endswith(".safetensors"):
-                result["reason"] = "文本编码器文件必须是 .safetensors"
+                _reject(result, "err.settings.te_not_safetensors")
             else:
                 result["ok"] = True
         elif result["is_dir"]:
             if not os.path.isfile(os.path.join(full, "config.json")):
-                result["reason"] = "目录里没有 config.json；这不是一个 HuggingFace 模型目录"
+                _reject(result, "err.settings.te_no_config")
             else:
                 result["ok"] = True
         else:
-            result["reason"] = "文本编码器必须是 HF 目录或 .safetensors 文件"
+            _reject(result, "err.settings.te_kind")
         return result
     if not result["is_file"]:
-        result["reason"] = "这是一个目录；这里需要 .safetensors 文件"
+        _reject(result, "err.settings.file_expected")
     elif not full.lower().endswith(".safetensors"):
-        result["reason"] = "模型文件必须是 .safetensors"
+        _reject(result, "err.settings.not_safetensors")
     else:
         result["ok"] = True
     return result

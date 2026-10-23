@@ -288,6 +288,12 @@ export function clearSettingsErrors() {
   }
 }
 
+// A warning is `{code, params, message}` like an error, or a plain string from a
+// caller that has no code; both render as one line in the reader's language.
+function warningText(warnings = []) {
+  return warnings.map((item) => describeDetail(item) || String(item || '')).filter(Boolean).join(' · ');
+}
+
 function showSettingsErrors(errors = {}, warnings = []) {
   const box = $('#settings-alert');
   if (!box) return;
@@ -297,7 +303,7 @@ function showSettingsErrors(errors = {}, warnings = []) {
   const entries = Object.entries(errors).map(([path, payload]) => [path, describeDetail(payload) || '']);
   box.classList.remove('hidden');
   setText('#settings-alert-title', t('settings.unsaved'));
-  setText('#settings-alert-text', warnings.length ? warnings.join(' · ') : t('settings.msg1'));
+  setText('#settings-alert-text', warnings.length ? warningText(warnings) : t('settings.msg1'));
   const list = $('#settings-error-list');
   if (list) {
     list.innerHTML = entries.map(([path, message]) => {
@@ -340,7 +346,7 @@ export function setModelStatus(kind, result) {
     return;
   }
   el.classList.add('is-err');
-  el.textContent = result.reason || t('train.msg79');
+  el.textContent = describeDetail(result.reason_detail) || result.reason || t('train.msg79');
 }
 
 export function resetModelProbes() {
@@ -436,7 +442,7 @@ export async function saveSettings({ silent = false } = {}) {
     markSettingsDirty(false);
     const warnings = data.warnings || [];
     if (warnings.length && !silent) {
-      showAlert({ type: 'warn', title: t('settings.msg2'), text: warnings.join('；'), persistent: false, timeout: 8000, key: 'settings-warn' });
+      showAlert({ type: 'warn', title: t('settings.msg2'), text: warningText(warnings), persistent: false, timeout: 8000, key: 'settings-warn' });
     } else if (!silent) {
       showSuccess(t('settings.msg3'), t('settings.msg4'), [], 'settings-saved');
     }
