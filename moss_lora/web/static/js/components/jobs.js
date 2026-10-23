@@ -166,7 +166,18 @@ export function renderRunStrip() {
 }
 
 export function updateJobUi() {
-  const active = state.activeTraining;
+  const live = state.job && state.job.status === 'running' ? state.job.last : null;
+  const sameRun = !state.activeTraining?.run || !state.job?.runName
+    || state.activeTraining.run === state.job.runName;
+  // The button label follows the heartbeat, not the last dashboard poll: a run
+  // adopted from disk must tick at the same rate as one this tab started.
+  const active = state.activeTraining
+    ? {
+      ...state.activeTraining,
+      step: sameRun && live?.step != null ? live.step : state.activeTraining.step,
+      total: sameRun && live?.total != null ? live.total : state.activeTraining.total,
+    }
+    : null;
   const running = Boolean(state.job && state.job.status === 'running') || Boolean(active);
   const blocked = !state.profileName;
   const missingDashboardConfig = currentTab() === 'dashboard' && !hasDashboardConfigSelection();
@@ -187,6 +198,12 @@ export function updateJobUi() {
     ? t('job.trainingActive', { run: active.run, progress: activeProgress })
     : t('dash.train.start');
   setText('#btn-start-text', activeText);
+  if (active && sameRun && state.job?.status === 'running' && state.job.kind === 'train'
+      && active.step != null && $('#dash-run-status')) {
+    // Same key the dashboard render uses, refreshed on the 1.2 s job poll so
+    // the chip never lags behind the header.
+    setText('#dash-run-status', t('dash.runState.training', { step: active.step }));
+  }
   for (const selector of ['#btn-config-save', '#btn-config-new', '#btn-config-saveas', '#btn-config-rename', '#btn-config-delete']) {
     const button = $(selector);
     if (button) button.disabled = blocked;
@@ -356,6 +373,14 @@ export async function loadJobs() {
       state.job.logPath = state.job.logPath || running.log_path || '';
       state.job.stage = running.stage || state.job.stage || '';
       state.job.baselineError = running.baseline_error || state.job.baselineError || '';
+      // /api/jobs already carries the heartbeat's progress. Take it when it is
+      // newer than what the stream delivered, so a run adopted from disk moves
+      // at the same rate as one this tab started.
+      const fresh = running.last;
+      if (fresh && fresh.step != null) {
+        const known = Number(state.job.last?.step ?? -1);
+        if (!(known >= Number(fresh.step))) state.job.last = fresh;
+      }
     }
     if (isCaptionJob(running.kind) && state.captionProgress.jobId !== running.id) {
       beginCaptionProgress(state.job);

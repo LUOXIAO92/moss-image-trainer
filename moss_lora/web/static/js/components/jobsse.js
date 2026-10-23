@@ -149,6 +149,13 @@ function handleJobEvent(event) {
     case 'progress':
       state.lastProgressAt = Date.now();
       ingestProgress(event);
+      // The stream is the fastest source there is, so it also owns the job's
+      // step. Without this the fallback timer saw fresh progress, skipped its
+      // fetch, and the panel showed a step from the last slow poll.
+      if (state.job && event.step != null) {
+        state.job.last = { ...event };
+        updateJobUi();
+      }
       break;
     case 'samples':
       pushLog(event.line || t('job.msg12'), 'ok');

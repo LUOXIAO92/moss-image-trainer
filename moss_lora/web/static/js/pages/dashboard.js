@@ -42,14 +42,17 @@ function formatDelta(value, digits = 4) {
   return `${value >= 0 ? '+' : '−'}${Math.abs(value).toFixed(digits)}`;
 }
 
-function runRunState(data, activeOverride = null) {
+function runRunState(data, activeOverride = null, liveStep = null) {
   if (!data || !data.run) return { text: '--', className: 'chip chip-muted' };
   const rows = data.rows || [];
   const trainRows = rows.filter((row) => Number.isFinite(row.train));
   const last = trainRows[trainRows.length - 1];
   const active = activeOverride == null ? Boolean(data.active) : Boolean(activeOverride);
   if (active) {
-    return { text: t('dash.runState.training', { step: last?.step ?? data.active.step ?? '?' }), className: 'chip chip-run' };
+    // The heartbeat ticks every second; the metrics file is read on the slower
+    // dashboard poll. Prefer the heartbeat so the chip and the header agree.
+    const step = liveStep ?? last?.step ?? data.active?.step ?? '?';
+    return { text: t('dash.runState.training', { step }), className: 'chip chip-run' };
   }
   if (last && last.total && last.step >= last.total) return { text: t('train.msg51'), className: 'chip chip-ok' };
   if (last) return { text: t('train.msg52'), className: 'chip chip-warn' };
@@ -634,7 +637,9 @@ export function renderDashboard(data) {
   }
   setText('#metric-gpu-usage', gpuSummary || '--');
 
-  const status = runRunState(data, active);
+  const liveStep = state.job?.status === 'running' && state.job.kind === 'train'
+    && state.job.label === data.run ? state.job.last?.step : null;
+  const status = runRunState(data, active, liveStep);
   setText('#dash-run-status', status.text);
   setText('#dash-run-name', data.run || '--');
   const runInfo = runs.find((run) => run.name === data.run);
