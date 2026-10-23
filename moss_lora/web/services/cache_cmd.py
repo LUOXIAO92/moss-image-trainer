@@ -89,4 +89,13 @@ def _cache_summary(config: Config) -> dict:
     info["missing_text"] = info["items"] - text_items
     if not info["legacy_index"] and info["missing_text"] > 0:
         info["ready"] = False
+    # 尺寸规格对不上：latent 的宽高来自另一套 max_area/对齐，训练会拒绝加载
+    from ...data import ALIGN, sizing_spec
+
+    expected = sizing_spec(config.dataset.max_area, ALIGN)
+    cached = index.get("sizing")
+    info["sizing"] = cached or None
+    info["stale_sizing"] = cached != expected
+    if info["stale_sizing"]:
+        info["ready"] = False
     return info

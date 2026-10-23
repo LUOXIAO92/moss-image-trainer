@@ -92,7 +92,7 @@ $$H_4 = \begin{bmatrix} 1 & 1 & 1 & -1 \\ 1 & 1 & -1 & 1 \\ 1 & -1 & 1 & 1 \\ -1
 
 ## 4. 数据层
 
-数据层通过非侵入式的同名 sidecar JSON（`schema: 2`）管理多风格标注，并与分辨率分桶、目录重复倍数和正则集机制协同工作。
+数据层通过非侵入式的同名 sidecar JSON（`schema: 2`）管理多风格标注，并与逐图尺寸、目录重复倍数和正则集机制协同工作。
 
 ### 4.1 扫描与标注优先级
 
@@ -143,10 +143,10 @@ Sidecar 文件固定采用 `schema: 2` 结构，容纳两个互不干扰的风�
 - `tag_caption_style`（对应 CLI `--styles tag_caption`）：服务于保留触发词与 Danbooru 标签的角色微调。`reference_tags` 优先读取同名 `.txt`，若无则回退至 sidecar 上次保存的 `kept_tags`（两者皆无则跳过该图）。`clean_tags` 剥离与触发词重名的标签并去重后填入 `TAGS_PROMPT` 的 `{tags}` 占位符，要求视觉模型先输出 2–4 句 `analysis`（不少于 10 个词），再输出不超过 25 词、仅描述姿态、景别、镜头角度、背景与光影的 `scene`。校验器 `validate_scene` 强制拦截超过 30 词或包含 `hair`、`blonde`、`brunette`、`skin color`、`breast` 及 `<color> eyes` 等身份特征词的 `scene`（当 `role="reg"` 时豁免身份词拦截且不加触发词）。最终 `caption` 由 `compose_caption` 将触发词、`kept_tags` 与 `scene` 以逗号拼接。
 - `official_style`（对应 CLI `--styles official`）：复刻官方 recaptioner 规范（`NATURAL_PROMPT`），忽略现有 `.txt`，要求视觉模型输出 `caption.long`（原样保留画面内非水印文字与换行排版）、`caption.medium` 与 `caption.short`（校验词数分别不少于 8、8、3 词），若设置了触发词则以 `<trigger>. <body>` 句号格式前置。两种风格均校验 `borders`（仅允许 `left|right|up|down` 或单独的 `["none"]`）与 `watermark`（`0..1000` 归一化坐标 `[y_min, x_min, y_max, x_max]`，自动修正颠倒坐标并剔除零面积框）。`merge_sidecar` 每次只覆盖当前运行的风格键，通过 `.tmp` 文件与 `os.replace` 原子写入；`migrate_sidecar`（`--migrate`）可将旧版扁平 sidecar 无损升级为 `schema: 2`。
 
-### 4.3 分桶、Repeats 与正则集
+### 4.3 逐图尺寸、Repeats 与正则集
 
-分桶与采样权重在 [data.py](<../moss_lora/data.py>) 与 [cache.py](<../moss_lora/cache.py>) 中计算：
-- 分辨率分桶：默认（`dataset.native_resize: false`）使用 `assign_buckets` 将图片按宽高比就近吸附至 `BUCKET_ASPECTS` 规定的 7 个闭合比例（`1:1`、`4:3`、`3:4`、`3:2`、`2:3`、`16:9`、`9:16`），在像素面积预算 `dataset.max_area`（默认 `1048576`）下将宽高对齐到 `dataset.bucket_step`（配置默认 `16`）。开启 `dataset.native_resize: true` 时调用 `target_size`，保持原图宽高比缩小至面积上限并对齐到 `bucket_step`，原图面积未超限时仅向下对齐而不放大。
+逐图尺寸与采样权重在 [data.py](<../moss_lora/data.py>) 与 [cache.py](<../moss_lora/cache.py>) 中计算：
+- 逐图尺寸：`assign_sizes` 给每张图各自的分辨率。`target_size` 保持原图宽高比，把像素面积封在 `dataset.max_area`（默认 `1048576`，不设上限）以内，两边向下对齐到 `ALIGN = 16`；原本就在预算内的图片不放大。没有固定比例集合：自注意力按 token 计算，一个 batch 不需要共用画布，一步里装几张图由 token 预算决定。
 - 重复次数（repeats）：子目录名匹配 `^(\d+)[_-](.+)$`（如 `3_concept`）时，基础重复次数设为前缀整数，再乘以全局 `dataset.repeats`。
 - 正则集（Regularisation）：设置 `dataset.reg_path` 后，`CacheBuilder` 扫描该目录并将条目设为 `reg=True`，其重复次数由子目录前缀乘以 `dataset.reg_repeat` 决定，用于抑制触发词概念向通用类别漂移。
 
@@ -159,7 +159,7 @@ Sidecar 文件固定采用 `schema: 2` 结构，容纳两个互不干扰的风�
 每个样本的唯一文件名由 `item_uid` 计算：`hashlib.sha1(os.path.abspath(item.image).encode()).hexdigest()[:16] + ".safetensors"`。训练集写入 `cache.dir`（工作区下默认为 `train_cache/`），正则集写入 `cache.reg_dir`（未显式配置时由 `reg_cache_dir` 推导为与 `train_cache` 并排的 `reg_cache/`），物理隔离防止清理或统计时混淆两类样本。
 
 两条编码管线分别由 [cache.py](<../moss_lora/cache.py>) 与 [encode.py](<../moss_lora/encode.py>) 驱动：
-1. 潜变量编码（`CacheBuilder.run_latents`）：以 `float32` 加载 FLUX.2 VAE，按分桶尺寸分组；使用 `ThreadPoolExecutor`（默认 6 线程）在 CPU 上预取图片、双三次插值缩放到目标桶尺寸并归一化至 $[-1, 1]$，与 GPU 编码重叠执行。单批大小由 [memory.py](<../moss_lora/memory.py>) 的 `latent_batch` 按空闲显存的 80% 除以单图估算开销动态计算，并硬性封顶为 `VAE_BATCH_CAP = 4`，规避 WSL2 大批量显存映射停顿。输出潜变量转为 `float16` 存入 `<uid>.safetensors` 的 `latent` 键。
+1. 潜变量编码（`CacheBuilder.run_latents`）：以 `float32` 加载 FLUX.2 VAE，按各自目标尺寸分组；使用 `ThreadPoolExecutor`（默认 6 线程）在 CPU 上预取图片、双三次插值缩放到该尺寸并归一化至 $[-1, 1]$，与 GPU 编码重叠执行。单批大小由 [memory.py](<../moss_lora/memory.py>) 的 `latent_batch` 按空闲显存的 80% 除以单图估算开销动态计算，并硬性封顶为 `VAE_BATCH_CAP = 4`，规避 WSL2 大批量显存映射停顿。输出潜变量转为 `float16` 存入 `<uid>.safetensors` 的 `latent` 键。
 2. 文本特征编码（`run_encode_text`）：通过 [hf_text.py](<../moss_lora/hf_text.py>) 的 `HfTextEncoder` 将每条标注填入固定聊天模板 `<|im_start|>user\n{text}<|im_end|>\n<|im_start|>assistant\n<think>\n`（上限 `cache.text_max_length: 4096`，`PAD_ID = 248044`）。编码器支持在加载时通过 `--quantize none|fp8|nf4_ffn|nf4` 在内存中压缩权重。待编码列表先按字符长度排序以减少同批长度差，单批大小由 `memory.text_batch` 动态计算（上限 `TEXT_BATCH_CAP = 64`）；批内采用右侧因果 padding，前向后提取 `last_hidden_state` 与布尔 `attention_mask`，写入同一 `<uid>.safetensors` 的 `text_embeds` 与 `text_mask` 键。由于 Qwen3.5 为因果注意力，右侧 padding 不会污染前方有效 token 的隐状态。若配置了 `preview.prompts`，同阶段还会将正负预览提示词（空负向提示词同样经过同一聊天模板编码为 10 个 token）写入 `train_cache/preview.safetensors`。
 
 每次写盘时，`CacheBuilder._write` 与 `run_encode_text` 都会把 `image`、`caption`（含前后缀的完整训练文本）、`width`、`height`、`repeats` 写入 safetensors 文件头部的 `metadata`，最后生成 `train_cache/index.json`：
@@ -192,7 +192,7 @@ Sidecar 文件固定采用 `schema: 2` 结构，容纳两个互不干扰的风�
 - 文本特征增量与过期判定：`run_encode_text` 逐条读取已缓存 safetensors 头部的 `metadata["caption"]`，与当前配置计算出的目标文本比对。当用户切换 `dataset.moss_caption_source`、修改 `caption_prefix` / `caption_suffix` 或重写了 sidecar JSON 时，文本不匹配会触发该条目的单独重编码，而文件中的 `latent` 张量原样保留，无需重新运行 VAE。
 - 训练前就绪校验：[cache_cmd.py](<../moss_lora/web/services/cache_cmd.py>) 的 `_cache_summary` 要求 `index.json` 存在、`schema == 2` 且所有条目的 `text_len > 0`；任一条件不满足时 `ready` 为 `false`，WebUI 与 CLI 均拒绝启动训练。
 
-将 `latent` 与 `text_embeds` 合并在同一个 `<uid>.safetensors` 中，使训练期每步只需一次磁盘打开操作，同时通过头部元数据实现了「改提示词只重跑文本编码」的细粒度增量更新；代价是图片分辨率分桶参数（`max_area`、`bucket_step`、`native_resize`）一旦改动，必须加 `--overwrite` 或清空缓存重建，因为 `_pending("latent")` 仅检查张量键存在性而不校验潜变量尺寸。
+将 `latent` 与 `text_embeds` 合并在同一个 `<uid>.safetensors` 中，使训练期每步只需一次磁盘打开操作，同时通过头部元数据实现了「改提示词只重跑文本编码」的细粒度增量更新；代价是 `dataset.max_area` 一旦改动，所有已缓存的 latent 都作废，因为 `_pending("latent")` 仅检查张量键存在性而不校验潜变量尺寸；索引里记录了 `sizing` 指纹（`mode`、`area`、`align`），缓存构建器据此自动重编 latent，训练器读到指纹不一致会直接拒绝加载。
 
 ## 6. 训练层
 
@@ -202,10 +202,10 @@ Sidecar 文件固定采用 `schema: 2` 结构，容纳两个互不干扰的风�
 
 [trainer.py](<../moss_lora/trainer.py>) 实现的损失函数严格对齐官方技术报告：对干净潜变量 $x_0$ 与标准正态噪声 $\epsilon \sim \mathcal{N}(0, I)$，按采样得到的 $\sigma \in (0, 1]$ 构造线性插值 $x_t = (1 - \sigma) x_0 + \sigma \epsilon$，将缩放时间步 $t = 1000\sigma$ 与文本特征喂入 DiT 预测速度场 $v_\theta(x_t, 1000\sigma, c)$，计算其与目标速度 $v = \epsilon - x_0$ 在图像 token 上的均方误差 `F.mse_loss(prediction.float(), noise - x0.float())`。不加任何 SNR 权重。
 
-针对上游 DiT 按样本真实文本长度切片的特性，`train.batch_mode` 提供三种批处理路径（配合 `train.attention: auto|flash|sdpa`）：
-- `bucket`（默认）：`_sample_batch` 先按分桶内样本的 `repeats` 总和进行多项式分布抽桶，当 `batch_size > 1` 时优先在桶内筛选具有相同 `text_len` 的样本子集；若整批样本图像尺寸与文本长度完全一致，`MOSSImageTransformer.forward` 自动切入 `_forward_batched` 执行单次无 mask 向量化前向，否则退回逐样本循环。
-- `packed`：`_sample_by_tokens` 按 `train.bin_tokens` 预算（设为 `0` 时自动取 $3 \times (\text{max\_area} / 256) + 1024$）将不同分辨率、不同文本长度的多个样本按有效长度切片（`data["text_embeds"][:keep]`）后装入同一序列，共享单个标量时间步调制。`forward_packed` 在 `train.attention` 解析为 FlashAttention-2 时构造 `cu_seqlens` 调用 `flash_attn_varlen_func`，零填充零冗余计算；若无 FA2 则退化为构造稠密块对角布尔掩码交由 SDPA 计算。
-- `padded`：同样按 token 预算装箱，但 `forward_padded` 先将每个样本展平为一维 token 序列，再在序列维补齐到批内最大长度 $L_{\max}$ 并附上 `token_mask` 交由 SDPA 处理，避免按二维画布补齐造成的面积浪费。
+每个微批次都由 `_sample_by_tokens` 组装：按随机顺序累加样本，直到 token 预算（`train.bin_tokens`，为 `0` 时取 $\text{max\_area} / 256 + 1024$，即一张满尺寸图加文本）用尽，每张样本按 `repeats` 加权。样本各自保留分辨率与文本长度；`train.batch_mode` 决定它们怎么合并，配合 `train.attention: auto|flash|sdpa`：
+- `auto`（默认）：FlashAttention-2 可用时取 `packed`，否则取 `padded`。
+- `packed`：`forward_packed` 把样本拼成一条序列并共享单个标量时间步调制。FA2 可用时构造 `cu_seqlens` 调用 `flash_attn_varlen_func`，零填充零冗余计算；不可用时用稠密块对角布尔掩码把各样本隔开，交由 SDPA 计算。
+- `padded`：`forward_padded` 先把每个样本展平为一维 token 序列，再在序列维补齐到批内最大长度 $L_{\max}$ 并附上 `token_mask` 交由 SDPA 处理，避免按二维画布补齐造成的面积浪费。
 
 ### 6.2 LoRA 注入、优化器与调度
 
@@ -350,8 +350,8 @@ WebUI 后端采用「路由层 → 服务层 → 共享状态与任务注册表�
 当前架构在多样本批处理、低显存数值精度与微调覆盖范围上存在明确边界，后续演进将围绕变长打包与新模态适配展开。
 
 当前版本存在四项主要限制：
-1. 默认分桶模式下的批大小吞吐瓶颈：由于上游 `MOSSImageTransformer.forward` 需要按每个样本的真实文本长度切片以隔离 padding，在默认的 `train.batch_mode: bucket` 下，若同一分辨率桶内的样本 `text_len` 不完全相等，前向计算仍会退回逐样本串行循环；此时增大 `train.batch_size` 只会成倍增加激活显存而无法提升 GPU 吞吐。需要更大有效批大小时，应优先增大 `train.grad_accum`，或在安装 FlashAttention-2 后切换为 `train.batch_mode: packed`。
-2. 打包与补齐模式的时间步约束：`packed` 与 `padded` 模式为了将多个样本拼入单次前向，强制同一个微批次（micro-batch）内的所有样本共享同一个标量时间步 $\sigma$（即共用一份 `shared_block_modulation`）。这使单步内的梯度方差略高于每样本独立采样 $\sigma$ 的 `bucket` 模式，需要通过步数或梯度累积平滑。
+1. 微批的粒度是 token 预算：一个批次装到预算用尽为止，因此装几张图取决于抽到的样本的宽高比与文本长度。预算约束的是计算量而不是张数，这让单步开销可预期，但也使 `batch_size` 失去意义；真正的旋钮是 `train.grad_accum` 与 `train.bin_tokens`。
+2. 每个微批共享时间步：把多个样本拼进一次前向，要求它们共用一个标量时间步 $\sigma$（即共用一份 `shared_block_modulation`）。这比每样本独立采样的梯度方差略高，需要通过步数或梯度累积平滑。
 3. 低显存档位的精度与画质折衷：在 `model.dtype: float16` 下开启 `vram.fp16_accumulate: true` 会降低矩阵乘累加精度，在高学习率或长步数训练中比 `bfloat16` 更容易出现梯度溢出；面向小显存显卡的 NF4 基座量化（`vram.quantize_dit: ffn|all`）会引入静态量化误差，对极细粒度笔触与复杂排版文字的还原度略逊于全精度 `bfloat16` 基座。
 4. 适配器作用范围：训练器不支持微调 Qwen3.5-9B 文本编码器与 FLUX.2 VAE，只能训练 DiT 与可选 `text_embedder` 的低秩适配器；离线转换器 [lora_file.py](<../moss_lora/lora_file.py>) 覆盖上述两类键名，其余自定义模块需自行扩展词表。
 

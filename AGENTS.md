@@ -4,7 +4,7 @@ Read these rules before modifying code or documentation in `moss-image-trainer`.
 
 ## Project Goal and Upstream References
 
-Build a local LoRA trainer for MOSS-Image-SFT using a PyTorch training stack, a FastAPI backend, and a buildless ES module frontend. Reuse the upstream model architecture, weight loaders, and key mappings directly so this repository maintains only what upstream omits: dataset scanning and bucketing, latent and text feature caching, the Flow Matching training loop, sample previews, caption generation, and the WebUI.
+Build a local LoRA trainer for MOSS-Image-SFT using a PyTorch training stack, a FastAPI backend, and a buildless ES module frontend. Reuse the upstream model architecture, weight loaders, and key mappings directly so this repository maintains only what upstream omits: dataset scanning and per-image sizing, latent and text feature caching, the Flow Matching training loop, sample previews, caption generation, and the WebUI.
 
 Consult these public upstream sources:
 - Official HuggingFace weights: https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT

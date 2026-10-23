@@ -58,12 +58,10 @@ class DatasetConfig:
     path: str = ""
     caption_ext: list = field(default_factory=lambda: [".txt", ".caption"])
     metadata: str = ""          # optional metadata.jsonl
-    resolution: list = field(default_factory=lambda: [768, 1024])
-    bucket_step: int = 16
+    # 每张图按自己的宽高比缩放到这个像素面积上限（不放大），两边对齐 16。
+    # 没有固定比例集合：DiT 是自注意力，batch 不需要共用画布。
     max_area: int = 1024 * 1024
-    # true = 不做固定桶对齐，每张图按自己的宽高比缩到面积上限（保留原分辨率差异）
-    native_resize: bool = False
-    repeats: int = 1
+    # 重复次数只来自目录名 "<n>_<name>"，不再有全局倍数
     # 正则数据集：只提供"长什么样但不是这个角色"的图，防止 LoRA 把角色概念扩散到别的提示词
     reg_path: str = ""
     reg_repeat: int = 1
@@ -122,11 +120,11 @@ class TrainConfig:
     epochs: int = 0             # 0 = use steps
     batch_size: int = 1
     grad_accum: int = 1
-    # 取样方式：
-    #   bucket = 按尺寸分组，每组各取 batch_size 个（传统 [B, L]，尺寸必须一致）
-    #   packed = 按 batch_size 个样本拼接成一条序列，注意力走 varlen（需 FlashAttention-2）
-    #   padded = 同样本数，但 padding 到同一画布 + key-padding mask（SDPA，无 flash）
-    batch_mode: str = "bucket"
+    # 取样与前向：都按 token 预算取若干张，尺寸可以各不相同
+    #   auto   = 装了 FlashAttention-2 就 packed，否则 padded
+    #   packed = 拼成一条序列，注意力走 varlen（FA-2）或块对角 mask
+    #   padded = 在 token 维补齐到 L_max + key-padding mask（SDPA）
+    batch_mode: str = "auto"
     # 注意力后端：auto = 装了 FlashAttention-2 就用，否则回退 SDPA；flash / sdpa 为强制
     attention: str = "auto"
     # >0 时每步按 token 预算装箱（装到预算为止）；0 = 用 batch_size 的张数
@@ -162,7 +160,7 @@ class VramConfig:
     quantize_dit: str = "none"
     # fp16 only: let cuBLAS accumulate in fp16 (2x the bf16 tensor-core rate, less precise)
     fp16_accumulate: bool = False
-    compile: bool = True   # torch.compile the block loop (~25% faster, one compile per bucket)
+    compile: bool = True   # torch.compile the block loop (~25% faster, dynamic shapes)
 
 
 @dataclass
@@ -309,9 +307,9 @@ class Config:
             )
         if str(self.train.attention).lower() not in ("auto", "flash", "sdpa"):
             problems.append(f"train.attention must be auto|flash|sdpa: {self.train.attention!r}")
-        if str(self.train.batch_mode).lower() not in ("bucket", "packed", "padded"):
+        if str(self.train.batch_mode).lower() not in ("auto", "packed", "padded"):
             problems.append(
-                f"train.batch_mode must be bucket|packed|padded: {self.train.batch_mode!r}"
+                f"train.batch_mode must be auto|packed|padded: {self.train.batch_mode!r}"
             )
         if int(self.train.bin_tokens or 0) < 0:
             problems.append("train.bin_tokens must be >= 0 (0 = 自动)")

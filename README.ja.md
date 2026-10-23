@@ -11,7 +11,7 @@
 ## 主な機能
 
 - **2段階キャッシュ**: FLUX.2 VAE で画像 latent を、ローカル Qwen3.5-9B でテキスト埋め込みをエンコードしてディスクへ保存します。テキストのバッチ処理には右側因果パディングを使用し、学習の順伝播ではアテンションマスクに従って各系列の有効長を切り出すため、パディングトークンが有効なテキスト特徴を汚染しません。
-- **Flow Matching 学習と VRAM プリセット**: 切断 logit-normal $\sigma$ サンプリングとトークン単位で正規化した速度場 MSE 損失で学習します。組み込みの `auto|32|24|16|12|8|6` VRAM プリセットにより、勾配チェックポイント、NF4 量子化（`none|ffn|all`）、CPU ブロックスワップ、`torch.compile`、`fp16` 累積を組み合わせ、`bucket`、`packed`（FlashAttention-2 varlen）、`padded` の各バッチモードをサポートします。
+- **Flow Matching 学習と VRAM プリセット**: 切断 logit-normal $\sigma$ サンプリングとトークン単位で正規化した速度場 MSE 損失で学習します。組み込みの `auto|32|24|16|12|8|6` VRAM プリセットにより、勾配チェックポイント、NF4 量子化（`none|ffn|all`）、CPU ブロックスワップ、`torch.compile`、`fp16` 累積を組み合わせ、`auto` は `packed`（FlashAttention-2 varlen）と `padded`（トークン次元のパディング）を自動で選びます。
 - **正則化セットとホールドアウト検証**: `dataset.reg_path` から正則化画像を読み込んで概念ドリフトを抑制し、`train.eval_holdout` で決定論的な検証セットを分割して定期的に検証損失を計算します。
 - **2種類のスタイルによるキャプション生成**: OpenAI 互換の視覚モデル API を呼び出し、既存の tag を保持してシーン文を追記する `tag_caption` と、3段階（long / medium / short）の記述を生成する `official` スタイルをサポートし、同名の sidecar JSON に保存します。
 - **ビルド不要の WebUI**: 9つのタブ（ダッシュボード、学習設定、データセット、キャッシュ、サンプル画像、エクスポート、ワークスペース、設定、キャプション生成）でネイティブ ES module を直接実行します。ソースコードの変更はブラウザの再読み込みだけで反映されます。
@@ -265,7 +265,7 @@ moss-image-trainer/
 
 ## 既知の制限事項
 
-- **バッチサイズとスループット**: 上流の DiT はサンプルごとに有効なテキスト系列長でトークンを切り出します。デフォルトの `batch_mode: bucket` では、バッチ内のサンプル間でトークン長が異なると `batch_size` を増やしても活性化メモリが増えるだけでスループットは向上しません。実効バッチサイズを増やす場合は `train.grad_accum` を増やすか、FlashAttention-2 をインストールして `batch_mode: packed` に切り替えてください。
+- **バッチサイズとスループット**: マイクロバッチはトークン予算で組まれ、画像はそれぞれの解像度を保ちます。1 ステップの仕事量を決めるのは `batch_size` ではなく `train.bin_tokens` です。FlashAttention-2 を入れると既定が `padded`（トークンパディング + key mask）から `packed`（varlen、マスクなし）に切り替わります。
 - **低 VRAM 設定での精度トレードオフ**: `model.dtype: float16` と `vram.fp16_accumulate: true` の組み合わせは、高い学習率や長時間の学習において `bfloat16` よりも数値的不安定性を起こしやすくなります。NF4 量子化（`quantize_dit: ffn|all`）と CPU ブロックスワップは 6〜12 GB GPU 向けの設定であり、非量子化バックボーンと比較して微細な再現性がわずかにトレードオフになります。
 - **学習対象の範囲**: LoRA アダプターは 5B DiT（デフォルトで 42 層の `q`、`k`、`v`、`o`、`ffn_up_gate`、`ffn_down`、および任意の `text_embedder`）にのみ適用され、Qwen3.5-9B テキストエンコーダーと VAE は凍結されます。
 

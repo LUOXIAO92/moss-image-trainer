@@ -4,14 +4,14 @@
 
 Local LoRA trainer for [MOSS-Image](https://github.com/OpenMOSS/MOSS-Image) (5B single-stream DiT, frozen Qwen3.5-9B text encoder, and FLUX.2 VAE), with a PyTorch training stack, a FastAPI backend, and a zero-build native ES module frontend.
 
-This repository reuses the official model architecture and weight mapping from `comfyui/moss-image/model.py` and `loaders.py`, and adds the missing fine-tuning components: dataset bucketing, latent and text embedding caching, Flow Matching training, sample previews, caption generation, and a WebUI.
+This repository reuses the official model architecture and weight mapping from `comfyui/moss-image/model.py` and `loaders.py`, and adds the missing fine-tuning components: dataset scanning and sizing, latent and text embedding caching, Flow Matching training, sample previews, caption generation, and a WebUI.
 
 The trainer splits the workflow into offline caching and online training so the 5B DiT and 9B text encoder never sit in VRAM at the same time. Pre-training steps write latents and text embeddings to disk; training loads only the 5B DiT and fits 1024² fine-tuning on a single consumer GPU. Output `.safetensors` checkpoints use `lora_unet_*` keys by default and load directly into ComfyUI without requiring a ComfyUI runtime for training or export.
 
 ## Features
 
 - **Two-stage caching**: Encodes image latents with the FLUX.2 VAE and text embeddings with a local Qwen3.5-9B, then writes both to disk. Text batches use right-side causal padding, and the training forward pass slices each sequence by its attention mask so padding tokens never pollute valid text embeddings.
-- **Flow Matching training and VRAM presets**: Trains with truncated logit-normal $\sigma$ sampling and per-token normalized velocity MSE loss. Built-in `auto|32|24|16|12|8|6` VRAM presets combine gradient checkpointing, NF4 quantization (`none|ffn|all`), CPU block swap, `torch.compile`, and `fp16` accumulation across `bucket`, `packed` (FlashAttention-2 varlen), and `padded` batch modes.
+- **Flow Matching training and VRAM presets**: Trains with truncated logit-normal $\sigma$ sampling and per-token normalized velocity MSE loss. Built-in `auto|32|24|16|12|8|6` VRAM presets combine gradient checkpointing, NF4 quantization (`none|ffn|all`), CPU block swap, `torch.compile`, and `fp16` accumulation across `packed` (FlashAttention-2 varlen) and `padded` (token-dimension padding) batch modes; `auto` picks one.
 - **Regularization and holdout validation**: Loads regularization images via `dataset.reg_path` to limit concept drift and splits a deterministic validation set via `train.eval_holdout` for periodic loss checks.
 - **Dual-style captioning**: Queries any OpenAI-compatible vision endpoint to generate `tag_caption` (keeps existing tags and appends a scene sentence) and `official` captions (long, medium, and short descriptions), stored in a companion sidecar JSON.
 - **Zero-build WebUI**: Runs native ES modules across nine tabs (Dashboard, Training settings, Dataset, Cache, Samples, Export, Workspace, Settings, and Caption). Source edits take effect on browser refresh.
@@ -65,7 +65,7 @@ The dataset scanner recursively finds `.jpg`, `.jpeg`, `.png`, `.webp`, and `.bm
 Common helper subcommands:
 
 ```bash
-# Inspect dataset statistics and bucket distribution
+# Inspect dataset statistics and caption coverage
 .venv/bin/python -m moss_lora.cli info --config "$WS/workspace.yaml"
 
 # Plan dtype, quantization, and block swap for a VRAM budget (GB) and write back
@@ -250,7 +250,7 @@ moss-image-trainer/
 │   ├── config.py             # Config dataclasses, path resolution, validation, and VRAM presets
 │   ├── model.py              # Official MOSS-Image DiT adaptation (SDPA / FA2 and gradient checkpointing)
 │   ├── weights.py / convrot.py        # DiT/VAE key mapping and ConvRot int8 dequantization
-│   ├── data.py / cache.py    # Dataset scanning, bucketing, and image latent caching
+│   ├── data.py / cache.py    # Dataset scanning, per-image sizing, and image latent caching
 │   ├── hf_text.py / encode.py # Local Qwen3.5-9B loader and text embedding caching
 │   ├── captioner.py          # Caption generation worker and sidecar JSON management
 │   ├── trainer.py            # Flow Matching training loop, sample previews, and checkpoint management
@@ -265,7 +265,7 @@ See [docs/DESIGN.md](<docs/DESIGN.md>) for module boundaries, data flow, and fro
 
 ## Known Limitations
 
-- **Batch size and throughput**: The upstream DiT slices text tokens per sample by valid sequence length. Under the default `batch_mode: bucket`, increasing `batch_size` when samples in a batch have different token lengths raises activation memory without improving throughput; increase `train.grad_accum` instead, or install FlashAttention-2 and switch to `batch_mode: packed`.
+- **Batch size and throughput**: A micro-batch is assembled by token budget, so images keep their own resolutions and `train.bin_tokens` (not `batch_size`) sets how much work one step does. Install FlashAttention-2 to switch the default from `padded` (token padding plus a key mask) to `packed` (varlen, no mask).
 - **Low-VRAM precision trade-offs**: `model.dtype: float16` with `vram.fp16_accumulate: true` is more prone to numerical instability than `bfloat16` at higher learning rates or long training runs. NF4 quantization (`quantize_dit: ffn|all`) and CPU block swap target 6–12 GB GPUs and trade slight fine-grained fidelity compared to an unquantized backbone.
 - **Training scope**: LoRA adapters attach only to the 5B DiT (`q`, `k`, `v`, `o`, `ffn_up_gate`, and `ffn_down` across 42 layers by default, plus optional `text_embedder`); the trainer freezes the Qwen3.5-9B text encoder and the VAE.
 

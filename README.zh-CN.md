@@ -4,14 +4,14 @@
 
 面向 [MOSS-Image](https://github.com/OpenMOSS/MOSS-Image)（5B 单流 DiT、冻结 Qwen3.5-9B 文本编码器与 FLUX.2 VAE）的本地 LoRA 微调工具，包含 PyTorch 训练栈、FastAPI 后端与原生 ES module 前端。
 
-本仓库复用官方 `comfyui/moss-image/model.py` 与 `loaders.py` 的架构和权重映射，实现上游缺失的微调组件：数据集分桶、潜变量与文本特征缓存、Flow Matching 训练、采样预览、提示词生成与 WebUI。
+本仓库复用官方 `comfyui/moss-image/model.py` 与 `loaders.py` 的架构和权重映射，实现上游缺失的微调组件：数据集扫描与尺寸计算、潜变量与文本特征缓存、Flow Matching 训练、采样预览、提示词生成与 WebUI。
 
 训练器将流程拆为离线缓存与在线训练两阶段，避免 5B DiT 与 9B 文本编码器同时驻留显存。训练前先将潜变量和文本特征写入磁盘，训练时仅加载 5B DiT，可在单张消费级显卡上完成 1024² 微调。产出的 `.safetensors` 检查点默认采用 `lora_unet_*` 键名，可直接放入 ComfyUI 加载，训练与导出不依赖 ComfyUI 运行时。
 
 ## 主要特性
 
 - 分阶段缓存：FLUX.2 VAE 编码潜变量，本地 Qwen3.5-9B 编码文本特征并落盘。文本批处理采用右侧因果 padding，训练前向按掩码切取有效长度，避免 padding 污染文本特征。
-- 流匹配训练与显存分档：采用截断 logit-normal $\sigma$ 采样与按 token 归一化的速度场 MSE 损失。内置 `auto|32|24|16|12|8|6` 显存档位，组合激活检查点、NF4 量化（`none|ffn|all`）、CPU 块交换、`torch.compile` 与 `fp16` 累加，支持 `bucket`、`packed`（FlashAttention-2 varlen）与 `padded` 批处理。
+- 流匹配训练与显存分档：采用截断 logit-normal $\sigma$ 采样与按 token 归一化的速度场 MSE 损失。内置 `auto|32|24|16|12|8|6` 显存档位，组合激活检查点、NF4 量化（`none|ffn|all`）、CPU 块交换、`torch.compile` 与 `fp16` 累加，`auto` 在 `packed`（FlashAttention-2 varlen）与 `padded`（token 维补齐）之间自动选择。
 - 正则集与留出验证：通过 `dataset.reg_path` 引入正则集抑制概念漂移，按 `train.eval_holdout` 切分留出集定期计算验证损失。
 - 双风格提示词生成：调用 OpenAI 兼容视觉模型接口，支持保留原 tag 并补写场景句的 `tag_caption` 与长中短三档描述的 `official` 风格，写入同名 sidecar JSON。
 - 免构建 WebUI：前端运行原生 ES module（含中控台、训练配置、数据集、缓存、采样对比、导出、工作区、设置、提示词生成九个标签页），修改代码后刷新直接生效。
@@ -65,7 +65,7 @@ WS=workspaces/<WORKSPACE>
 常用辅助子命令：
 
 ```bash
-# 查看数据集统计与分桶分布
+# 查看数据集统计与字幕覆盖
 .venv/bin/python -m moss_lora.cli info --config "$WS/workspace.yaml"
 
 # 按显存预算（GB）规划精度、量化与块交换参数并写回配置
@@ -250,7 +250,7 @@ moss-image-trainer/
 │   ├── config.py             # 配置 dataclass、路径解析、校验与显存预设
 │   ├── model.py              # 官方 MOSS-Image DiT 架构适配（SDPA / FA2 与检查点）
 │   ├── weights.py / convrot.py        # DiT、VAE 权重映射与 ConvRot int8 反量化
-│   ├── data.py / cache.py    # 数据集扫描、分桶与图像潜变量缓存
+│   ├── data.py / cache.py    # 数据集扫描、逐图尺寸与图像潜变量缓存
 │   ├── hf_text.py / encode.py # 本地 Qwen3.5-9B 加载与文本特征缓存
 │   ├── captioner.py          # 提示词生成 worker 与 sidecar JSON 管理
 │   ├── trainer.py            # Flow Matching 训练循环、采样预览与检查点管理
@@ -265,7 +265,7 @@ moss-image-trainer/
 
 ## 已知限制
 
-- 批大小与吞吐：上游 DiT 按样本有效文本长度切片。默认 `batch_mode: bucket` 下，若同批样本文本长度不同，增大 `batch_size` 仅增加激活显存而不提升吞吐；需更大有效批大小时优先增大 `train.grad_accum`，或安装 FlashAttention-2 后切换为 `batch_mode: packed`。
+- 批大小与吞吐：一个微批按 token 预算组装，图片各自保留分辨率，因此决定单步工作量的是 `train.bin_tokens` 而不是 `batch_size`。装上 FlashAttention-2 后默认从 `padded`（token 补齐 + key mask）切到 `packed`（varlen，无 mask）。
 - 低显存精度权衡：`model.dtype: float16` 配合 `vram.fp16_accumulate: true` 在高学习率或长步数下比 `bfloat16` 更易数值不稳定；NF4 量化（`quantize_dit: ffn|all`）与块交换面向 6–12 GB 显存，细粒度还原略逊于全精度主干。
 - 训练范围：仅对 5B DiT 注入 LoRA（默认覆盖 42 层的 `q`、`k`、`v`、`o`、`ffn_up_gate`、`ffn_down` 及可选 `text_embedder`），不支持微调 Qwen3.5-9B 文本编码器或 VAE。
 

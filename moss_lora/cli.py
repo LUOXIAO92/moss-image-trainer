@@ -615,17 +615,13 @@ def cmd_web(args):
 
 
 def cmd_info(args):
-    from .data import assign_buckets, scan, summarise
+    from .data import scan, summarise
 
     config = _load(args)
-    items = assign_buckets(scan(config.dataset.path,
-                                moss_caption_source=config.dataset.moss_caption_source),
-                           area=config.dataset.max_area)
+    items = scan(config.dataset.path, moss_caption_source=config.dataset.moss_caption_source)
     info = summarise(items)
     print(f"images: {info['images']}  with caption: {info['with_caption']}  "
           f"styles: {info['styles']}  source: {config.dataset.moss_caption_source}")
-    for bucket, count in info["buckets"].items():
-        print(f"  {bucket:>10s}  {count}")
     return 0
 
 

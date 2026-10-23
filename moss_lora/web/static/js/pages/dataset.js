@@ -176,13 +176,8 @@ function resolveWorkspacePath(value) {
 }
 
 function datasetScanUrl(path) {
-  const area = Number(getPath(state.config, 'dataset.max_area')) || 1024 * 1024;
-  const step = Number(getPath(state.config, 'dataset.bucket_step')) || 16;
   const source = String(getPath(state.config, 'dataset.moss_caption_source') || 'tag_caption').trim() || 'tag_caption';
-  return '/api/dataset?path=' + encodeURIComponent(path)
-    + '&max_area=' + encodeURIComponent(area)
-    + '&bucket_step=' + encodeURIComponent(step)
-    + '&source=' + encodeURIComponent(source);
+  return '/api/dataset?path=' + encodeURIComponent(path) + '&source=' + encodeURIComponent(source);
 }
 
 function resetRegDatasetView(message = t('dataset.reg.empty')) {

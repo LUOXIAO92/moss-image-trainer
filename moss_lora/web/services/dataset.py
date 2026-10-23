@@ -16,25 +16,23 @@ from .workspace import (_resolve_workspace, _workspace_dir, _workspace_root,
                         _workspace_runs_dir)
 
 
-def dataset_info(path: str, max_area: int = 1024 * 1024, bucket_step: int = 64,
-                source: str = "tag_caption"):
-    from ...data import MOSS_CAPTION_SOURCES, assign_buckets, scan, summarise
+def dataset_info(path: str, source: str = "tag_caption"):
+    """Caption coverage and thumbnails for a dataset directory.
 
-    if max_area <= 0 or bucket_step <= 0:
-        raise HTTPException(400, "max_area 和 bucket_step 必须大于 0")
+    Sizing happens when the cache is built (``max_area`` caps the pixel area),
+    so this scan no longer reads every image header: nothing here needs a size.
+    """
+    from ...data import MOSS_CAPTION_SOURCES, scan, summarise
+
     if source not in MOSS_CAPTION_SOURCES:
         raise HTTPException(400, f"unknown caption source {source}")
     try:
-        items = assign_buckets(
-            scan(path, moss_caption_source=source), area=max_area, step=bucket_step
-        )
+        items = scan(path, moss_caption_source=source)
     except Exception as exc:
         raise HTTPException(400, str(exc))
     info = summarise(items)
     info["path"] = os.path.abspath(os.path.expanduser(path))
     info["source"] = source
-    info["max_area"] = max_area
-    info["bucket_step"] = bucket_step
     info["thumbnails"] = [i.image for i in items[:24]]
     return info
 

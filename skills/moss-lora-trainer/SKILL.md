@@ -13,7 +13,7 @@ This playbook defines the standard procedure for an AI agent to run a complete M
 This repository provides a single-node, single-GPU LoRA training stack and FastAPI WebUI for MOSS-Image (5B single-stream DiT, 42 Transformer layers, frozen Qwen3.5-9B text encoder, 32-channel FLUX.2 VAE). The trainer splits the pipeline into two physically isolated stages—offline caching and online training—running the VAE and Qwen3.5-9B in batches to persist features to disk before loading only the 5B DiT in a separate process for backpropagation, preventing all three models from occupying VRAM simultaneously.
 
 **Supported capabilities:**
-- Recursively scan image directories, assign resolutions across 7 fixed aspect-ratio buckets or native aspect ratios, and read captions from sidecar JSON, `.txt`/`.caption`, or `metadata.jsonl`.
+- Recursively scan image directories, size every image by its own aspect ratio under a pixel-area cap (`dataset.max_area`), and read captions from sidecar JSON, `.txt`/`.caption`, or `metadata.jsonl`.
 - Call an OpenAI-compatible vision endpoint to generate dual-style sidecar JSON files (`schema: 2`) containing `tag_caption` (original tags plus scene prose) and `official` (long, medium, and short descriptions).
 - Merge image latents (`latent`) and text features (`text_embeds`, `text_mask`) into `<uid>.safetensors` named by image path hash, and write `index.json` (`schema: 2`).
 - Inject PEFT LoRA adapters (covering `layers.<0..41>.proj.<q|k|v|o|ffn_up_gate|ffn_down>` by default) and run Flow Matching velocity-field training, holdout validation, and periodic sampling.
@@ -23,7 +23,7 @@ This repository provides a single-node, single-GPU LoRA training stack and FastA
 - Full-parameter fine-tuning, or fine-tuning the Qwen3.5-9B text encoder or FLUX.2 VAE.
 - Multi-node or multi-GPU distributed training (no DDP, FSDP, or DeepSpeed).
 - Automatic network downloads of base model weights, tokenizers, or third-party Python packages.
-- Combining samples with different text lengths under the default `batch_mode: bucket`; to increase the effective batch size, raise `train.grad_accum` first or enable `batch_mode: packed`.
+- Assembling a micro-batch: it is built from a token budget (`train.bin_tokens`), so images keep their own resolutions and `batch_size` is not the knob that controls step cost.
 
 ## 2. Path Placeholders and Execution Rules
 
@@ -62,13 +62,13 @@ test -e "$MODELS_DIR/diffusion_models/moss_image_dit.safetensors"
 test -e "$MODELS_DIR/text_encoders/Qwen3.5-9B"
 test -e "$MODELS_DIR/vae/flux2_vae.safetensors"
 
-# 5. Scan dataset image count, caption coverage, and bucket distribution
+# 5. Scan dataset image count and caption coverage
 .venv/bin/python -m moss_lora.cli info --dataset "$DATASET_DIR"
 ```
 
 **Success criteria:**
 - `nvidia-smi` lists at least one available GPU.
-- `cli info` exits with code `0`, prints `images: N  with caption: M` with `N > 0`, and lists bucket counts such as `1024x1024` below. If `with caption: 0` and no default caption is configured, run Step 3 (caption generation) or add matching `.txt` files before caching.
+- `cli info` exits with code `0` and prints `images: N  with caption: M` with `N > 0`. If `with caption: 0` and no default caption is configured, run Step 3 (caption generation) or add matching `.txt` files before caching.
 
 ## 4. End-to-End Fine-Tuning Workflow
 
@@ -102,10 +102,7 @@ The 9 steps below form a one-way pipeline. Never start Step 7 (training) before 
   dataset:
     path: $DATASET_DIR
     caption_ext: [".txt", ".caption"]
-    bucket_step: 16
     max_area: 1048576
-    native_resize: false
-    repeats: 1
     reg_path: ""
     reg_repeat: 1
     reg_caption: ""
@@ -125,7 +122,7 @@ The 9 steps below form a one-way pipeline. Never start Step 7 (training) before 
     steps: 1000
     batch_size: 1
     grad_accum: 1
-    batch_mode: bucket
+    batch_mode: auto
     attention: auto
     bin_tokens: 0
     lr: 0.0001
@@ -374,9 +371,9 @@ mkdir -p "workspaces/$WORKSPACE"/{configs,train_cache,reg_cache,runs,logs,export
   - Enable when fine-tuning a specific character on a small dataset (e.g., 15–40 images) and preventing trigger-word bleed into generic class tokens (such as `"1girl"` without the trigger word still generating that character).
   - Set `dataset.reg_path: "<REG_DATASET_DIR>"` and `dataset.reg_caption: "1girl, solo"` (or place matching caption files inside the regularization directory). Regularization images must not contain the character trigger word.
 - **How to choose `train.batch_mode`**:
-  - `bucket` (default): Safest option; pair `batch_size: 1` with `grad_accum: 2..4` to scale the effective batch size. Because images in the same resolution bucket usually have different `text_len` values, raising `batch_size` alone under `bucket` mode inflates activation VRAM without unlocking vectorized batching.
-  - `packed`: Enable when FlashAttention-2 is installed and you want to pack samples with different aspect ratios and text lengths for higher throughput. Packs samples up to `train.bin_tokens` (`0` computes the token budget automatically) with zero padding waste.
-  - `padded`: Use when FlashAttention-2 is unavailable but multi-image batching within a token budget is desired; pads 1D sequences for SDPA execution.
+  - `auto` (default): Picks `packed` when FlashAttention-2 can split sequences, otherwise `padded`. Images keep their own sizes in both cases; `train.bin_tokens` sets the token budget per micro-batch (`0` derives one from `dataset.max_area`).
+  - `packed`: Packs samples of different aspect ratios and text lengths into one sequence with varlen attention: no padding waste, no mask.
+  - `padded`: Pads the token dimension to `L_max` and runs SDPA with a key-padding mask. Use it when FlashAttention-2 is unavailable.
 - **How to set `lora.rank` and `lora.alpha`**:
   - Single-character appearance fine-tuning: `rank: 32, alpha: 32` (default) with learning rate `1e-4`.
   - Simple concepts or small datasets prone to overfitting: `rank: 16, alpha: 16`.
@@ -443,6 +440,6 @@ After fine-tuning completes, run through the checks below to verify the delivera
 ## 9. Prohibitions
 
 - **Do not touch other workspaces**: Read and write only inside the target `workspaces/<WORKSPACE>/` directory; never modify or delete other workspace directories under `workspaces/`.
-- **Do not abuse `--overwrite` to wipe caches**: `cache`, `encode-text`, and `caption` all include incremental and metadata-staleness checks (when prompts change, simply re-run `encode-text`). Unless `max_area`, `bucket_step`, or `native_resize` changed and altered latent dimensions, never pass `--overwrite` or delete `train_cache/`.
+- **Do not abuse `--overwrite` to wipe caches**: `cache`, `encode-text`, and `caption` all include incremental and metadata-staleness checks (when prompts change, simply re-run `encode-text`). A change to `dataset.max_area` is detected through the cache's sizing fingerprint and re-encodes latents on its own, so never pass `--overwrite` or delete `train_cache/` for that.
 - **Do not download from the network**: Never run `pip install`, `huggingface-cli download`, `git clone`, `wget`, or `curl` in scripts or the terminal to fetch external models, weights, or packages.
 - **Do not disrupt a running WebUI or concurrent training job**: A single-GPU machine can run only one heavy workload at a time. Before starting a CLI job, run `pgrep -af "moss_lora"` to check for active WebUI or training processes, and never force-kill a running WebUI server.

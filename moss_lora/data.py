@@ -1,4 +1,9 @@
-"""Dataset scanning and resolution bucketing."""
+"""Dataset scanning and per-image sizing.
+
+Images keep their own aspect ratio; the only knobs are the pixel-area cap and
+the alignment of both sides. There is no fixed bucket grid: attention is
+self-attention over tokens, so a batch never needs a shared canvas.
+"""
 
 from __future__ import annotations
 
@@ -36,7 +41,7 @@ class Item:
     repeats: int = 1
     width: int = 0
     height: int = 0
-    bucket: tuple[int, int] = (0, 0)
+    size: tuple[int, int] = (0, 0)
     tags: list[str] = field(default_factory=list)
     reg: bool = False           # from dataset.reg_path (regularisation images)
     caption_source: str = ""    # moss | file | metadata | default
@@ -149,65 +154,55 @@ def read_size(path: str) -> tuple[int, int]:
         return img.size
 
 
-# a deliberately coarse grid: 7 aspect ratios, each keeping the pixel budget
-BUCKET_ASPECTS = (1.0, 4 / 3, 3 / 4, 3 / 2, 2 / 3, 16 / 9, 9 / 16)
-
-
-def bucket_resolutions(area: int, step: int = 64):
-    """One bucket per aspect ratio, both sides rounded to ``step``."""
-    buckets = []
-    for aspect in BUCKET_ASPECTS:
-        width = int(round(math.sqrt(area * aspect) / step)) * step
-        height = int(round(math.sqrt(area / aspect) / step)) * step
-        bucket = (max(step, width), max(step, height))
-        if bucket not in buckets:
-            buckets.append(bucket)
-    return buckets
+# every side is aligned to this many pixels (the official recipe uses 16)
+ALIGN = 16
 
 
 def target_size(width: int, height: int, area: int, step: int = 16):
-    """保持宽高比、面积封顶、宽高对齐到 step，不再放大。
+    """Keep the aspect ratio, cap the area, align both sides; never upscale.
 
-    官方训练配方（技术报告 §3.3）就是这个做法：preserve aspect ratio、对齐 16、
-    面积封顶。用它而不是固定桶时，每张图保留自己的分辨率。
+    This is the official recipe (technical report §3.3): preserve the aspect
+    ratio, cap the pixel area, align to 16. Each image keeps its own
+    resolution, unlike a fixed bucket grid.
+
+    Both sides round **down** to the alignment so the product stays at or below
+    ``area``: rounding up would quietly hand the VAE more pixels than the budget
+    promised.
     """
     if width <= 0 or height <= 0:
         return step, step
     if width * height <= area:
         return max(step, width - width % step), max(step, height - height % step)
     scale = (area / (width * height)) ** 0.5
-    tw = max(step, int(round(width * scale / step)) * step)
-    th = max(step, int(round(height * scale / step)) * step)
+    tw = max(step, int(width * scale / step) * step)
+    th = max(step, int(height * scale / step) * step)
     return tw, th
 
 
-def assign_buckets(items, area: int, step: int = 64, min_side: int = 256, max_side: int = 2048,
-                   native: bool = False):
-    """Snap every image to the closed aspect-ratio list (coarse on purpose).
+def assign_sizes(items, area: int, align: int = ALIGN):
+    """Give every image its own size: aspect preserved, area capped, sides aligned.
 
-    ``native=True`` 时不做桶对齐，改成每张图按自己的宽高比缩到面积上限 —— 用于需要
-    保留随机分辨率的实验。
+    No aspect-ratio snapping and no shared canvas. The cache stores the latent at
+    this size, and the trainer batches by token budget, so two images never have
+    to be the same shape.
     """
-    if native:
-        for item in items:
-            if not item.width or not item.height:
-                item.width, item.height = read_size(item.image)
-            item.bucket = target_size(item.width, item.height, area, step)
-        return items
-    buckets = bucket_resolutions(area, step)
-    ratios = [(w / h, (w, h)) for w, h in buckets]
     for item in items:
         if not item.width or not item.height:
             item.width, item.height = read_size(item.image)
-        aspect = item.width / item.height
-        item.bucket = min(ratios, key=lambda pair: abs(pair[0] - aspect))[1]
+        item.size = target_size(item.width, item.height, area, align)
     return items
 
 
+def sizing_spec(area: int, align: int = ALIGN) -> dict:
+    """The inputs that decide every cached latent's shape.
+
+    Written into the cache index; a reader that finds a different spec knows the
+    cached latents describe another geometry and refuses to train on them.
+    """
+    return {"mode": "native", "area": int(area), "align": int(align)}
+
+
 def summarise(items) -> dict:
-    buckets: dict[tuple[int, int], int] = {}
-    for item in items:
-        buckets[item.bucket] = buckets.get(item.bucket, 0) + item.repeats
     styles = {"tag_caption": 0, "official": 0}
     for item in items:
         present = sidecar_styles(Path(item.image).with_suffix(""))
@@ -220,5 +215,4 @@ def summarise(items) -> dict:
         "with_caption": sum(1 for i in items if i.caption),
         "with_moss": sum(1 for i in items if i.caption_source == "moss"),
         "styles": styles,
-        "buckets": {f"{w}x{h}": n for (w, h), n in sorted(buckets.items())},
     }

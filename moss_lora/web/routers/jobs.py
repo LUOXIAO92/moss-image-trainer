@@ -155,6 +155,13 @@ async def api_start(request: Request):
                 f"缓存格式不对（{cache_dir}）：不是当前版本的索引。"
                 "请到「缓存」页勾上 latent 缓存和文本编码，重新生成后再训练。",
             )
+        if summary.get("stale_sizing"):
+            raise HTTPException(
+                400,
+                f"缓存的尺寸规格和当前配置不一致（{cache_dir}）："
+                f"缓存按 {summary.get('sizing')} 生成，当前是 max_area={config.dataset.max_area}。"
+                "到「缓存」页重新生成 latent 缓存后再训练。",
+            )
         if summary.get("missing_text"):
             raise HTTPException(
                 400,

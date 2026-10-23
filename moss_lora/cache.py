@@ -17,12 +17,12 @@ import torch
 from PIL import Image
 from safetensors.torch import save_file
 
-from .data import assign_buckets, scan
+from .data import ALIGN, assign_sizes, scan, sizing_spec
 from .weights import LatentCodec, load_vae
 
 
 def _text_len(path: str) -> int:
-    """Length of the cached text conditioning, for length bucketing."""
+    """Length of the cached text conditioning, used by the token budget."""
     from safetensors import safe_open
 
     if not os.path.exists(path):
@@ -67,11 +67,6 @@ class CacheBuilder:
         self.log = log
         base = scan(config.dataset.path, config.dataset.caption_ext, config.dataset.metadata,
                     moss_caption_source=getattr(config.dataset, "moss_caption_source", "tag_caption"))
-        # dataset.repeats multiplies every image, on top of the "<n>_name" folder prefix
-        factor = max(1, int(config.dataset.repeats or 1))
-        if factor > 1:
-            for item in base:
-                item.repeats = int(item.repeats or 1) * factor
         reg_path = os.path.expanduser(os.path.expandvars(config.dataset.reg_path or ""))
         if reg_path:
             if not os.path.isdir(reg_path):
@@ -88,17 +83,32 @@ class CacheBuilder:
                 f"(repeats from folder names x{multiplier})"
             )
             base = base + reg
-        self.items = assign_buckets(
-            base,
-            area=config.dataset.max_area,
-            step=config.dataset.bucket_step,
-            native=bool(getattr(config.dataset, "native_resize", False)),
-        )
+        self.sizing = sizing_spec(config.dataset.max_area, ALIGN)
+        self.items = assign_sizes(base, area=config.dataset.max_area, align=ALIGN)
         self.dir = os.path.abspath(os.path.expanduser(config.cache.dir))
         self.reg_dir = reg_cache_dir(config)
         os.makedirs(self.dir, exist_ok=True)
+        # 尺寸规则变了，旧 latent 的宽高就作废：全部重编，文本缓存保持不变
+        cached = self._cached_sizing()
+        self.sizing_changed = cached != self.sizing
+        if self.sizing_changed and cached is not None:
+            self.log(
+                f"cache sizing changed {cached} -> {self.sizing}: re-encoding every latent"
+            )
         if any(getattr(item, "reg", False) for item in self.items):
             os.makedirs(self.reg_dir, exist_ok=True)
+
+    def _cached_sizing(self) -> dict | None:
+        import json
+
+        path = os.path.join(self.dir, "index.json")
+        if not os.path.isfile(path):
+            return None
+        try:
+            with open(path, encoding="utf-8") as handle:
+                return (json.load(handle) or {}).get("sizing")
+        except (OSError, ValueError):
+            return None
 
     # -- paths -----------------------------------------------------------
     def path_for(self, item) -> str:
@@ -110,9 +120,10 @@ class CacheBuilder:
         from safetensors import safe_open
 
         pending = []
+        rebuild = self.config.cache.overwrite or (tensor == "latent" and self.sizing_changed)
         for item in self.items:
             path = self.path_for(item)
-            if self.config.cache.overwrite or not os.path.exists(path):
+            if rebuild or not os.path.exists(path):
                 pending.append(item)
                 continue
             with safe_open(path, framework="pt") as f:
@@ -137,22 +148,22 @@ class CacheBuilder:
         from .memory import free_gib, latent_batch
 
         if batch_size is None:
-            # one batch size per resolution; group by bucket below and re-check
+            # one batch size per image size; same-size images are grouped below
             sample = pending[0]
-            batch_size = latent_batch(*sample.bucket)
+            batch_size = latent_batch(*sample.size)
         batch_size = max(1, min(int(batch_size), 4))
         self.log(f"latents: {len(pending)} images (batch {batch_size}, free {free_gib():.1f} GiB)")
         codec = LatentCodec(load_vae(self.config.model.vae, dtype=torch.float32, device="cuda"))
         groups: dict[tuple[int, int], list] = {}
         for item in pending:
-            groups.setdefault(item.bucket, []).append(item)
+            groups.setdefault(item.size, []).append(item)
 
         batches = [group[offset: offset + batch_size]
                    for group in groups.values()
                    for offset in range(0, len(group), batch_size)]
 
         def load(batch):
-            return torch.stack([_load_image(i.image, *i.bucket) for i in batch])
+            return torch.stack([_load_image(i.image, *i.size) for i in batch])
 
         from concurrent.futures import ThreadPoolExecutor
 
@@ -200,8 +211,8 @@ class CacheBuilder:
         return {
             "image": item.image,
             "caption": self._caption(item),
-            "width": str(item.bucket[0]),
-            "height": str(item.bucket[1]),
+            "width": str(item.size[0]),
+            "height": str(item.size[1]),
             "repeats": str(item.repeats),
         }
 
@@ -223,13 +234,16 @@ class CacheBuilder:
             "cache_dir": self.dir,
             "reg_dir": self.reg_dir,
             "caption_source": getattr(self.config.dataset, "moss_caption_source", "tag_caption"),
+            # Geometry that produced every latent below; readers compare it with
+            # the current config before trusting the shapes.
+            "sizing": self.sizing,
             "items": [
                 {
                     "file": os.path.relpath(self.path_for(item), self.dir),
                     "image": item.image,
                     "caption": self._caption(item),
-                    "width": item.bucket[0],
-                    "height": item.bucket[1],
+                    "width": item.size[0],
+                    "height": item.size[1],
                     "repeats": item.repeats,
                     "reg": bool(getattr(item, "reg", False)),
                     "text_len": _text_len(self.path_for(item)),

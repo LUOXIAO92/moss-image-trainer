@@ -47,13 +47,9 @@ class Trainer:
         self.cache_dir = config.cache.dir
         with open(os.path.join(self.cache_dir, "index.json"), encoding="utf-8") as f:
             self.index = json.load(f)
-        self.items = self.index["items"]
-        # bucket by image size only: (size, text_len) gives 77 shapes for 41 sizes at
-        # batch 1, and equal-length grouping is only needed when batching anyway
-        self.buckets: dict[tuple, list] = {}
+        self.items = list(self.index["items"])
         self.eval_items: list = []
-        for item in self.items:
-            self.buckets.setdefault((item["width"], item["height"]), []).append(item)
+        self._check_sizing()
         self._split_eval()
         self.out_dir = os.path.join(config.output_dir, config.name)
         os.makedirs(self.out_dir, exist_ok=True)
@@ -70,6 +66,23 @@ class Trainer:
         self._started = time.time()
 
     # -- setup -----------------------------------------------------------
+    def _check_sizing(self):
+        """Refuse a cache whose latents were built for another sizing rule."""
+        from .data import ALIGN, sizing_spec
+
+        expected = sizing_spec(self.config.dataset.max_area, ALIGN)
+        cached = self.index.get("sizing")
+        # An index without the field predates this rule; its latents were built
+        # by the old geometry, so it has to be rebuilt rather than trusted.
+        if cached != expected:
+            raise SystemExit(
+                "缓存尺寸规格和当前配置不一致：\n"
+                f"  缓存: {cached}\n"
+                f"  当前: {expected}\n"
+                "旧 latent 的宽高已经作废。到「缓存」页重新生成一次缓存，"
+                "或跑 python -m moss_lora.cli cache --config <yaml>。"
+            )
+
     def _write_config_snapshot(self):
         """Pin the effective config to ``runs/<run>/config.yaml``.
 
@@ -99,6 +112,7 @@ class Trainer:
         self._maybe_compile()
         self._set_batch_mode(True)
         self._resolve_attention()
+        self._resolve_batch_mode()
         params = [p for p in self.model.parameters() if p.requires_grad]
         n = sum(p.numel() for p in params)
         self.log(f"lora: {n/1e6:.1f}M trainable params (rank {self.config.lora.rank}, alpha {self.config.lora.alpha})")
@@ -149,16 +163,14 @@ class Trainer:
         share = float(getattr(self.config.train, "eval_holdout", 0.0) or 0.0)
         if share <= 0:
             return
-        keep = {}
-        for key, items in self.buckets.items():
-            train, held = [], []
-            for item in items:
-                digest = hashlib.sha1(os.path.abspath(item["image"]).encode()).hexdigest()
-                (held if int(digest[:8], 16) % 1000 < share * 1000 else train).append(item)
-            if train:
-                keep[key] = train
-            self.eval_items.extend(held)
-        self.buckets = keep
+        keep = []
+        for item in self.items:
+            digest = hashlib.sha1(os.path.abspath(item["image"]).encode()).hexdigest()
+            if int(digest[:8], 16) % 1000 < share * 1000:
+                self.eval_items.append(item)
+            else:
+                keep.append(item)
+        self.items = keep
 
     def _append_metrics(self, row: dict):
         """One JSON line per logged step / eval, read by the web dashboard."""
@@ -205,7 +217,7 @@ class Trainer:
         total = 0.0
         with torch.no_grad():
             for item in subset:
-                x0, embeds, mask = self._load_batch([item], item["width"], item["height"])
+                x0, embeds, mask = self._load_batch([item])
                 sigma = self.sigma.sample(1, self.device, generator=generator)
                 noise = torch.randn(x0.shape, generator=generator, device="cpu").to(self.device)
                 sigma_b = sigma.view(-1, 1, 1, 1)
@@ -239,6 +251,25 @@ class Trainer:
             + ("flash-attn varlen" if backend != "sdpa" else "sdpa（稠密 block-diagonal mask）")
         )
         return backend
+
+    def _resolve_batch_mode(self) -> str:
+        """Pick how a micro-batch is assembled.
+
+        ``auto`` packs sequences when FlashAttention-2 can split them (no mask,
+        no wasted compute) and falls back to token-dimension padding with a
+        key-padding mask under SDPA. Either way the samples keep their own sizes.
+        """
+        from .model import flash_attn_available
+
+        want = str(getattr(self.config.train, "batch_mode", "auto") or "auto").lower()
+        if want == "auto":
+            want = "packed" if flash_attn_available() and self.device == "cuda" else "padded"
+        self._batch_mode = want
+        self.log(
+            "batch: packed sequences" if want == "packed"
+            else "batch: token padding + key mask"
+        )
+        return want
 
     def _set_batch_mode(self, enabled: bool):
         """Vectorised forward for equal-length batches (see _forward_batched)."""
@@ -310,77 +341,6 @@ class Trainer:
         return torch.optim.AdamW(params, lr=cfg.lr, weight_decay=cfg.weight_decay, betas=(0.9, 0.95))
 
     # -- data ------------------------------------------------------------
-    def _bucket_indices(self):
-        return list(self.buckets.items())
-
-    def _sample_batch(self, rng: torch.Generator):
-        buckets = self._bucket_indices()
-        # a group that cannot fill the batch defeats the vectorised forward
-        full = [b for b in buckets if len(b[1]) >= self.config.train.batch_size]
-        buckets = full or buckets
-        # kohya convention: a "<repeat>_<name>" directory means each image is sampled
-        # that many times, so both the bucket and the item draw are weighted by it
-        def weight(item):
-            try:
-                return max(1, int(item.get("repeats", 1) or 1))
-            except (TypeError, ValueError):
-                return 1
-
-        counts = torch.tensor([sum(weight(i) for i in items) for _, items in buckets], dtype=torch.float32)
-        choice = torch.multinomial(counts, 1, generator=rng).item()
-        (width, height), items = buckets[choice]
-        batch_size = min(self.config.train.batch_size, len(items))
-        if batch_size > 1:
-            by_length: dict[int, list] = {}
-            for item in items:
-                by_length.setdefault(item.get("text_len", 0), []).append(item)
-            ready = [group for group in by_length.values() if len(group) >= batch_size]
-            if ready:
-                items = max(ready, key=len)
-                batch_size = min(batch_size, len(items))
-        weights = torch.tensor([weight(i) for i in items], dtype=torch.float32)
-        picks = torch.multinomial(weights, batch_size, replacement=False, generator=rng).tolist()
-        return [items[i] for i in picks], width, height
-
-    def _load_batch(self, entries, width, height):
-        latents, embeds, masks = [], [], []
-        for entry in entries:
-            path = os.path.join(self.cache_dir, entry["file"])
-            if not os.path.exists(path):
-                raise SystemExit(
-                    f"缓存文件不存在：{path}\n"
-                    "索引和实际文件对不上；到「缓存」页重新生成一次缓存。"
-                )
-            data = load_file(path, device="cpu")
-            missing = [key for key in ("latent", "text_embeds", "text_mask") if key not in data]
-            if missing:
-                raise SystemExit(
-                    f"缓存里缺 {', '.join(missing)}：{path}\n"
-                    "训练需要文本嵌入；先在「缓存」页点「一键生成缓存（latent + 文本）」，"
-                    "或跑 python -m moss_lora.cli encode-text --config <yaml>。"
-                )
-            latents.append(data["latent"])
-            embeds.append(data["text_embeds"])
-            masks.append(data["text_mask"])
-        length = max(e.shape[0] for e in embeds)
-        padded = embeds[0].new_zeros(len(embeds), length, embeds[0].shape[-1])
-        mask = torch.zeros(len(embeds), length, dtype=torch.bool)
-        for i, (e, m) in enumerate(zip(embeds, masks)):
-            padded[i, : e.shape[0]] = e
-            mask[i, : e.shape[0]] = m[: e.shape[0]]
-        x0 = torch.stack(latents).to(self.device, self.dtype)
-        return x0, padded.to(self.device, self.dtype), mask.to(self.device)
-
-    def _sample_random(self, rng: torch.Generator, count: int) -> list[dict]:
-        """均匀抽样：不按尺寸分组，供不同注意力后端的横向对比使用。"""
-        pool = self.items
-        count = max(1, min(int(count), len(pool)))
-        weights = torch.tensor(
-            [max(1, int(i.get("repeats", 1) or 1)) for i in pool], dtype=torch.float32
-        )
-        picks = torch.multinomial(weights, count, replacement=False, generator=rng).tolist()
-        return [pool[k] for k in picks]
-
     def _sample_by_tokens(self, rng: torch.Generator, budget: int) -> list[dict]:
         """按 token 预算装箱：随机顺序累加，装到超过预算为止（至少 1 张）。"""
         pool = self.items
@@ -430,54 +390,48 @@ class Trainer:
             return cfg.lr * (0.5 * (1 + math.cos(math.pi * min(progress, 1.0))))
         return cfg.lr
 
+    def _bin_budget(self) -> int:
+        """Token budget per micro-batch.
+
+        ``train.bin_tokens`` wins when set. The default buys one full-size image
+        plus 1k text tokens, which keeps the memory profile of the old
+        ``batch_size: 1``; raise it to pack several images into one step. The
+        budget tracks ``dataset.max_area`` so a larger canvas buys larger
+        batches, not more images.
+        """
+        cfg = self.config.train
+        explicit = int(getattr(cfg, "bin_tokens", 0) or 0)
+        if explicit > 0:
+            return explicit
+        return int(self.config.dataset.max_area or 1048576) // 256 + 1024
+
     def _train_step(self, step: int, rng) -> float:
         cfg = self.config.train
         self.optimizer.zero_grad(set_to_none=True)
         step_loss = 0.0
-        packed = cfg.batch_mode in ("packed", "padded")
         for _ in range(cfg.grad_accum):
-            if packed:
-                # bin size 的单位始终是 token：留空（0）时按面积上限换算出一个
-                # 默认预算（约 3 张满尺寸图的 token + 1k 文本余量），而不是按张数取样。
-                budget = int(getattr(cfg, "bin_tokens", 0) or 0) or (
-                    3 * (int(self.config.dataset.max_area or 1048576) // 256) + 1024
-                )
-                entries = self._sample_by_tokens(rng, budget)
-                latents, contexts = self._load_packed(entries)
-                # 打包/填充两条路都必须共用一个 timestep（共享 modulation）
-                sigma = self.sigma.sample(1, self.device).reshape(1)
-                noise = [torch.randn_like(latent, dtype=torch.float32) for latent in latents]
-                xt = [
-                    ((1 - sigma) * latent.float() + sigma * eps).to(self.dtype)
-                    for latent, eps in zip(latents, noise)
-                ]
-                target = [eps - latent.float() for latent, eps in zip(latents, noise)]
-                forward = (
-                    self.model.forward_packed
-                    if cfg.batch_mode == "packed"
-                    else self.model.forward_padded
-                )
-                prediction = forward(
-                    xt,
-                    float(sigma.item()) * 1000,
-                    contexts,
-                    checkpoint_blocks=bool(getattr(self.model, "gradient_checkpointing", False)),
-                )
-                loss = sum(
-                    F.mse_loss(pred.float(), tgt) for pred, tgt in zip(prediction, target)
-                ) / len(prediction)
-                self.scaler.scale(loss / cfg.grad_accum).backward()
-                step_loss += float(loss.detach()) / cfg.grad_accum
-                continue
-            entries, width, height = self._sample_batch(rng)
-            x0, embeds, mask = self._load_batch(entries, width, height)
-            sigma = self.sigma.sample(x0.shape[0], self.device)
-            noise = torch.randn(x0.shape, generator=rng, device="cpu", dtype=torch.float32).to(self.device)
-            sigma_b = sigma.view(-1, 1, 1, 1)
-            xt = ((1 - sigma_b) * x0.float() + sigma_b * noise).to(self.dtype)
-            target = noise - x0.float()
-            prediction = self.model(xt, sigma * 1000, embeds, mask)
-            loss = F.mse_loss(prediction.float(), target)
+            entries = self._sample_by_tokens(rng, self._bin_budget())
+            latents, contexts = self._load_packed(entries)
+            # One timestep per micro-batch: packing shares one modulation.
+            sigma = self.sigma.sample(1, self.device).reshape(1)
+            noise = [torch.randn_like(latent, dtype=torch.float32) for latent in latents]
+            xt = [
+                ((1 - sigma) * latent.float() + sigma * eps).to(self.dtype)
+                for latent, eps in zip(latents, noise)
+            ]
+            target = [eps - latent.float() for latent, eps in zip(latents, noise)]
+            forward = (
+                self.model.forward_packed
+                if self._batch_mode == "packed"
+                else self.model.forward_padded
+            )
+            prediction = forward(
+                xt,
+                float(sigma.item()) * 1000,
+                contexts,
+                checkpoint_blocks=bool(getattr(self.model, "gradient_checkpointing", False)),
+            )
+            loss = sum(F.mse_loss(pred.float(), tgt) for pred, tgt in zip(prediction, target)) / len(prediction)
             self.scaler.scale(loss / cfg.grad_accum).backward()
             step_loss += float(loss.detach()) / cfg.grad_accum
         if self.scaler.is_enabled():
