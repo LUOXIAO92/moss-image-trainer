@@ -283,12 +283,15 @@ class CacheBuilder:
             return 0
         from .memory import free_gib, latent_batch
 
+        # one batch size per image size; same-size images are grouped below
+        sample = pending[0]
+        room = latent_batch(*sample.size, cap=len(pending))
+        fixed = int(getattr(self.config.cache, "vae_batch", 0) or 0)
         if batch_size is None:
-            # one batch size per image size; same-size images are grouped below
-            fixed = int(getattr(self.config.cache, "vae_batch", 0) or 0)
-            sample = pending[0]
-            batch_size = fixed if fixed > 0 else latent_batch(*sample.size)
-        batch_size = max(1, min(int(batch_size), 4))
+            batch_size = fixed if fixed > 0 else room
+        batch_size = max(1, int(batch_size))
+        if fixed > 0 and fixed > room:
+            self.log(f"latents: cache.vae_batch {fixed} exceeds what free VRAM suggests ({room}); expect OOM")
         self.batch["latent"] = batch_size
         self.log(f"latents: {len(pending)} images (batch {batch_size}, free {free_gib():.1f} GiB)")
         codec = LatentCodec(load_vae(self.config.model.vae, dtype=torch.float32, device="cuda"))

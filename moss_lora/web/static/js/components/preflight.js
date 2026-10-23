@@ -75,7 +75,8 @@ export async function runPreflight(options = {}) {
     if (localErrors.length) {
       showFormErrors(localErrors);
       const firstId = localErrors[0]?.field?.id || '';
-      const nextTab = firstId === 'cfg-cache-dir' ? 'cache'
+      const nextTab = (firstId === 'cfg-cache-dir' || firstId === 'cfg-cache-text-batch'
+        || firstId === 'cfg-cache-vae-batch') ? 'cache'
         : (firstId === 'cfg-dataset-path' || firstId.startsWith('cfg-reg-') || firstId === 'cfg-cache-reg-dir') ? 'dataset'
           : 'train';
       setPreflight({

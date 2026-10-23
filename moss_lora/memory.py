@@ -12,10 +12,8 @@ import os
 
 import torch
 
-# empirical, fp32 Flux2 VAE at 1024²: batch 4 peaks near 10 GiB,
-# larger batches hit the WSL mapping limit and get slower
+# empirical, fp32 Flux2 VAE at 1024²: each image peaks near 2.5 GiB
 VAE_GIB_PER_MEGAPIXEL = 2.5
-VAE_BATCH_CAP = 4
 TEXT_GIB_PER_PROMPT = 0.12  # 4096-token prompt through the 9B encoder
 TEXT_BATCH_CAP = 64
 
@@ -43,7 +41,13 @@ def auto_batch(per_item_gib: float, cap: int, ratio: float = 0.8, minimum: int =
     return max(minimum, min(cap, fits))
 
 
-def latent_batch(width: int, height: int, cap: int = VAE_BATCH_CAP) -> int:
+def latent_batch(width: int, height: int, cap: int) -> int:
+    """Largest VAE batch that fits the free VRAM.
+
+    ``cap`` is the caller's ceiling -- normally the number of images waiting --
+    not a platform assumption. A 4-image ceiling here used to encode a WSL2
+    mapping limit as if every machine shared it.
+    """
     megapixels = max(0.25, (width * height) / 1e6)
     return auto_batch(VAE_GIB_PER_MEGAPIXEL * megapixels, cap)
 

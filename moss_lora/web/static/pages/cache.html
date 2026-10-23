@@ -98,6 +98,18 @@
           </span>
         </label>
       </div>
+
+      <div class="form-grid cache-batch-grid">
+        <div class="field">
+          <label class="field-label" for="cfg-cache-text-batch" data-i18n="cache.textBatch">文本编码 batch</label>
+          <input id="cfg-cache-text-batch" type="number" min="0" step="1" inputmode="numeric" aria-describedby="cfg-cache-batch-help">
+        </div>
+        <div class="field">
+          <label class="field-label" for="cfg-cache-vae-batch" data-i18n="cache.vaeBatch">VAE 编码 batch</label>
+          <input id="cfg-cache-vae-batch" type="number" min="0" step="1" inputmode="numeric" aria-describedby="cfg-cache-batch-help">
+        </div>
+        <span class="field-help span2" id="cfg-cache-batch-help" data-i18n="cache.batchHelp">0 = 按剩余显存自动；填固定值可让每次编码的结果完全一致（batch 会改变数值）。</span>
+      </div>
       <div class="cache-run-actions">
         <button class="btn btn-primary" id="btn-cache-start" type="button" aria-describedby="cache-start-hint" disabled>
           <svg aria-hidden="true"><use href="#i-play"></use></svg><span data-i18n="cache.start">开始缓存</span>
