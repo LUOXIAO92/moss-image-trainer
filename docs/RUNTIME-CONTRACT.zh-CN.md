@@ -18,6 +18,7 @@
 workspaces/<workspace>/
   .gpu.lock                     唯一的持有者：正在用显卡的进程
   runs/<run>/
+    config.yaml                 这次训练实际用的配置
     training.json               心跳：谁在训、训到哪
     metrics.jsonl               每步一行 JSON
     checkpoints/  samples/
@@ -27,6 +28,21 @@ workspaces/<workspace>/
 ```
 
 `training.json` 是运行自己的口供，`logs/<job>.json` 是启动器留下的记录。只有作业记录没有心跳，说明进程在看到模型之前就挂了；只有心跳没有作业记录，说明是 `moss-lora train` 直接在终端起的。
+
+## 一次运行用的是哪份配置
+
+两个问题长得很像，但答案不能共用：
+
+| 问题 | 源头 |
+|---|---|
+| 下次训练用什么 | `workspaces/<workspace>/configs/<配置名>.yaml`，你编辑的那份 |
+| 这次训练用了什么 | `workspaces/<workspace>/runs/<run>/config.yaml` |
+
+第二份由训练进程在构造函数里写，早于加载任何权重，别的地方都不写。里面是它实际跑起来的配置：预设已应用、命令行覆盖已应用、路径已解析、预览种子已定值。
+
+读的地方只认这一份。没有这个文件的 run 就是没有配置记录，面板如实显示为空。早先的版本靠名字猜：先找 `logs/` 或 `configs/` 里同名的文件，再退到工作区默认值。结果是一个叫 `foo`、用 `bar.yaml` 训出来的 run 被标成 `foo.yaml`，而名字对不上任何配置的 run 被标成 `workspace.yaml`。
+
+这样一来，配置文件是怎么写出来的就不再重要。网页保存也好、手写也好，它都只是输入；用了什么，记在 run 目录里。
 
 ## 心跳
 

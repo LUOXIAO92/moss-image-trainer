@@ -292,32 +292,20 @@ def _portable_workspace_config(name: str, text: str) -> str:
 
 
 def _run_config_snapshot(name: str, run: str) -> tuple[str, str, str]:
-    """Return (yaml_text, path, source) for a historic run."""
-    ws = _workspace_dir(name)
-    candidates = [
-        (os.path.join(_workspace_logs_dir(name), f"{run}.yaml"), "snapshot"),
-        (os.path.join(ws, "configs", f"{run}.yaml"), "config"),
-    ]
-    logs = _workspace_logs_dir(name)
-    if os.path.isdir(logs):
-        for filename in os.listdir(logs):
-            if not filename.endswith((".yaml", ".yml")):
-                continue
-            path = os.path.join(logs, filename)
-            try:
-                with open(path, encoding="utf-8") as handle:
-                    data = yaml.safe_load(handle) or {}
-                if isinstance(data, dict) and str(data.get("name") or "") == run:
-                    candidates.append((path, "snapshot"))
-            except Exception:
-                pass
-    candidates.append((_workspace_config_path(name), "workspace"))
-    for path, source in candidates:
-        if os.path.isfile(path):
-            with open(path, encoding="utf-8") as handle:
-                text = handle.read()
-            return _portable_workspace_config(name, text), _rel(path), source
-    return "", "", ""
+    """Return (yaml_text, path, source) for one run.
+
+    One source only: ``runs/<run>/config.yaml``, written by the trainer when the
+    run starts. Earlier versions guessed from the run's name -- a same-named
+    file in ``logs/`` or ``configs/``, then the workspace defaults -- which
+    labelled a CLI run with whatever file happened to share its name. A run
+    without the snapshot reports no config instead of borrowing someone else's.
+    """
+    path = os.path.join(_workspace_runs_dir(name), run, "config.yaml")
+    if not os.path.isfile(path):
+        return "", "", ""
+    with open(path, encoding="utf-8") as handle:
+        text = handle.read()
+    return _portable_workspace_config(name, text), _rel(path), "run"
 
 
 def _run_checkpoints(directory: str) -> list[dict]:

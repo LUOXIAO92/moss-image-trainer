@@ -60,12 +60,28 @@ class Trainer:
         self.ckpt_dir = os.path.join(self.out_dir, "checkpoints")
         os.makedirs(self.ckpt_dir, exist_ok=True)
         self.generator = torch.Generator("cpu").manual_seed(config.train.seed)
+        # One source per run: the effective config is copied into the run
+        # directory, so no reader has to infer it from the run's name or from
+        # whichever file happened to launch it.
+        self._write_config_snapshot()
         # The workspace owns the run artefacts; the repository only owns code.
         self.workspace_root = runtime.workspace_root(config)
         self._lock_held = False
         self._started = time.time()
 
     # -- setup -----------------------------------------------------------
+    def _write_config_snapshot(self):
+        """Pin the effective config to ``runs/<run>/config.yaml``.
+
+        This file is the only answer to "what was this run trained with". It is
+        written before any weight is loaded, so a run that dies at startup still
+        carries its own record.
+        """
+        try:
+            self.config.save(os.path.join(self.out_dir, "config.yaml"))
+        except OSError as exc:
+            self.log(f"could not write the run config snapshot: {exc}")
+
     def _configure_precision(self):
         if self.dtype == torch.float16 and bool(getattr(self.config.vram, "fp16_accumulate", False)):
             torch.backends.cuda.matmul.allow_fp16_accumulation = True

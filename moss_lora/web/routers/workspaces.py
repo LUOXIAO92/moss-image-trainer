@@ -18,6 +18,7 @@ from ..deps import RESERVED_WORKSPACES, _rel, _safe_name, _write_text
 from ..jobs import JOBS
 from ..services.system import (_is_cli_train_process, _parse_metrics, _run_samples)
 from ..services.workspace import (_dir_usage, _has_live_cli_training, _resolve_workspace,
+                                  _run_config_snapshot,
                                   _workspace_config_path, _workspace_config_text,
                                   _workspace_dir, _workspace_exists, _workspace_info,
                                   _workspace_logs_dir, _workspace_name, _workspace_root,
@@ -290,6 +291,7 @@ def api_dashboard(run: str = "", workspace: str = ""):
         steps = [r for r in rows if "train" in r]
         evals = [r for r in rows if "eval" in r]
         metrics_path = os.path.join(directory, "metrics.jsonl")
+        config_yaml, config_path, config_source = _run_config_snapshot(scope, parts[-1])
         runs.append({
             "name": label,
             "label": label,
@@ -305,6 +307,10 @@ def api_dashboard(run: str = "", workspace: str = ""):
             "train": (steps[-1]["train"] if steps else None),
             "eval": (evals[-1]["eval"] if evals else None),
             "samples": _run_samples(directory),
+            # The run's own record of what it was trained with; empty when the
+            # run predates the snapshot or never started.
+            "config_path": config_path,
+            "config_source": config_source,
         })
 
     active = None
@@ -351,9 +357,11 @@ def api_dashboard(run: str = "", workspace: str = ""):
         "workspace": scope,
         "runs": [{k: r[k] for k in (
             "name", "label", "path", "root", "workspace", "profile", "run_id", "mtime",
-            "step", "total", "train", "eval",
+            "step", "total", "train", "eval", "config_path", "config_source",
         )} for r in runs],
         "run": chosen["name"] if chosen else None,
+        "run_config_path": chosen["config_path"] if chosen else "",
+        "run_config_source": chosen["config_source"] if chosen else "",
         "rows": chosen["rows"] if chosen else [],
         "samples": chosen["samples"] if chosen else [],
     }

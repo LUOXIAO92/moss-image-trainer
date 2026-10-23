@@ -19,6 +19,14 @@ import { showAlert, showError, showSuccess } from '../core/notify.js';
 import { state } from '../core/state.js';
 import { currentTab, focusLogPanel } from '../main.js';
 
+// A run's config comes from one place: its own directory. Anything else the
+// API might send is shown as-is rather than dressed up as a snapshot.
+function configSourceLabel(source) {
+  if (!source) return t('train.noSnapshot');
+  return source === 'run' ? t('train.configSource.run') : source;
+}
+
+
 function runDate(timestamp) {
   if (!timestamp) return '--';
   const date = new Date(Number(timestamp) * 1000);
@@ -42,7 +50,7 @@ export function renderRunList() {
   select.disabled = !runs.length;
   if (empty) empty.classList.toggle('hidden', runs.length > 0);
   const selected = runs.find((run) => run.name === chosen);
-  setText('#train-run-meta', selected ? t('train.runMeta', { step: fmtInt(selected.step), total: fmtInt(selected.total), samples: fmtInt(selected.samples), source: selected.config_source || t('train.noSnapshot') }) : '--');
+  setText('#train-run-meta', selected ? t('train.runMeta', { step: fmtInt(selected.step), total: fmtInt(selected.total), samples: fmtInt(selected.samples), source: configSourceLabel(selected.config_source) }) : '--');
   for (const id of ['#btn-run-config', '#btn-run-log']) {
     const button = $(id);
     if (button) button.disabled = !selected || (id === '#btn-run-log' && !selected.log_path);
@@ -72,7 +80,7 @@ export function openRunConfig(name) {
   if (!run || !dialog) return;
   state.activeRunConfig = run;
   setText('#run-config-title', t('runConfig.titleWithRun', { name: run.name }));
-  setText('#run-config-meta', t('runConfig.meta', { label: run.label, step: fmtInt(run.step), total: fmtInt(run.total), source: run.config_source || t('train.noSnapshot'), path: run.config_path ? ` · ${run.config_path}` : '' }));
+  setText('#run-config-meta', t('runConfig.meta', { label: run.label, step: fmtInt(run.step), total: fmtInt(run.total), source: configSourceLabel(run.config_source), path: run.config_path ? ` · ${run.config_path}` : '' }));
   const pre = $('#run-config-yaml');
   if (pre) pre.textContent = run.config_yaml || t('train.msg9');
   const error = $('#run-config-error');

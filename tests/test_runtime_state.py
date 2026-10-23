@@ -108,6 +108,32 @@ def check_metrics(tmp: str):
     print("metrics tail        : ok  eval lines skipped")
 
 
+def check_run_config(tmp: str):
+    """The trainer pins the effective config into the run directory."""
+    import types
+
+    from moss_lora.config import Config
+    from moss_lora.trainer import Trainer
+
+    out_dir = os.path.join(tmp, "runs", "run-b")
+    os.makedirs(out_dir)
+    config = Config()
+    config.name = "run-b"
+    config.lora.rank = 24
+    trainer = types.SimpleNamespace(
+        out_dir=out_dir, config=config, log=lambda message: None,
+    )
+    Trainer._write_config_snapshot(trainer)
+    path = os.path.join(out_dir, "config.yaml")
+    assert os.path.isfile(path), "the run directory has no config snapshot"
+    written = Config.load(path)
+    assert written.name == "run-b" and written.lora.rank == 24, (written.name, written.lora.rank)
+    # 同一份配置再写一次不会丢字段
+    Trainer._write_config_snapshot(trainer)
+    assert Config.load(path).lora.rank == 24
+    print("run config snapshot : ok  runs/<run>/config.yaml round-trips")
+
+
 def check_lock(tmp: str):
     ws = os.path.join(tmp, "lockws")
     os.makedirs(ws)
@@ -141,6 +167,7 @@ def main():
         check_atomic(tmp)
         check_merge(tmp)
         check_metrics(tmp)
+        check_run_config(tmp)
         check_lock(tmp)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
