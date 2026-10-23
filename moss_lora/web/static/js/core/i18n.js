@@ -8,7 +8,7 @@ import { updateLogCount } from '../components/logview.js';
 import { updateCacheEffective, updateCachePlaceholder, updateRegCacheEffective, updateRegCachePlaceholder, updateYamlLineCount } from '../config/form.js';
 import { renderConfigList } from '../config/list.js';
 import { renderProfileOptions } from '../config/profiles.js';
-import { api } from './api.js';
+import { api, describeError } from './api.js';
 import { $, escapeHtml, setText } from './dom.js';
 import { showError, showSuccess } from './notify.js';
 import { CAPTION_SOURCE_KEYS, JOB_LABEL_KEYS, state } from './state.js';
@@ -154,7 +154,7 @@ export async function setUiLanguage(code) {
     showSuccess(t('settings.language.changedTitle'), t('settings.language.changedText', { name: languageName(code) }), [], 'language-changed');
   } catch (error) {
     renderLanguageSelectors();
-    showError(t('settings.language.changeFailed'), error.detail || error.message, [], 'language-change-error');
+    showError(t('settings.language.changeFailed'), describeError(error), [], 'language-change-error');
   } finally {
     for (const select of selects) select.disabled = !state.i18n.languages.length;
   }

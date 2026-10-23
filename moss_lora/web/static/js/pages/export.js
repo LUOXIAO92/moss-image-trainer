@@ -3,7 +3,7 @@
  * split from web/static/app.js, source 7091-7738 (29 non-contiguous spans, see .tmp/js-map.json); behaviour unchanged
  * ========================================================================= */
 
-import { api } from '../core/api.js';
+import { api, describeError } from '../core/api.js';
 import { $, escapeHtml, fileUrl, setText } from '../core/dom.js';
 import { fmtBytesFromMb, fmtInt, fmtNum } from '../core/fmt.js';
 import { t } from '../core/i18n.js';
@@ -191,7 +191,7 @@ async function exportBatch(steps, targetDir = '', zip = false) {
     return data;
   } catch (error) {
     updateExportStatus(t('job.msg28'), 'chip-err');
-    showError(t('job.msg28'), error.detail || error.message);
+    showError(t('job.msg28'), describeError(error));
     return null;
   } finally {
     state.exportRunning = false;
@@ -252,7 +252,7 @@ export async function loadExportDirectory(path) {
     if (seq !== state.exportDirRequestSeq) return;
     const notice = $('#export-dir-notice');
     if (notice) notice.classList.add('hidden');
-    list.innerHTML = `<div class="export-dir-empty">${escapeHtml(error.detail || error.message)}</div>`;
+    list.innerHTML = `<div class="export-dir-empty">${escapeHtml(describeError(error))}</div>`;
   }
 }
 
@@ -339,7 +339,7 @@ export async function loadPathBrowser(path) {
       : state.pathBrowser.dir;
     setText('#path-browser-selected', selected || '--');
   } catch (error) {
-    list.innerHTML = `<div class="export-dir-empty">${escapeHtml(error.detail || error.message)}</div>`;
+    list.innerHTML = `<div class="export-dir-empty">${escapeHtml(describeError(error))}</div>`;
   }
 }
 
@@ -418,7 +418,7 @@ export async function downloadSingleStep(step) {
     renderExportStepRows();
   } catch (error) {
     updateExportStatus(t('caption.msg3'), 'chip-err');
-    showError(t('common.msg54'), error.detail || error.message);
+    showError(t('common.msg54'), describeError(error));
   } finally {
     state.exportRunning = false;
     updateExportSelectionUi();
@@ -447,7 +447,7 @@ export async function loadExportPage() {
     select.value = state.exportRuns.some((run) => run.name === previous) ? previous : (state.exportRuns[0]?.name || '');
     await onExportRunChange();
   } catch (error) {
-    showError(t('export.msg16'), error.detail || error.message);
+    showError(t('export.msg16'), describeError(error));
   }
 }
 

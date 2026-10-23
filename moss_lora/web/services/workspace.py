@@ -11,10 +11,10 @@ import time
 from dataclasses import asdict
 
 import yaml
-from fastapi import HTTPException
 
 from ...config import Config
 from ..deps import RESERVED_WORKSPACES, ROOT, _rel, _safe_name, _settings_snapshot
+from ..errors import fail
 from .system import _dir_size, _is_cli_train_process, _parse_metrics
 
 
@@ -33,9 +33,9 @@ def _workspace_dir(name: str) -> str:
 
 
 def _workspace_name(value: str | None) -> str:
-    name = _safe_name(value, "工作区名称")
+    name = _safe_name(value, "workspace")
     if name in RESERVED_WORKSPACES:
-        raise HTTPException(400, f"{name} 是保留名称，不能作为工作区")
+        raise fail(400, "err.workspace.reserved", name=name)
     return name
 
 
@@ -67,7 +67,7 @@ def _workspace_names() -> list[str]:
 def _default_workspace_name() -> str:
     names = _workspace_names()
     if not names:
-        raise HTTPException(400, "请先创建工作区")
+        raise fail(400, "err.workspace.none")
     return names[0]
 
 
@@ -77,7 +77,7 @@ def _resolve_workspace(workspace: str | None) -> str:
         return _default_workspace_name()
     name = _workspace_name(raw)
     if not _workspace_exists(name):
-        raise HTTPException(404, f"工作区不存在：{raw}")
+        raise fail(404, "err.workspace.not_found", name=raw)
     return name
 
 
@@ -275,7 +275,7 @@ def _run_config_default(name: str, run: str, from_run: str = "") -> str:
     if from_run:
         text, _path, _source = _run_config_snapshot(name, from_run)
         if not text:
-            raise HTTPException(404, f"运行没有配置存档：{from_run}")
+            raise fail(404, "err.run.no_config", run=from_run)
         data = yaml.safe_load(text) or {}
     else:
         return _default_run_config_text(run)

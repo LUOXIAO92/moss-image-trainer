@@ -6,7 +6,7 @@ from __future__ import annotations
 import os
 
 import yaml
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from ...config import VRAM_PRESETS
@@ -16,6 +16,7 @@ from ..services.workspace import (_config_from_data, _resolve_workspace, _run_co
                                   _run_config_path, _run_config_snapshot, _run_is_live,
                                   _workspace_dir, _workspace_exists, _workspace_name,
                                   _workspace_runs_dir, _write_run_config)
+from ..errors import error_detail, fail
 
 router = APIRouter()
 
@@ -27,9 +28,14 @@ def api_presets():
 
 def _yaml_error(exc: yaml.YAMLError) -> JSONResponse:
     mark = getattr(exc, "problem_mark", None)
-    where = f"第 {mark.line + 1} 行第 {mark.column + 1} 列" if mark else ""
+    problem = str(getattr(exc, "problem", exc))
+    if mark:
+        detail = error_detail("err.yaml.syntax", line=mark.line + 1, column=mark.column + 1,
+                              problem=problem)
+    else:
+        detail = error_detail("err.yaml.syntax_plain", problem=problem)
     return JSONResponse(
-        {"detail": f"YAML 语法错误 {where}: {getattr(exc, 'problem', exc)}".strip(),
+        {"detail": detail,
          "line": mark.line + 1 if mark else None,
          "column": mark.column + 1 if mark else None},
         status_code=400,
@@ -41,15 +47,15 @@ async def api_runs_create(name: str, request: Request):
     """Create a run: its own complete ``config.yaml``, seeded once."""
     name = _workspace_name(name)
     if not _workspace_exists(name):
-        raise HTTPException(404, f"工作区不存在：{name}")
+        raise fail(404, "err.workspace.not_found", name=name)
     body = await request.json()
-    run = _safe_name(body.get("name"), "run 名称")
+    run = _safe_name(body.get("name"), "run")
     from_run = str(body.get("from") or "").strip()
     if from_run:
-        from_run = _safe_name(from_run, "来源 run")
+        from_run = _safe_name(from_run, "run")
     target = os.path.join(_workspace_runs_dir(name), run)
     if os.path.exists(target):
-        raise HTTPException(409, f"运行名已存在：{run}")
+        raise fail(409, "err.run.exists", run=run)
     text = _run_config_default(name, run, from_run)
     path = _write_run_config(name, run, text)
     return {"ok": True, "run": run, "path": _rel(path)}
@@ -59,10 +65,10 @@ async def api_runs_create(name: str, request: Request):
 def api_run_config(name: str, run: str):
     """The config one run started with, from the run directory and nowhere else."""
     name = _workspace_name(name)
-    run = _safe_name(run, "run 名称")
+    run = _safe_name(run, "run")
     text, path, _source = _run_config_snapshot(name, run)
     if not text:
-        raise HTTPException(404, f"运行没有配置存档：{run}")
+        raise fail(404, "err.run.no_config", run=run)
     return {"yaml": text, "path": path, "run": run}
 
 
@@ -70,11 +76,11 @@ def api_run_config(name: str, run: str):
 async def api_run_config_save(name: str, run: str, request: Request):
     """Edit a run's config. Frozen while the run trains, free afterwards."""
     name = _workspace_name(name)
-    run = _safe_name(run, "run 名称")
+    run = _safe_name(run, "run")
     if not os.path.isfile(_run_config_path(name, run)):
-        raise HTTPException(404, f"运行没有配置存档：{run}")
+        raise fail(404, "err.run.no_config", run=run)
     if _run_is_live(name, run):
-        raise HTTPException(409, "本次运行进行中，配置已冻结")
+        raise fail(409, "err.run.frozen")
     body = await request.json()
     text = body.get("yaml") or ""
     try:
@@ -82,7 +88,7 @@ async def api_run_config_save(name: str, run: str, request: Request):
     except yaml.YAMLError as exc:
         return _yaml_error(exc)
     if not isinstance(data, dict):
-        raise HTTPException(400, "配置必须是一个 YAML 映射")
+        raise fail(400, "err.yaml.not_mapping")
     # The run directory names the config; a stale name field would drift.
     data["name"] = run
     path = _run_config_path(name, run)
@@ -101,7 +107,7 @@ def api_cache(path: str = "", workspace: str = "", reg_path: str | None = None, 
     name = _resolve_workspace(workspace)
     data: dict = {}
     if run:
-        text, _path, _source = _run_config_snapshot(name, _safe_name(run, "run 名称"))
+        text, _path, _source = _run_config_snapshot(name, _safe_name(run, "run"))
         if text:
             data = yaml.safe_load(text) or {}
     config = _config_from_data(name, data)

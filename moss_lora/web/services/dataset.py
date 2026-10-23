@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse
 from ..deps import ROOT, _rel
 from .workspace import (_resolve_workspace, _workspace_dir, _workspace_root,
                         _workspace_runs_dir)
+from ..errors import fail
 
 
 def dataset_info(path: str, source: str = "tag_caption"):
@@ -25,7 +26,7 @@ def dataset_info(path: str, source: str = "tag_caption"):
     from ...data import MOSS_CAPTION_SOURCES, scan, summarise
 
     if source not in MOSS_CAPTION_SOURCES:
-        raise HTTPException(400, f"unknown caption source {source}")
+        raise fail(400, "err.dataset.source_unknown", source=source)
     try:
         items = scan(path, moss_caption_source=source)
     except Exception as exc:
@@ -77,7 +78,7 @@ def thumb_response(path: str, w: int = 384, workspace: str = ""):
     full = path if os.path.isabs(path) else os.path.abspath(os.path.join(ROOT, path))
     image_ext = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
     if not os.path.isfile(full) or os.path.splitext(full)[1].lower() not in image_ext:
-        raise HTTPException(404, "not found")
+        raise fail(404, "err.file.not_found")
     width = max(64, min(1024, int(w)))
     try:
         from PIL import Image, ImageOps
@@ -103,7 +104,7 @@ def thumb_response(path: str, w: int = 384, workspace: str = ""):
         return FileResponse(out, media_type="image/webp",
                             headers={"Cache-Control": "no-cache"})
     except Exception as exc:
-        raise HTTPException(404, f"thumbnail failed: {exc}")
+        raise fail(404, "err.thumbnail.failed", error=exc)
 
 def samples_list(dir: str = "", workspace: str = ""):
     scope = _resolve_workspace(workspace)

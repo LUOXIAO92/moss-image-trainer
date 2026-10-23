@@ -7,7 +7,7 @@ import { buildLine, drawChart, movingAverage, setChartSeries } from '../componen
 import { renderRunStrip, updateJobUi, updateTrainMetrics, updateTrainRunState } from '../components/jobs.js';
 import { loadRunLog, shortRunName } from '../components/logview.js';
 import { defaultDashboardLayout, drawMetricCards, renderWidgetCards, saveDashboardLayout } from '../components/metriccards.js';
-import { api } from '../core/api.js';
+import { api, describeError } from '../core/api.js';
 import { $, clamp, escapeHtml, fileUrl, setText, thumbUrl } from '../core/dom.js';
 import { fmtDuration, fmtInt, fmtNum, fmtTime } from '../core/fmt.js';
 import { localeCode, t } from '../core/i18n.js';
@@ -258,7 +258,7 @@ async function loadSampleCompareData() {
     state.sampleCompareData = data.filter(Boolean);
     renderSampleCompareGrid();
   } catch (error) {
-    showError(t('dash.msg6'), error.detail || error.message);
+    showError(t('dash.msg6'), describeError(error));
   } finally {
     state.sampleCompareLoading = false;
   }
@@ -420,7 +420,7 @@ export async function loadDashboardCompare() {
     renderCompareLegend();
     drawChart('dash');
   } catch (error) {
-    showError(t('dash.msg10'), error.detail || error.message);
+    showError(t('dash.msg10'), describeError(error));
   } finally {
     state.compareLoading = false;
     if (state.comparePending) {

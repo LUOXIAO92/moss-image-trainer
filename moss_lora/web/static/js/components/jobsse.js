@@ -9,7 +9,7 @@ import { hidePreflight, runPreflight, setPreflight } from './preflight.js';
 import { clearYamlError, focusYamlLine, getCurrentYaml, showYamlError } from '../config/form.js';
 import { saveConfig } from '../config/file.js';
 import { parseYaml } from '../config/yaml.js';
-import { api } from '../core/api.js';
+import { api, describeError } from '../core/api.js';
 import { $ } from '../core/dom.js';
 import { jobLabel, t } from '../core/i18n.js';
 import { showAlert, showError, showSuccess } from '../core/notify.js';
@@ -410,28 +410,29 @@ export async function startJob(kind, options = {}) {
     return true;
   } catch (error) {
     if (error.status === 409) {
-      showError(t('job.msg31'), error.detail || error.message, [
+      showError(t('job.msg31'), describeError(error), [
         { label: t('job.msg45'), onClick: () => loadJobs().catch(() => {}) },
       ]);
       await loadJobs().catch(() => {});
     } else {
       const actions = [];
-      if (/index\.json|preview\.safetensors/i.test(error.detail || error.message)) {
+      if (['err.cache.not_built', 'err.cache.legacy', 'err.cache.missing_text'].includes(error.code)
+          || /index\.json|preview\.safetensors/i.test(describeError(error))) {
         actions.push({ label: t('job.msg46'), onClick: () => { location.hash = '#cache'; } });
       }
       if (error.line) {
-        showYamlError({ message: error.detail || error.message, line: error.line, column: error.column });
+        showYamlError({ message: describeError(error), line: error.line, column: error.column });
         actions.push({ label: t('job.msg47'), onClick: () => focusYamlLine(error.line) });
       }
       if (kind === 'train') {
         setPreflight({
           level: 'error',
           title: t('job.msg48'),
-          text: error.detail || error.message,
+          text: describeError(error),
           actions,
         });
       }
-      showError(t('job.kindStartFailed', { kind: jobLabel(kind) }), error.detail || error.message, actions);
+      showError(t('job.kindStartFailed', { kind: jobLabel(kind) }), describeError(error), actions);
     }
     return false;
   } finally {
@@ -460,7 +461,7 @@ async function stopActiveTraining() {
     }, 1200);
     return true;
   } catch (error) {
-    showError(t('train.msg56'), error.detail || error.message);
+    showError(t('train.msg56'), describeError(error));
     return false;
   }
 }
@@ -487,7 +488,7 @@ export async function stopJob() {
       await loadJobs().catch(() => {});
     }
   } catch (error) {
-    showError(t('job.msg54'), error.detail || error.message, [
+    showError(t('job.msg54'), describeError(error), [
       { label: t('common.retry'), onClick: () => stopJob() },
     ]);
   }

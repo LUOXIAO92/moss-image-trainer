@@ -8,7 +8,7 @@ import { currentLogRun, loadRunLog } from '../components/logview.js';
 import { loadConfig } from './file.js';
 import { getCurrentYaml } from './form.js';
 import { ensureDashboardConfigSelection, renderConfigIdentity } from './list.js';
-import { api } from '../core/api.js';
+import { api, describeError } from '../core/api.js';
 import { $, escapeHtml, setHidden, setText } from '../core/dom.js';
 import { t } from '../core/i18n.js';
 import { showAlert, showError, showSuccess } from '../core/notify.js';
@@ -134,7 +134,7 @@ export async function switchProfile(name) {
     state.configPath = previous.configPath;
     state.activeRun = previous.activeRun;
     renderProfileOptions();
-    showError(t('train.msg26'), error.detail || error.message);
+    showError(t('train.msg26'), describeError(error));
   }
 }
 
@@ -213,7 +213,7 @@ export async function submitProfileDialog(event) {
     showSuccess(t('train.msg32'), data.workspace.path, [], 'workspace-created');
     runSetupCheck().catch(() => {});
   } catch (error) {
-    show(error.detail || error.message);
+    show(describeError(error));
   } finally {
     if (confirm) confirm.disabled = false;
   }

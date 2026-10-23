@@ -12,6 +12,7 @@ from ...config import expand
 from ..deps import ROOT, _rel
 from ..services.cache_cmd import _cache_summary
 from ..services.workspace import _config_from_data, _resolve_workspace, _workspace_target_run
+from ..errors import error_detail, render
 
 router = APIRouter()
 
@@ -22,34 +23,44 @@ async def api_validate(request: Request):
     body = await request.json()
     text = body.get("yaml", "")
     if not text.strip():
-        return {"ok": False, "yaml_error": {"message": "YAML 为空", "line": None, "column": None},
+        return {"ok": False, "yaml_error": {**error_detail("err.yaml.empty"), "line": None, "column": None},
                 "problems": [], "warnings": [], "cache": None, "run": None}
     try:
         data = yaml.safe_load(text)
     except yaml.YAMLError as exc:
         mark = getattr(exc, "problem_mark", None)
+        problem = str(getattr(exc, "problem", exc))
+        if mark:
+            detail = error_detail("err.yaml.syntax", line=mark.line + 1, column=mark.column + 1,
+                                  problem=problem)
+        else:
+            detail = error_detail("err.yaml.syntax_plain", problem=problem)
         return {
             "ok": False,
-            "yaml_error": {
-                "message": str(getattr(exc, "problem", exc)),
-                "line": mark.line + 1 if mark else None,
-                "column": mark.column + 1 if mark else None,
-            },
+            "yaml_error": {**detail,
+                           "line": mark.line + 1 if mark else None,
+                           "column": mark.column + 1 if mark else None},
             "problems": [], "warnings": [], "cache": None, "run": None,
         }
     if not isinstance(data, dict):
-        return {"ok": False, "yaml_error": {"message": "配置必须是一个 YAML 映射", "line": 1, "column": 1},
+        return {"ok": False,
+                "yaml_error": {**error_detail("err.yaml.not_mapping"), "line": 1, "column": 1},
                 "problems": [], "warnings": [], "cache": None, "run": None}
 
     workspace = _resolve_workspace(body.get("workspace"))
 
     problems: list[str] = []
     warnings: list[str] = []
+    problem_codes: list[dict | None] = []
+    warning_codes: list[dict | None] = []
     try:
         config = _config_from_data(workspace, data)
         problems = config.validate()
+        problem_codes = [None] * len(problems)
     except Exception as exc:  # malformed types must not 500 the UI
-        return {"ok": False, "yaml_error": {"message": f"配置结构错误: {exc}", "line": None, "column": None},
+        return {"ok": False,
+                "yaml_error": {**error_detail("err.config.structure", error=exc),
+                               "line": None, "column": None},
                 "problems": [], "warnings": [], "cache": None, "run": None, "next_tab": "train"}
 
     reg_path = expand(config.dataset.reg_path or "")
@@ -57,41 +68,45 @@ async def api_validate(request: Request):
         reg_full = reg_path if os.path.isabs(reg_path) else os.path.abspath(os.path.join(ROOT, reg_path))
         if not os.path.isdir(reg_full):
             problems.append(f"dataset.reg_path not found: {reg_full}")
+            problem_codes.append(None)
     if int(config.dataset.reg_repeat or 1) < 1:
-        problems.append("dataset.reg_repeat 必须是 >= 1 的整数")
+        problems.append(render("err.dataset.reg_repeat"))
+        problem_codes.append({"code": "err.dataset.reg_repeat", "params": {}})
 
     cache = _cache_summary(config) if config.cache.dir else {
         "dir": "", "items": 0, "ready": False, "index_ready": False,
         "preview_ready": False, "index_mtime": None,
     }
     if not config.cache.dir:
-        problems.append("cache.dir 为空，无法检查缓存")
+        problems.append(render("err.cache.dir_empty"))
+        problem_codes.append({"code": "err.cache.dir_empty", "params": {}})
 
     prompts = [p for p in (config.preview.prompts or []) if str(p).strip()]
     if not prompts and not (cache or {}).get("preview_ready"):
-        warnings.append("样图提示词为空：不会生成 preview.safetensors，训练时不会出样图。")
+        warnings.append(render("err.warning.prompts_empty"))
+        warning_codes.append({"code": "err.warning.prompts_empty", "params": {}})
     if not config.train.eval_every:
-        warnings.append("验证间隔为 0：训练不会写入 eval 损失。")
+        warnings.append(render("err.warning.eval_off"))
+        warning_codes.append({"code": "err.warning.eval_off", "params": {}})
     if not config.train.sample_every:
-        warnings.append("采样间隔为 0：训练不会生成样图。")
+        warnings.append(render("err.warning.samples_off"))
+        warning_codes.append({"code": "err.warning.samples_off", "params": {}})
 
     # 缓存的问题单独说清楚，否则预检只是「不通过」而没有理由
-    cache_problem = ""
+    cache_problem = None
     if config.cache.dir and cache:
         if not cache.get("index_ready"):
-            cache_problem = f"缓存未生成（{cache.get('dir')}）：先到「缓存」页生成 latent 与文本嵌入。"
+            cache_problem = {"code": "err.cache.not_built", "params": {"dir": cache.get("dir")}}
         elif cache.get("legacy_index"):
-            cache_problem = (
-                f"缓存索引过旧（{cache.get('dir')}）：训练集与正则集混在一起，"
-                "请到「缓存」页重建一次。"
-            )
+            cache_problem = {"code": "err.cache.legacy", "params": {"dir": cache.get("dir")}}
         elif cache.get("missing_text"):
-            cache_problem = (
-                f"缓存缺文本嵌入（{cache['missing_text']}/{cache.get('items', 0)} 条）："
-                "只做了 latent，请在「缓存」页点「一键生成缓存（latent + 文本）」。"
-            )
+            cache_problem = {"code": "err.cache.missing_text",
+                             "params": {"dir": cache.get("dir"),
+                                        "missing": cache["missing_text"],
+                                        "items": cache.get("items", 0)}}
     if cache_problem:
-        problems.append(cache_problem)
+        problems.append(render(cache_problem["code"], cache_problem["params"]))
+        problem_codes.append(cache_problem)
 
     # First missing step wins.  The training page owns the three model paths,
     # so model problems point back there; dataset/cache have their own tabs.
@@ -126,7 +141,9 @@ async def api_validate(request: Request):
         "ok": ok,
         "yaml_error": None,
         "problems": problems,
+        "problem_codes": problem_codes,
         "warnings": warnings,
+        "warning_codes": warning_codes,
         "cache": cache,
         "next_tab": next_tab,
         "focus_field": focus_field,

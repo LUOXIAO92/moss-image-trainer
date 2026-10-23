@@ -16,7 +16,6 @@ import sys
 import threading
 import uuid
 
-from fastapi import HTTPException
 
 # Fail fast for the deployer, not with a cryptic import error later.  The UI
 # never exposes interpreter selection: the product uses its bundled .venv.
@@ -58,15 +57,21 @@ def _rel(path: str) -> str:
     return _settings_rel(path)
 
 
-def _safe_name(value: str | None, label: str = "名称") -> str:
-    """工作区 / run / 配置的名字：不允许空、不允许路径分隔符。"""
+def _safe_name(value: str | None, kind: str = "name") -> str:
+    """Workspace / run names: not empty, no path separators.
+
+    ``kind`` picks the message family (``err.name.<problem>.<kind>``); the UI
+    translates the code, so no Chinese label travels in the message.
+    """
+    from .errors import fail
+
     raw = str(value or "").strip()
     if raw.endswith(".yaml"):
         raw = raw[:-5]
     if not raw:
-        raise HTTPException(400, f"{label}不能为空")
+        raise fail(400, f"err.name.empty.{kind}")
     if not NAME_RE.match(raw):
-        raise HTTPException(400, f"{label}只能使用字母、数字、点、下划线和短横线（1-64 字符）")
+        raise fail(400, f"err.name.charset.{kind}")
     return raw
 
 

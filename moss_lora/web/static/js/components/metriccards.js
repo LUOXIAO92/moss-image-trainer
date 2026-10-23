@@ -4,7 +4,7 @@
  * ========================================================================= */
 
 import { drawChart, nearestPoint } from './chart.js';
-import { api } from '../core/api.js';
+import { api, describeError } from '../core/api.js';
 import { $, $$, clamp, escapeHtml, setText } from '../core/dom.js';
 import { fmtInt } from '../core/fmt.js';
 import { t } from '../core/i18n.js';
@@ -616,7 +616,7 @@ export async function saveDashboardLayout() {
       body: JSON.stringify({ layout: state.layout }),
     });
   } catch (error) {
-    showAlert({ type: 'warn', title: t('dash.msg11'), text: error.detail || error.message, timeout: 5000, key: 'layout-save' });
+    showAlert({ type: 'warn', title: t('dash.msg11'), text: describeError(error), timeout: 5000, key: 'layout-save' });
   } finally {
     state.layoutSaving = false;
   }

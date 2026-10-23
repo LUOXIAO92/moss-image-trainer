@@ -20,7 +20,7 @@ import { getCurrentYaml, refreshYamlFromConfig, setMode } from './config/form.js
 import { ensureDashboardConfigSelection } from './config/list.js';
 import { loadProfiles } from './config/profiles.js';
 import { dumpYaml, parseYaml } from './config/yaml.js';
-import { api } from './core/api.js';
+import { api, describeError } from './core/api.js';
 import { $, $$ } from './core/dom.js';
 import { mountFragments } from './core/fragments.js';
 import { applyI18n, loadI18n, t } from './core/i18n.js';
@@ -92,12 +92,12 @@ export async function route() {
   }
   if (tab === 'dataset') autoLoadDataset().catch(() => {});
   if (tab === 'cache') loadCache().catch(() => {});
-  if (tab === 'caption') loadCaptionPage().catch((error) => showError(t('common.msg58'), error.detail || error.message));
+  if (tab === 'caption') loadCaptionPage().catch((error) => showError(t('common.msg58'), describeError(error)));
   if (tab === 'samples') loadSamples().catch(() => {});
   if (tab === 'export') loadExportPage().catch(() => {});
   if (tab === 'workspace') loadWorkspacePage().catch(() => {});
   if (tab === 'settings') {
-      if (!state.settingsDirty) loadSettings().catch((error) => showError(t('common.msg59'), error.detail || error.message));
+      if (!state.settingsDirty) loadSettings().catch((error) => showError(t('common.msg59'), describeError(error)));
     loadSystem().catch(() => {});
   }
   window.scrollTo({ top: 0, behavior: 'auto' });
@@ -157,7 +157,7 @@ export async function readJobLogFile() {
     }
     showSuccess(t('job.msg60'), state.job.logPath || '', [], 'log-file');
   } catch (error) {
-    showError(t('job.msg61'), error.detail || error.message);
+    showError(t('job.msg61'), describeError(error));
   }
 }
 

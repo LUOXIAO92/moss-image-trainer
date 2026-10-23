@@ -6,13 +6,14 @@ from __future__ import annotations
 import copy
 import os
 
-from fastapi import HTTPException, Request
+from fastapi import Request
 
 from .. import deps
 from ... import settings as runtime_settings
 from ...config import expand
 from ..deps import ROOT
 from .caption import _caption_prompt_defaults, _probe_service, resolve_api_key
+from ..errors import fail
 
 
 def _save_language(code: str) -> None:
@@ -50,12 +51,12 @@ def _caption_service_view(settings: dict) -> dict:
     }
 
 
-def _plan_api_key(caption: dict, raw: str) -> tuple[str, str, str, str]:
+def _plan_api_key(caption: dict, raw: str) -> tuple[tuple[str, dict] | None, str, str, str]:
     """填环境变量名就存名字；填密钥就只记在内存里，不落盘；密钥被拒直接报错。"""
     base_url = str(caption.get("base_url") or "").strip()
     raw = raw.strip()
     if not raw:
-        return "", "", "", ""
+        return None, "", "", ""
     model = str(caption.get("model") or "").strip()
 
     def mismatch(ids: list[str]) -> str:
@@ -67,18 +68,18 @@ def _plan_api_key(caption: dict, raw: str) -> tuple[str, str, str, str]:
     if env_value:
         kind, detail, ids = _probe_service(base_url, env_value)
         if kind == "unauthorized":
-            return f"密钥无效（{detail}），没有保存", "", "", ""
+            return ("err.settings.key_invalid", {"reason": detail}), "", "", ""
         note = "" if kind == "ok" else f"环境变量 {raw} 已保存，但服务暂时没连上（{detail}）"
         warn = "；".join(part for part in (note, mismatch(ids)) if part)
-        return "", warn, raw, ""
+        return None, warn, raw, ""
     kind, detail, ids = _probe_service(base_url, raw)
     if kind == "unauthorized":
-        return "密钥无效（服务拒绝了这把钥匙），没有保存", "", "", ""
+        return ("err.settings.key_rejected", {}), "", "", ""
     note = "填的是密钥本身，只在本次运行有效、不写进设置文件；想要长期生效请填环境变量名"
     if kind == "unreachable":
         note += f"（服务当前连不上：{detail}）"
     warn = "；".join(part for part in (note, mismatch(ids)) if part)
-    return "", warn, "", raw
+    return None, warn, "", raw
 
 async def probe_model(request: Request):
     """Check one model path without loading it (files or a HF model directory)."""
@@ -86,7 +87,7 @@ async def probe_model(request: Request):
     kind = str(body.get("kind") or "").strip()
     raw = str(body.get("path") or "").strip()
     if kind not in ("dit", "text_encoder", "vae"):
-        raise HTTPException(400, "model kind 必须是 dit / text_encoder / vae")
+        raise fail(400, "err.settings.model_kind")
     if not raw:
         return {"ok": False, "kind": kind, "path": "", "reason": "路径为空"}
     expanded = expand(raw)

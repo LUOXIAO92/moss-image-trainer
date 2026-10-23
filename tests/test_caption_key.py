@@ -42,7 +42,7 @@ def main() -> int:
     assert A.resolve_api_key({"api_key": ""}) == ("key_literal_123", "literal")
 
     # 空串 = 清空；不带这个键 = 保持原样（由 merge 保证，这里只验清空）
-    assert A._plan_api_key(dict(DEAD), "") == ("", "", "", "")
+    assert A._plan_api_key(dict(DEAD), "") == (None, "", "", "")
     deps._LITERAL_API_KEY = ""
 
     # 旧版 settings.yaml 里直接存的密钥仍然可用（长得不像变量名）

@@ -4,7 +4,7 @@
  * ========================================================================= */
 
 import { renderActivity } from './jobs.js';
-import { api } from '../core/api.js';
+import { api, describeError } from '../core/api.js';
 import { copyText } from '../core/clipboard.js';
 import { $, clamp, escapeHtml, setHidden, setText } from '../core/dom.js';
 import { fmtInt } from '../core/fmt.js';
@@ -100,7 +100,7 @@ export async function loadRunLog(run, { force = false } = {}) {
     }
   } catch (error) {
     if (!state.runLog.text) {
-      state.logs = [{ line: t('dash.log.readFailed', { error: error.detail || error.message }), className: 'err' }];
+      state.logs = [{ line: t('dash.log.readFailed', { error: describeError(error) }), className: 'err' }];
       rebuildLog(true);
     }
   } finally {

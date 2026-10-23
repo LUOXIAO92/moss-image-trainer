@@ -12,7 +12,7 @@ import { renderConfigIdentity, renderConfigList } from './list.js';
 import { renderProfileOptions } from './profiles.js';
 import { clearFormErrors } from './validate.js';
 import { dumpYaml, parseYaml } from './yaml.js';
-import { api } from '../core/api.js';
+import { api, describeError } from '../core/api.js';
 import { $, setHidden, setText } from '../core/dom.js';
 import { t } from '../core/i18n.js';
 import { showAlert, showError, showSuccess } from '../core/notify.js';
@@ -195,7 +195,7 @@ export async function submitConfigDialog(event) {
   } catch (error) {
     show(error.status === 409
       ? `${t('runNew.exists')}：${name}`
-      : (error.detail || error.message));
+      : (describeError(error)));
   } finally {
     if (confirm) confirm.disabled = false;
   }
@@ -217,7 +217,7 @@ export async function deleteCurrentRun() {
     await loadConfig();
     showSuccess(t('runDelete.done'), `runs/${run}`, [], 'run-deleted');
   } catch (error) {
-    showError(t('runDelete.failed'), error.detail || error.message);
+    showError(t('runDelete.failed'), describeError(error));
   }
 }
 
@@ -269,12 +269,12 @@ export async function saveConfig(options = {}) {
     runSetupCheck().catch(() => {});
     return true;
   } catch (error) {
-    if (error.status === 409 || /冻结/.test(String(error.detail || ''))) {
+    if (error.code === 'err.run.frozen' || error.status === 409) {
       showAlert({ type: 'warn', title: t('runFrozen.title'), text: t('runFrozen.text'), timeout: 5000 });
     } else if (error.line) {
-      showYamlError({ message: error.detail || error.message, line: error.line, column: error.column });
+      showYamlError({ message: describeError(error), line: error.line, column: error.column });
     }
-    showError(t('train.msg36'), error.detail || error.message, [
+    showError(t('train.msg36'), describeError(error), [
       { label: t('common.retry'), onClick: () => saveConfig() },
     ]);
     return false;

@@ -9,11 +9,11 @@ import re
 import urllib.error
 import urllib.request
 
-from fastapi import HTTPException
 
 from .. import deps
 from ..deps import _write_text
 from .launcher import _python
+from ..errors import fail
 
 
 _ENV_NAME_RE = re.compile(r"^[A-Z_][A-Z0-9_]{0,63}$")
@@ -144,7 +144,7 @@ def _caption_command(config, caption: dict, log_dir: str, stamp: str, datasets: 
     if "reg" in datasets:
         reg_path = os.path.abspath(os.path.expanduser(str(config.dataset.reg_path or "")))
         if not reg_path or not os.path.isdir(reg_path):
-            raise HTTPException(400, "还没有设置正则集目录，无法给正则集生成提示词")
+            raise fail(400, "err.caption.reg_missing")
         commands.append([python] + _caption_args(
             reg_path, caption, styles, tag_prompt, official_prompt, role="reg",
             overwrite=overwrite))
@@ -162,14 +162,14 @@ def _caption_selection(body: dict) -> tuple[list[str], list[str], bool]:
     """数据集 / 风格 / 是否覆盖：提示词生成任务的三个选项。"""
     raw_datasets = body.get("datasets")
     if raw_datasets is None:
-        raise HTTPException(400, "先勾选要生成的数据集：训练集 / 正则集")
+        raise fail(400, "err.caption.dataset_required")
     datasets = [item for item in raw_datasets if item in CAPTION_DATASETS]
     if not datasets:
-        raise HTTPException(400, "至少选一个数据集：训练集 或 正则集")
+        raise fail(400, "err.caption.dataset_required")
     raw_styles = body.get("styles")
     if raw_styles is None:
-        raise HTTPException(400, "先勾选要生成的风格：tag + caption / 官方描述")
+        raise fail(400, "err.caption.style_required")
     styles = [item for item in raw_styles if item in CAPTION_STYLES]
     if not styles:
-        raise HTTPException(400, "至少选一种风格：tag + caption 或 官方描述")
+        raise fail(400, "err.caption.style_required")
     return datasets, styles, bool(body.get("overwrite"))

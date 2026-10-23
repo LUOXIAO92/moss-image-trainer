@@ -9,7 +9,7 @@ import { saveConfig } from '../config/file.js';
 import { markDirty, refreshYamlFromConfig, showYamlError, updateYamlLineCount } from '../config/form.js';
 import { defaultCacheDir } from '../config/model.js';
 import { dumpYaml, parseYaml } from '../config/yaml.js';
-import { api } from '../core/api.js';
+import { api, describeError } from '../core/api.js';
 import { $, getPath, setHidden, setPath, setText } from '../core/dom.js';
 import { fmtDuration, fmtInt } from '../core/fmt.js';
 import { jobLabel, t } from '../core/i18n.js';
@@ -205,8 +205,8 @@ export async function loadCache() {
     setText('#cache-ready-text', t('cache.msg23'));
     const pill = $('#cache-ready-pill');
     if (pill) pill.className = 'status-pill is-err';
-    setText('#cache-last-line', error.detail || error.message);
-    showAlert({ type: 'warn', title: t('cache.msg24'), text: error.detail || error.message, timeout: 6000 });
+    setText('#cache-last-line', describeError(error));
+    showAlert({ type: 'warn', title: t('cache.msg24'), text: describeError(error), timeout: 6000 });
   }
 }
 
@@ -237,7 +237,7 @@ export async function stopCacheBuild() {
     showAlert({ type: 'info', title: t('train.msg55'), text: t('job.msg52'), timeout: 4000 });
     await loadCache();
   } catch (error) {
-    showError(t('job.msg54'), error.detail || error.message, [
+    showError(t('job.msg54'), describeError(error), [
       { label: t('common.retry'), onClick: () => { stopCacheBuild().catch(() => {}); } },
     ]);
     await loadCache().catch(() => {});

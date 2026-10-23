@@ -9,7 +9,8 @@ import threading
 import time
 from dataclasses import dataclass, field
 
-from fastapi import HTTPException
+
+from .errors import fail
 
 
 @dataclass
@@ -62,7 +63,7 @@ class Jobs:
     def get(self, job_id: str) -> Job:
         job = self.items.get(job_id)
         if job is None:
-            raise HTTPException(404, "job not found")
+            raise fail(404, "err.job.not_found", job=job_id)
         return job
 
     def active(self) -> Job | None:

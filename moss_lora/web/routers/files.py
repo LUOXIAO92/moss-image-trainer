@@ -5,11 +5,12 @@ from __future__ import annotations
 
 import os
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from fastapi.responses import FileResponse
 
 from ..deps import ROOT
 from ..services.workspace import _workspace_root
+from ..errors import fail
 
 router = APIRouter()
 
@@ -24,7 +25,7 @@ def api_fs_list(path: str = ""):
         if os.path.isdir(parent):
             return {"path": base, "parent": parent, "exists": False,
                     "entries": _fs_entries(parent)}
-        raise HTTPException(404, f"目录不存在：{path}")
+        raise fail(404, "err.dir.not_found", path=path)
     return {"path": base, "parent": os.path.dirname(base), "exists": True,
             "entries": _fs_entries(base)}
 
@@ -53,5 +54,5 @@ def api_files(path: str):
     allowed = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".safetensors", ".yaml", ".txt",
                ".log", ".json", ".zip")
     if not os.path.isfile(full) or os.path.splitext(full)[1].lower() not in allowed:
-        raise HTTPException(404, "not found")
+        raise fail(404, "err.file.not_found")
     return FileResponse(full, filename=os.path.basename(full))

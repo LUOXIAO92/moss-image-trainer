@@ -13,7 +13,7 @@ import time
 import uuid
 
 import yaml
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import Response, StreamingResponse
 
 from ... import runtime
@@ -29,6 +29,7 @@ from ..services.workspace import (_config_from_data, _resolve_workspace, _run_co
                                   _run_is_live, _section, _workspace_cache_dir, _workspace_dir,
                                   _workspace_logs_dir, _workspace_root, _workspace_runs_dir,
                                   _workspace_target_run)
+from ..errors import fail, render
 
 router = APIRouter()
 
@@ -38,7 +39,7 @@ async def api_start(request: Request):
     body = await request.json()
     kind = body.get("kind")
     if kind not in ("train", "cache", "caption"):
-        raise HTTPException(400, f"unknown job kind {kind}")
+        raise fail(400, "err.job.kind_unknown", kind=kind)
     datasets, styles, overwrite = _caption_selection(body) if kind == "caption" else ([], [], False)
     parts = _cache_parts(body) if kind == "cache" else []
     workspace = _resolve_workspace(body.get("workspace"))
@@ -47,24 +48,27 @@ async def api_start(request: Request):
     if run_arg:
         # A run names its own config; the file is the only thing read. Editing
         # it afterwards is allowed, but not while the run is training.
-        run_arg = _safe_name(run_arg, "run 名称")
+        run_arg = _safe_name(run_arg, "run")
         candidate = _run_config_path(workspace, run_arg)
         if not os.path.isfile(candidate):
-            raise HTTPException(404, f"运行没有配置存档：{run_arg}")
+            raise fail(404, "err.run.no_config", run=run_arg)
         if kind != "caption" and _run_is_live(workspace, run_arg):
-            raise HTTPException(409, "本次运行进行中，配置已冻结")
+            raise fail(409, "err.run.frozen")
         with open(candidate, encoding="utf-8") as handle:
             text = handle.read()
     if not text:
-        raise HTTPException(400, 'yaml required (or pass {"run": "<name>"})')
+        raise fail(400, "err.job.yaml_required")
     try:
         data = yaml.safe_load(text)
     except yaml.YAMLError as exc:
         mark = getattr(exc, "problem_mark", None)
-        where = f" 第 {mark.line + 1} 行第 {mark.column + 1} 列" if mark else ""
-        raise HTTPException(400, f"YAML 语法错误{where}: {getattr(exc, 'problem', exc)}")
+        problem = str(getattr(exc, "problem", exc))
+        if mark:
+            raise fail(400, "err.yaml.syntax", line=mark.line + 1, column=mark.column + 1,
+                       problem=problem)
+        raise fail(400, "err.yaml.syntax_plain", problem=problem)
     if not isinstance(data, dict):
-        raise HTTPException(400, "配置必须是一个 YAML 映射")
+        raise fail(400, "err.yaml.not_mapping")
 
     settings, resolved = _settings_snapshot()
     config = _config_from_data(workspace, data)
@@ -74,12 +78,14 @@ async def api_start(request: Request):
         # 只勾了正则集时，训练集路径空着也没关系
         if "train" in datasets:
             if not config.dataset.path or not os.path.isdir(os.path.expanduser(config.dataset.path)):
-                raise HTTPException(400, f"训练集目录不存在：{config.dataset.path or '(空)'}")
+                raise fail(400, "err.dataset.missing", path=config.dataset.path or "(空)")
         problems = []
     if kind == "cache" and "text" in parts and not str(config.model.text_encoder or "").strip():
-        problems.append("文本编码需要 model.text_encoder（本地 Qwen3.5-9B 目录）")
+        if not problems:
+            raise fail(400, "err.cache.text_encoder_required")
+        problems.append(render("err.cache.text_encoder_required"))
     if problems:
-        raise HTTPException(400, "配置有问题: " + "；".join(problems))
+        raise fail(400, "err.config.invalid", problems="；".join(problems))
 
     profile = workspace
     python = _python()
@@ -88,25 +94,11 @@ async def api_start(request: Request):
     # or an agent started, which the in-memory registry cannot see.
     holder = runtime.check_lock(_workspace_dir(workspace))
     if holder:
-        raise HTTPException(
-            409,
-            f"已有任务占用 GPU：{holder.get('kind') or 'job'} pid {holder.get('pid')}"
-            f"（{holder.get('run_id') or '-'}）",
-            headers={"Retry-After": "10"},
-        )
+        raise fail(409, "err.gpu.busy", pid=holder.get("pid"), headers={"Retry-After": "10"})
 
     running = JOBS.active()
     if running is not None:
-        labels = {
-            "train": "训练",
-            "caption": "提示词生成",
-            "cache": "缓存",
-        }
-        raise HTTPException(
-            409,
-            f"已有任务运行中：{labels.get(running.kind, running.kind)}（{running.id}）。"
-            "请等待它结束，或先在训练页停止它。",
-        )
+        raise fail(409, "err.job.busy", job=running.id)
 
     run_dir = ""
     run_id = ""
@@ -146,30 +138,14 @@ async def api_start(request: Request):
         # 训练要两样东西：逐条 latent + 逐条文本嵌入。preview.safetensors 只给预览图用。
         summary = _cache_summary(config)
         if not summary["index_ready"]:
-            raise HTTPException(
-                400,
-                f"缓存未就绪（{cache_dir}）：缺 index.json。"
-                "先去「缓存」页点击「一键生成缓存（latent + 文本）」。",
-            )
+            raise fail(400, "err.cache.not_built", dir=cache_dir)
         if summary.get("legacy_index"):
-            raise HTTPException(
-                400,
-                f"缓存格式不对（{cache_dir}）：不是当前版本的索引。"
-                "请到「缓存」页勾上 latent 缓存和文本编码，重新生成后再训练。",
-            )
+            raise fail(400, "err.cache.legacy", dir=cache_dir)
         if summary.get("stale_sizing"):
-            raise HTTPException(
-                400,
-                f"缓存的尺寸规格和当前配置不一致（{cache_dir}）："
-                f"缓存按 {summary.get('sizing')} 生成，当前是 max_area={config.dataset.max_area}。"
-                "到「缓存」页重新生成 latent 缓存后再训练。",
-            )
+            raise fail(400, "err.cache.sizing", dir=cache_dir)
         if summary.get("missing_text"):
-            raise HTTPException(
-                400,
-                f"缓存缺文本嵌入（{summary['missing_text']}/{summary['items']} 条）：{cache_dir}。"
-                "只做了 latent；请在「缓存」页勾上「文本编码」补一遍。",
-            )
+            raise fail(400, "err.cache.missing_text", dir=cache_dir,
+                       missing=summary["missing_text"], items=summary["items"])
         log_name = run_id
         run_label = run_id
     elif kind == "cache":
@@ -189,7 +165,7 @@ async def api_start(request: Request):
         log_name = f"caption-{stamp}"
         run_label = f"caption-{stamp}"
     else:
-        raise HTTPException(400, f"unknown job kind {kind}")
+        raise fail(400, "err.job.kind_unknown", kind=kind)
 
     job_id = uuid.uuid4().hex[:10]
     snapshot = os.path.join(log_dir, f"{job_id}.yaml")
@@ -211,17 +187,13 @@ async def api_start(request: Request):
         caption_settings = settings.get("caption") or {}
         _caption_env(job_env, caption_settings)
         if not job_env.get("VLM_BASE_URL"):
-            raise HTTPException(400, "提示词生成还没配置视觉服务地址，去「提示词生成」页填写并保存后再开始。")
+            raise fail(400, "err.caption.no_endpoint")
         if not job_env.get("VLM_API_KEY"):
             _, source = resolve_api_key(caption_settings)
             stored = str(caption_settings.get("api_key") or "").strip()
             if source == "missing":
-                raise HTTPException(
-                    400,
-                    f"设置里存的是环境变量名 {stored}，但当前 WebUI 进程里读不到它的值："
-                    "先 export 再重启 WebUI，或者直接把密钥填进「提示词生成」页（不保存，重开就没）。",
-                )
-            raise HTTPException(400, "提示词生成还没配置密钥：在「提示词生成」页填环境变量名或密钥，保存后再开始。")
+                raise fail(400, "err.caption.key_unreadable", name=stored)
+            raise fail(400, "err.caption.no_key")
     log_path = os.path.join(log_dir, f"{log_name}.log")
     try:
         os.makedirs(_workspace_cache_dir(workspace), exist_ok=True)
@@ -365,7 +337,7 @@ def api_job_detail(job_id: str):
     for entry in api_jobs():
         if entry["id"] == job_id:
             return entry
-    raise HTTPException(404, f"job not found: {job_id}")
+    raise fail(404, "err.job.not_found", job=job_id)
 
 
 @router.get("/api/jobs/{job_id}/events")
@@ -380,7 +352,7 @@ async def api_events(job_id: str, from_index: int = 0):
     if job is None:
         record = _disk_job(job_id)
         if record is None:
-            raise HTTPException(404, f"job not found: {job_id}")
+            raise fail(404, "err.job.not_found", job=job_id)
         return StreamingResponse(_tail_disk_job(record), media_type="text/event-stream")
 
     async def stream():
@@ -468,7 +440,7 @@ def api_job_log(job_id: str):
         record = _disk_job(job_id) or {}
         path = record.get("log") or ""
     if not path or not os.path.isfile(path):
-        raise HTTPException(404, "日志文件不存在")
+        raise fail(404, "err.job.log_missing")
     with open(path, encoding="utf-8", errors="replace") as handle:
         return Response(handle.read(), media_type="text/plain; charset=utf-8")
 
@@ -480,13 +452,13 @@ def api_stop(job_id: str):
         return {"ok": _terminate(job), "state": "stopping"}
     record = _disk_job(job_id)
     if record is None:
-        raise HTTPException(404, f"job not found: {job_id}")
+        raise fail(404, "err.job.not_found", job=job_id)
     pid = record.get("pid")
     if not runtime.pid_alive(pid):
-        raise HTTPException(409, "任务已经不在运行")
+        raise fail(409, "err.job.not_running")
     # SIGINT lets the trainer checkpoint before it exits; SIGKILL would not.
     try:
         os.kill(int(pid), signal.SIGINT)
     except (ProcessLookupError, PermissionError) as exc:
-        raise HTTPException(409, f"无法发送停止信号：{exc}") from exc
+        raise fail(409, "err.job.stop_failed", error=exc) from exc
     return {"ok": True, "state": "stopping"}

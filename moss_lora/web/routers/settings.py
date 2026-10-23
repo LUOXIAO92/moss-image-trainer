@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from .. import deps
@@ -13,6 +13,7 @@ from ... import settings as runtime_settings
 from ..deps import SETTINGS_REL, _settings_snapshot
 from ..services.settings_svc import (_blank_default_prompts, _caption_prompt_defaults,
                                      _caption_service_view, _plan_api_key, probe_model)
+from ..errors import fail
 
 router = APIRouter()
 
@@ -36,7 +37,7 @@ async def api_settings_post(request: Request):
     body = await request.json()
     payload = body.get("settings") if isinstance(body, dict) and isinstance(body.get("settings"), dict) else body
     if not isinstance(payload, dict):
-        raise HTTPException(400, "settings 必须是一个映射")
+        raise fail(400, "err.settings.not_mapping")
     submitted_caption = payload.get("caption") if isinstance(payload.get("caption"), dict) else {}
     # 只提交一部分（例如设置页只改路径）时，保留其它段（提示词生成、运行时）不动
     settings_snapshot, _ = _settings_snapshot()
@@ -50,7 +51,8 @@ async def api_settings_post(request: Request):
         key_error, key_note, stored_key, literal_key = await asyncio.to_thread(
             _plan_api_key, payload.get("caption") or {}, str(submitted_caption.get("api_key") or ""))
         if key_error:
-            raise HTTPException(400, key_error)
+            code, params = key_error
+            raise fail(400, code, **params)
         payload["caption"]["api_key"] = stored_key
     errors, warnings, status = runtime_settings.validate_settings(payload)
     if errors:

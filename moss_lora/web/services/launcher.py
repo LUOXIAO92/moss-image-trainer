@@ -11,12 +11,12 @@ import sys
 import time
 
 import yaml
-from fastapi import HTTPException
 
 from ... import runtime
 from ..deps import ROOT, STEP_RE
 from ..jobs import Job
 from .cache_cmd import CACHE_PARTS
+from ..errors import fail
 
 
 def _python() -> str:
@@ -37,7 +37,7 @@ def _command(kind: str, config_path: str, parts: list[str] | None = None) -> lis
         return ["bash", "-c", " && ".join(steps)]
     if kind == "train":
         return [python, "-m", "moss_lora.cli", "train", "--config", config_path]
-    raise HTTPException(400, f"unknown job kind {kind}")
+    raise fail(400, "err.job.kind_unknown", kind=kind)
 
 
 def _write_preview_sidecars(job: Job) -> None:

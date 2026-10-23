@@ -8,7 +8,7 @@ import threading
 import time
 import uuid
 
-from fastapi import HTTPException, Request
+from fastapi import Request
 
 from ... import settings as runtime_settings
 from ..deps import _rel, _safe_name, _settings_snapshot
@@ -17,21 +17,22 @@ from .launcher import _python, _run
 from .workspace import (_resolve_workspace, _run_config_snapshot, _workspace_dir,
                         _workspace_exists, _workspace_logs_dir, _workspace_name,
                         _workspace_runs_dir)
+from ..errors import fail
 
 
 async def export_batch(name: str, request: Request):
     """Export a range of checkpoints at once, either into a directory or a zip."""
     name = _workspace_name(name)
     if not _workspace_exists(name):
-        raise HTTPException(404, f"工作区不存在：{name}")
+        raise fail(404, "err.workspace.not_found", name=name)
     body = await request.json()
-    run = _safe_name(body.get("run"), "run 名称")
+    run = _safe_name(body.get("run"), "run")
     run_dir = os.path.join(_workspace_runs_dir(name), run)
     if not os.path.isdir(run_dir):
-        raise HTTPException(404, f"run 不存在：{run}")
+        raise fail(404, "err.run.not_found", run=run)
     formats = [f for f in (body.get("formats") or ["kohya"]) if f in ("kohya", "diffusers")]
     if not formats:
-        raise HTTPException(400, "至少选择一种格式")
+        raise fail(400, "err.export.format_required")
     spec = str(body.get("steps") or "").strip()
     target = str(body.get("target_dir") or "").strip()
     want_zip = bool(body.get("zip"))
@@ -39,7 +40,7 @@ async def export_batch(name: str, request: Request):
 
     config_text, config_path, _source = _run_config_snapshot(name, run)
     if not config_text:
-        raise HTTPException(400, "找不到该 run 的配置快照")
+        raise fail(400, "err.run.no_config", run=run)
     stamp = time.strftime("%Y%m%d-%H%M%S")
     exports_root = os.path.join(_workspace_dir(name), "exports")
     zip_path = os.path.join(exports_root, f"{run}-{stamp}.zip") if want_zip else ""
@@ -79,12 +80,12 @@ async def export_one(name: str, request: Request):
     """Export one checkpoint of a finished run (kohya or diffusers layout)."""
     name = _workspace_name(name)
     if not _workspace_exists(name):
-        raise HTTPException(404, f"工作区不存在：{name}")
+        raise fail(404, "err.workspace.not_found", name=name)
     body = await request.json()
-    run = _safe_name(body.get("run"), "run 名称")
+    run = _safe_name(body.get("run"), "run")
     run_dir = os.path.join(_workspace_runs_dir(name), run)
     if not os.path.isdir(run_dir):
-        raise HTTPException(404, f"run 不存在：{run}")
+        raise fail(404, "err.run.not_found", run=run)
     step = str(body.get("step") or "final")
     if step in ("final", "0", ""):
         checkpoint = os.path.join(run_dir, "checkpoints", "final.safetensors")
@@ -94,19 +95,19 @@ async def export_one(name: str, request: Request):
         try:
             number = int(step)
         except ValueError:
-            raise HTTPException(400, f"步数不合法：{step}")
+            raise fail(400, "err.export.step_invalid", step=step)
         checkpoint = os.path.join(run_dir, "checkpoints", f"step{number:06d}.safetensors")
         suffix = f"_step{number:06d}"
         label = f"step{number:06d}"
     if not os.path.isfile(checkpoint):
-        raise HTTPException(404, f"checkpoint 不存在：{os.path.basename(checkpoint)}")
+        raise fail(404, "err.export.checkpoint_missing", file=os.path.basename(checkpoint))
     formats = [f for f in (body.get("formats") or ["kohya"])
                if f in ("kohya", "diffusers")]
     if not formats:
-        raise HTTPException(400, "至少选择一种格式")
+        raise fail(400, "err.export.format_required")
     config_text, config_path, _source = _run_config_snapshot(name, run)
     if not config_text:
-        raise HTTPException(400, "找不到该 run 的配置快照")
+        raise fail(400, "err.run.no_config", run=run)
     log_dir = _workspace_logs_dir(name)
     os.makedirs(log_dir, exist_ok=True)
     settings, _ = _settings_snapshot()

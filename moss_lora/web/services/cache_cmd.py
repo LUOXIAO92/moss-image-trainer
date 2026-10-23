@@ -7,10 +7,10 @@ import json
 import os
 import time
 
-from fastapi import HTTPException
 
 from ...config import Config, expand
 from ..deps import _rel
+from ..errors import fail
 
 
 CACHE_PARTS = ("latent", "text")
@@ -24,7 +24,7 @@ def _cache_parts(body: dict) -> list[str]:
         raw = ["latent", "text"]
     parts = [part for part in CACHE_PARTS if part in (raw or [])]
     if not parts:
-        raise HTTPException(400, "至少勾一个：latent 缓存 或 文本编码")
+        raise fail(400, "err.cache.parts_required")
     return parts
 
 def _cache_job(workspace_dir: str) -> dict | None:
@@ -89,21 +89,21 @@ def _cache_stop(workspace_dir: str) -> dict:
     path = os.path.join(workspace_dir, PROGRESS_NAME) if workspace_dir else ""
     record = runtime.read_json(path) if path else None
     if not record:
-        raise HTTPException(404, "没有正在运行的缓存任务")
+        raise fail(404, "err.cache.stop_no_job")
     state = runtime.classify(record)
     if state["state"] not in ("running", "starting", "stopping"):
-        raise HTTPException(409, f"缓存任务已经结束（{state['state']}）")
+        raise fail(409, "err.cache.stop_finished")
     pid = int(record.get("pid") or 0)
     if pid <= 0 or not runtime.pid_alive(pid):
-        raise HTTPException(409, "缓存进程已经不在")
+        raise fail(409, "err.cache.stop_dead")
     if not _looks_like_cache_process(pid):
-        raise HTTPException(409, f"pid {pid} 不是缓存进程，已拒绝发送信号")
+        raise fail(409, "err.cache.stop_foreign", pid=pid)
     try:
         os.kill(pid, signal.SIGINT)
     except ProcessLookupError:
-        raise HTTPException(409, "缓存进程已经不在") from None
+        raise fail(409, "err.cache.stop_dead") from None
     except PermissionError:
-        raise HTTPException(409, "没有权限停止这个进程") from None
+        raise fail(409, "err.cache.stop_denied") from None
     record.update({"status": "stopping", "time": time.time()})
     try:
         runtime.write_json_atomic(path, record)

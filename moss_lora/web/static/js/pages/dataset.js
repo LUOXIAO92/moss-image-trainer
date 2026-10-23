@@ -6,7 +6,7 @@
 import { saveConfig } from '../config/file.js';
 import { markDirty, readFormIntoConfig, refreshYamlFromConfig, syncFormFromConfig, updateOutputPreview, updateRegCacheEffective, updateRegCachePlaceholder, updateYamlLineCount } from '../config/form.js';
 import { dumpYaml, parseYaml } from '../config/yaml.js';
-import { api } from '../core/api.js';
+import { api, describeError } from '../core/api.js';
 import { $, deletePath, escapeHtml, fileUrl, getPath, setHidden, setPath, setText, thumbUrl } from '../core/dom.js';
 import { fmtInt } from '../core/fmt.js';
 import { captionSourceLabel, t } from '../core/i18n.js';
@@ -316,7 +316,7 @@ export async function scanRegDataset() {
     setText('#ds-reg-state', t('dataset.scanFailed'));
     const chip = $('#ds-reg-state');
     if (chip) chip.className = 'chip chip-err';
-    setText('#ds-reg-error-text', t('dataset.readDirError', { error: error.detail || error.message }));
+    setText('#ds-reg-error-text', t('dataset.readDirError', { error: describeError(error) }));
     setHidden('#ds-reg-error', false);
   } finally {
     if (button) { button.disabled = false; button.innerHTML = `<svg aria-hidden="true"><use href="#i-scan"></use></svg>${escapeHtml(t('dataset.reg.scan'))}`; }
@@ -361,7 +361,7 @@ async function autoLoadRegDataset() {
     setText('#ds-reg-state', t('dataset.scanFailed'));
     const failedChip = $('#ds-reg-state');
     if (failedChip) failedChip.className = 'chip chip-err';
-    setText('#ds-reg-error-text', t('dataset.readDirError', { error: error.detail || error.message }));
+    setText('#ds-reg-error-text', t('dataset.readDirError', { error: describeError(error) }));
     setHidden('#ds-reg-error', false);
   } finally {
     if (seq === state.dataset.regScanSeq) {
@@ -408,7 +408,7 @@ export async function autoLoadDataset() {
     state.dataset.path = resolved;
     resetDatasetView();
     state.dataset.error = error;
-    setText('#ds-error-text', t('dataset.readDirError', { error: error.detail || error.message }));
+    setText('#ds-error-text', t('dataset.readDirError', { error: describeError(error) }));
     setHidden('#ds-error', false);
   } finally {
     if (seq === state.dataset.scanSeq) {
@@ -518,7 +518,7 @@ async function fetchCaptionDataset(key, path) {
       path,
       displayPath: path,
       images: null,
-      error: error.detail || error.message || t('dataset.msg12'),
+      error: describeError(error) || t('dataset.msg12'),
     };
   }
 }
@@ -569,7 +569,7 @@ export async function loadCaptionDatasetInfo() {
 
 export async function loadCaptionPage() {
   if (!state.captionSettingsDirty) {
-    loadCaptionSettings().catch((error) => showError(t('caption.msg11'), error.detail || error.message));
+    loadCaptionSettings().catch((error) => showError(t('caption.msg11'), describeError(error)));
   }
   await loadCaptionDatasetInfo();
 }
@@ -604,12 +604,12 @@ export async function scanDataset() {
     state.dataset.data = null;
     state.dataset.error = error;
     resetDatasetView();
-    const detail = error.detail || error.message;
+    const detail = describeError(error);
     setText('#ds-error-text', t('dataset.readDirError', { error: detail }));
     setHidden('#ds-error', false);
     setText('#ds-images', '--');
     setText('#ds-images-sub', t('dataset.msg15'));
-    showError(t('dataset.msg16'), t('dataset.readDirError', { error: error.detail || error.message }), [
+    showError(t('dataset.msg16'), t('dataset.readDirError', { error: describeError(error) }), [
       { label: t('common.retry'), onClick: () => scanDataset() },
     ], 'dataset-scan-error');
   } finally {

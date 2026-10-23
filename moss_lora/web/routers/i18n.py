@@ -11,6 +11,7 @@ from fastapi.responses import Response
 from ... import i18n as i18n_pack
 from ..deps import _settings_snapshot
 from ..services.settings_svc import _save_language
+from ..errors import fail
 
 router = APIRouter()
 
@@ -91,6 +92,6 @@ async def api_i18n_current(request: Request):
         raise HTTPException(400, str(exc))
     known = i18n_pack.pack_languages()
     if code not in known:
-        raise HTTPException(404, f"没有这个语言：{code}")
+        raise fail(404, "err.lang.unknown", code=code)
     _save_language(code)
     return {"ok": True, "current": code, "name": known[code]["name"]}

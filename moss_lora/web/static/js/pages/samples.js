@@ -3,7 +3,7 @@
  * split from web/static/app.js, source 6864-7037 (6 non-contiguous spans, see .tmp/js-map.json); behaviour unchanged
  * ========================================================================= */
 
-import { api } from '../core/api.js';
+import { api, describeError } from '../core/api.js';
 import { $, escapeHtml, fileUrl, setHidden, setText, thumbUrl } from '../core/dom.js';
 import { fmtInt } from '../core/fmt.js';
 import { t } from '../core/i18n.js';
@@ -85,7 +85,7 @@ export async function loadSamples() {
     state.samples.items = (Array.isArray(list) ? list : []).filter((item) => !/\/trajectory\.png$/i.test(item.path));
     renderSamples();
   } catch (error) {
-    showAlert({ type: 'warn', title: t('dash.msg17'), text: error.detail || error.message, timeout: 6000 });
+    showAlert({ type: 'warn', title: t('dash.msg17'), text: describeError(error), timeout: 6000 });
   }
 }
 

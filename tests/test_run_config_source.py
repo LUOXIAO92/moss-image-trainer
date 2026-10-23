@@ -154,7 +154,9 @@ async def check_frozen_while_running(http: httpx.AsyncClient) -> None:
     heartbeat("running")
     frozen = await http.put(url, json={"yaml": yaml.safe_dump(config_dict(999))})
     assert frozen.status_code == 409, frozen.text
-    assert "冻结" in frozen.json()["detail"], frozen.text
+    detail = frozen.json()["detail"]
+    assert detail["code"] == "err.run.frozen", detail
+    assert detail["message"], detail
     assert read_run_config()["train"]["steps"] == 777, read_run_config()
 
     blocked = await http.post("/api/jobs", json={"kind": "cache", "workspace": WORKSPACE,

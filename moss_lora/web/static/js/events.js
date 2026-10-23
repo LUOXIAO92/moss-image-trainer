@@ -18,6 +18,7 @@ import { closeSampleCompare, loadActiveTraining, loadDashboard, loadDashboardCom
 import { applyExportRange, choosePathFromBrowser, closeExportDirectory, closePathBrowser, defaultExportDirectory, downloadSingleStep, exportSelected, loadExportDirectory, loadPathBrowser, onExportRunChange, renderExportStepRows, setExportDestination, updateExportSelectionUi } from './pages/export.js'; import { loadSamples, renderSamples } from './pages/samples.js';
 import { MODEL_FIELD_KINDS, clearSettingsErrors, closeOnboarding, deleteI18nLanguage, focusField, importI18nPack, loadSettings, markSettingsDirty, probeModel, readI18nImportFile, runSetupCheck, saveSettings, setModelStatus, syncAllocatorControls } from './pages/settings.js'; import { refreshTrainSamples } from './pages/train.js';
 import { applyRunConfig, closeRunConfig, closeWorkspaceConfirm, loadWorkspacePage, loadWorkspaceRuns, openRunConfig, openRunLog, openWorkspaceConfirm, performWorkspaceDelete, renderRunList } from './pages/workspace.js';
+import { describeError } from './core/api.js';
 
 export function bindEvents() {
   window.addEventListener('hashchange', () => { route().catch((error) => showError(t('common.msg60'), error.message)); });
@@ -69,7 +70,7 @@ export function bindEvents() {
   $('#btn-save-settings')?.addEventListener('click', () => saveSettings());
   $('#btn-refresh-settings')?.addEventListener('click', () => {
     if (state.settingsDirty && !window.confirm(t('common.msg61'))) return;
-    loadSettings().catch((error) => showError(t('common.msg59'), error.detail || error.message));
+    loadSettings().catch((error) => showError(t('common.msg59'), describeError(error)));
     loadSystem().catch(() => {});
   });
   $('#btn-save-caption')?.addEventListener('click', () => saveCaptionSettings());
@@ -77,7 +78,7 @@ export function bindEvents() {
   $('#btn-clear-caption-key')?.addEventListener('click', clearCaptionApiKey);
   $('#btn-refresh-caption')?.addEventListener('click', () => {
     if (state.captionSettingsDirty && !window.confirm(t('common.msg62'))) return;
-    loadCaptionSettings().catch((error) => showError(t('caption.msg11'), error.detail || error.message));
+    loadCaptionSettings().catch((error) => showError(t('caption.msg11'), describeError(error)));
     loadCaptionDatasetInfo().catch(() => {});
   });
   for (const id of ['set-workspaces-path', 'set-allocator', 'set-gc-threshold']) {
@@ -140,7 +141,7 @@ export function bindEvents() {
   $('#run-config-start')?.addEventListener('click', () => applyRunConfig(true));
 
   $('#btn-setup-refresh')?.addEventListener('click', () => runSetupCheck());
-  $('#btn-start')?.addEventListener('click', () => startDashboardTraining().catch((error) => showError(t('common.msg63'), error.detail || error.message)));
+  $('#btn-start')?.addEventListener('click', () => startDashboardTraining().catch((error) => showError(t('common.msg63'), describeError(error))));
   $('#btn-stop')?.addEventListener('click', () => stopJob());
   $('#btn-preflight')?.addEventListener('click', async () => {
     const button = $('#btn-preflight');
@@ -333,7 +334,7 @@ export function bindEvents() {
   }
   $('#btn-caption-stop')?.addEventListener('click', () => stopJob());
   $('#cfg-caption-source')?.addEventListener('change', (event) => {
-    saveCaptionSource(event.target.value).catch((error) => showError(t('common.msg71'), error.detail || error.message));
+    saveCaptionSource(event.target.value).catch((error) => showError(t('common.msg71'), describeError(error)));
   });
 
   $('#btn-cache-refresh')?.addEventListener('click', () => loadCache());
@@ -543,7 +544,7 @@ export function bindEvents() {
   });
   $('#dash-config-select')?.addEventListener('change', (event) => {
     if (!event.target.value) return;
-    selectDashboardConfig(event.target.value).catch((error) => showError(t('common.msg84'), error.detail || error.message));
+    selectDashboardConfig(event.target.value).catch((error) => showError(t('common.msg84'), describeError(error)));
   });
   $('#dash-smooth')?.addEventListener('input', applySmoothWindow);
   $('#dash-smooth')?.addEventListener('change', applySmoothWindow);

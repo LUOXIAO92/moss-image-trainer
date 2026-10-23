@@ -9,7 +9,7 @@ import { loadConfig, switchRun } from '../config/file.js';
 import { syncFormFromConfig } from '../config/form.js';
 import { renderConfigList } from '../config/list.js';
 import { loadProfiles } from '../config/profiles.js';
-import { api } from '../core/api.js';
+import { api, describeError } from '../core/api.js';
 import { $, escapeHtml, setText } from '../core/dom.js';
 import { fmtBytesFromMb, fmtInt } from '../core/fmt.js';
 import { t } from '../core/i18n.js';
@@ -68,7 +68,7 @@ export async function loadWorkspaceRuns() {
   } catch (error) {
     state.runs = [];
     renderRunList();
-    showAlert({ type: 'warn', title: t('workspace.msg1'), text: error.detail || error.message, timeout: 5000 });
+    showAlert({ type: 'warn', title: t('workspace.msg1'), text: describeError(error), timeout: 5000 });
   }
 }
 
@@ -128,7 +128,7 @@ export async function openRunLog(name) {
     focusLogPanel();
     showAlert({ type: 'info', title: t('train.logRead', { name: run.name }), text: run.log_path, timeout: 4000 });
   } catch (error) {
-    showError(t('job.msg1'), error.detail || error.message);
+    showError(t('job.msg1'), describeError(error));
   }
 }
 
@@ -234,7 +234,7 @@ export async function loadWorkspacePage() {
     state.workspacePage.list = [];
     state.workspacePage.usage = null;
     renderWorkspacePage();
-    showError(t('workspace.msg2'), error.detail || error.message);
+    showError(t('workspace.msg2'), describeError(error));
   } finally {
     state.workspacePage.loading = false;
   }
@@ -306,6 +306,6 @@ export async function performWorkspaceDelete(action, run = '') {
       await reloadWorkspaceAfterDelete({ workspaceDeleted: true });
     }
   } catch (error) {
-    showError(t('workspace.msg7'), error.detail || error.message);
+    showError(t('workspace.msg7'), describeError(error));
   }
 }

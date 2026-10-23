@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import time
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from ... import runtime
@@ -21,6 +21,7 @@ from ..services.workspace import (_dir_usage, _ensure_workspace_dirs, _has_live_
                                   _workspace_exists, _workspace_info, _workspace_logs_dir,
                                   _workspace_name, _workspace_root, _workspace_run_dirs,
                                   _workspace_run_list, _workspace_runs_dir, _workspaces_payload)
+from ..errors import error_detail, fail
 
 router = APIRouter()
 
@@ -35,7 +36,7 @@ async def api_workspaces_create(request: Request):
     body = await request.json()
     name = _workspace_name(body.get("name"))
     if _workspace_exists(name):
-        return JSONResponse({"detail": f"工作区已存在：{name}"}, status_code=409)
+        return JSONResponse({"detail": error_detail("err.workspace.exists", name=name)}, status_code=409)
     _ensure_workspace_dirs(name)
     return {"ok": True, "workspace": _workspace_info(name), **_workspaces_payload()}
 
@@ -44,7 +45,7 @@ async def api_workspaces_create(request: Request):
 def api_workspace_runs(name: str):
     name = _workspace_name(name)
     if not _workspace_exists(name):
-        raise HTTPException(404, f"工作区不存在：{name}")
+        raise fail(404, "err.workspace.not_found", name=name)
     return {"workspace": name, "runs": _workspace_run_list(name)}
 
 @router.get("/api/workspaces/{name}/usage")
@@ -52,7 +53,7 @@ def api_workspace_usage(name: str):
     """Size breakdown for the workspace manager."""
     name = _workspace_name(name)
     if not _workspace_exists(name):
-        raise HTTPException(404, f"工作区不存在：{name}")
+        raise fail(404, "err.workspace.not_found", name=name)
     base = _workspace_dir(name)
     parts = {
         "train_cache": _dir_usage(os.path.join(base, "train_cache")),
@@ -76,10 +77,10 @@ def api_workspace_usage(name: str):
 @router.delete("/api/workspaces/{name}/runs/{run}")
 def api_delete_run(name: str, run: str):
     name = _workspace_name(name)
-    run = _safe_name(run, "run 名称")
+    run = _safe_name(run, "run")
     target = os.path.join(_workspace_runs_dir(name), run)
     if not os.path.isdir(target):
-        raise HTTPException(404, f"run 不存在：{run}")
+        raise fail(404, "err.run.not_found", run=run)
     shutil.rmtree(target)
     return {"ok": True}
 
@@ -110,10 +111,10 @@ def api_delete_baseline(name: str):
 def api_delete_workspace(name: str):
     name = _workspace_name(name)
     if name in RESERVED_WORKSPACES:
-        raise HTTPException(400, "保留名称，不能删除")
+        raise fail(400, "err.workspace.delete_reserved")
     target = _workspace_dir(name)
     if not os.path.isdir(target):
-        raise HTTPException(404, f"工作区不存在：{name}")
+        raise fail(404, "err.workspace.not_found", name=name)
     shutil.rmtree(target)
     return {"ok": True}
 
@@ -124,8 +125,8 @@ def api_run_log(name: str, run: str = "", tail: int = 200):
     name = _workspace_name(name)
     directory = _workspace_logs_dir(name)
     if not run:
-        raise HTTPException(400, "run required")
-    run = _safe_name(run, "run 名称")
+        raise fail(400, "err.run.required")
+    run = _safe_name(run, "run")
     path = os.path.join(directory, f"{run}.log")
     if not os.path.isfile(path):
         return {"lines": [], "path": _rel(path), "exists": False}
@@ -180,7 +181,7 @@ def api_stop_training(name: str):
     """
     name = _workspace_name(name)
     if not _workspace_exists(name):
-        raise HTTPException(404, f"工作区不存在：{name}")
+        raise fail(404, "err.workspace.not_found", name=name)
     workspace = os.path.abspath(_workspace_dir(name))
     pids: list[int] = []
     seen: set[int] = set()
@@ -242,11 +243,11 @@ def api_layout_get(name: str):
 async def api_layout_put(name: str, request: Request):
     name = _workspace_name(name)
     if not _workspace_exists(name):
-        raise HTTPException(404, f"工作区不存在：{name}")
+        raise fail(404, "err.workspace.not_found", name=name)
     body = await request.json()
     layout = body.get("layout")
     if not isinstance(layout, dict):
-        raise HTTPException(400, "layout must be an object")
+        raise fail(400, "err.layout.not_object")
     path = os.path.join(_workspace_dir(name), "layout.json")
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(layout, handle, ensure_ascii=False, indent=1)

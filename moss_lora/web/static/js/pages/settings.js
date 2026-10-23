@@ -4,7 +4,7 @@
  * ========================================================================= */
 
 import { getCurrentYaml, updateOutputPreview } from '../config/form.js';
-import { api } from '../core/api.js';
+import { api, describeError } from '../core/api.js';
 import { $, escapeHtml, getPath, setHidden, setText } from '../core/dom.js';
 import { fmtBytesFromMb, fmtInt } from '../core/fmt.js';
 import { fetchI18nState, languageName, refreshLocalizedUi, renderLanguageSelectors, t } from '../core/i18n.js';
@@ -200,8 +200,8 @@ export async function importI18nPack() {
     setI18nImportHint(t('settings.language.importedHint', { code }), 'ok-mark');
     showSuccess(t('settings.language.importedTitle'), t('settings.language.importedText', { code, count: values.length }), [], `i18n-import-${code}`);
   } catch (error) {
-    setI18nImportHint(error.detail || error.message, 'warn-mark');
-    showError(t('settings.language.importFailed'), error.detail || error.message, [], 'i18n-import-error');
+    setI18nImportHint(describeError(error), 'warn-mark');
+    showError(t('settings.language.importFailed'), describeError(error), [], 'i18n-import-error');
   } finally {
     if (button) button.disabled = false;
   }
@@ -226,7 +226,7 @@ export async function deleteI18nLanguage(code, builtin, name) {
       showSuccess(t('settings.language.removedTitle'), t('settings.language.removedText', { name: label }), [], `i18n-remove-${code}`);
     }
   } catch (error) {
-    showError(t('settings.language.deleteFailed'), error.detail || error.message, [], 'i18n-delete-error');
+    showError(t('settings.language.deleteFailed'), describeError(error), [], 'i18n-delete-error');
   }
 }
 
@@ -362,7 +362,7 @@ export async function probeModel(kind) {
     });
     setModelStatus(kind, result);
   } catch (error) {
-    setModelStatus(kind, { ok: false, reason: error.detail || error.message });
+    setModelStatus(kind, { ok: false, reason: describeError(error) });
   } finally {
     if (button) { button.disabled = false; button.textContent = t('train.model.probe'); }
   }
@@ -446,11 +446,11 @@ export async function saveSettings({ silent = false } = {}) {
         renderSettingsStatus();
       }
       if (error.body.errors) showSettingsErrors(error.body.errors, error.body.warnings || []);
-      else showSettingsErrors({ settings: error.detail || t('settings.msg5') });
-    } else if (error.status === 400 && error.detail) {
-      showSettingsErrors({ settings: error.detail });
+      else showSettingsErrors({ settings: describeError(error) || t('settings.msg5') });
+    } else if (error.status === 400 && describeError(error)) {
+      showSettingsErrors({ settings: describeError(error) });
     } else {
-      showError(t('settings.msg6'), error.detail || error.message, [
+      showError(t('settings.msg6'), describeError(error), [
         { label: t('common.retry'), onClick: () => saveSettings() },
       ]);
     }
@@ -511,7 +511,7 @@ export async function runSetupCheck() {
         body: JSON.stringify({ yaml: yamlText, workspace: state.profileName }),
       });
     } catch (error) {
-      requestError = error.detail || error.message;
+      requestError = describeError(error);
     }
     const problems = data?.problems || [];
     const yamlError = data?.yaml_error;

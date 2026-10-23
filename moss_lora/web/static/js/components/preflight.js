@@ -8,7 +8,7 @@ import { FIELD_BY_ID } from '../config/model.js';
 import { openProfileDialog } from '../config/profiles.js';
 import { clearFormErrors, setFieldError, showFormErrors, validateConfigValues, validateForm } from '../config/validate.js';
 import { parseYaml } from '../config/yaml.js';
-import { api } from '../core/api.js';
+import { api, describeDetail } from '../core/api.js';
 import { $, getPath, setText } from '../core/dom.js';
 import { t } from '../core/i18n.js';
 import { state } from '../core/state.js';
@@ -130,15 +130,16 @@ export async function runPreflight(options = {}) {
   }
 
   if (data.yaml_error) {
+    const yamlMessage = describeDetail(data.yaml_error) || data.yaml_error.message;
     showYamlError({
-      message: data.yaml_error.message,
+      message: yamlMessage,
       line: data.yaml_error.line,
       column: data.yaml_error.column,
     });
     setPreflight({
       level: 'error',
       title: t('train.msg58'),
-      text: t('train.lineError', { line: data.yaml_error.line || '?', error: data.yaml_error.message }),
+      text: t('train.lineError', { line: data.yaml_error.line || '?', error: yamlMessage }),
       actions: [
         { label: t('train.msg59'), onClick: () => { const d = $('#yaml-details'); if (d) { d.open = true; d.scrollIntoView({ block: 'start' }); } } },
       ],
@@ -149,7 +150,10 @@ export async function runPreflight(options = {}) {
   const cache = data.cache || {};
   const missing = [];
   if (!cache.ready && !cache.legacy_index) missing.push(t('train.msg70'));
-  const problems = [...(data.problems || [])];
+  const problemCodes = data.problem_codes || [];
+  const problems = (data.problems || []).map(
+    (problem, index) => describeDetail(problemCodes[index]) || problem,
+  );
   for (const problem of problems) {
     if (problem.startsWith('dataset.reg_path')) setFieldError(FIELD_BY_ID.get('cfg-reg-path'), problem);
   }
@@ -194,7 +198,11 @@ export async function runPreflight(options = {}) {
     return { ok: false, data };
   }
 
-  const warnings = (data.warnings || []).map((warning) => warning.replace(/。$/, ''));
+  const warningCodes = data.warning_codes || [];
+  const warnings = (data.warnings || []).map((warning, index) => {
+    const text = describeDetail(warningCodes[index]) || warning;
+    return text.replace(/。$/, '');
+  });
   let text = t('train.preflight.writeTo', { path: data.run?.output_dir || t('common.outputDir') });
   if (data.run?.will_rename) text += t('train.msg73');
   if (warnings.length) text += t('train.preflight.withWarnings', { warnings: warnings.join(t('common.sentenceSeparator')) });

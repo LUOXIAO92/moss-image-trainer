@@ -3,7 +3,7 @@
  * split from web/static/app.js, source 7781-8353 (12 non-contiguous spans, see .tmp/js-map.json); behaviour unchanged
  * ========================================================================= */
 
-import { api } from '../core/api.js';
+import { api, describeError } from '../core/api.js';
 import { $, clamp, setHidden } from '../core/dom.js';
 import { t } from '../core/i18n.js';
 import { showAlert, showError, showSuccess } from '../core/notify.js';
@@ -218,7 +218,7 @@ export async function saveCaptionSettings({ silent = false } = {}) {
     }
     return true;
   } catch (error) {
-    showError(t('caption.msg23'), error.detail || error.message, [
+    showError(t('caption.msg23'), describeError(error), [
       { label: t('common.retry'), onClick: () => saveCaptionSettings() },
     ], 'caption-settings-error');
     return false;

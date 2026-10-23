@@ -125,23 +125,25 @@ def check_stop(tmp):
     os.makedirs(workspace)
     path = os.path.join(workspace, PROGRESS_NAME)
 
-    def refused() -> str:
+    def refused() -> tuple[int, str]:
         try:
             _cache_stop(workspace)
         except HTTPException as exc:
-            return str(exc.status_code) + ":" + str(exc.detail)
-        return ""
+            detail = exc.detail if isinstance(exc.detail, dict) else {"code": "", "message": str(exc.detail)}
+            return exc.status_code, detail.get("code", "")
+        return 0, ""
 
     # 1) 没有心跳 -> 没有可停的任务
-    assert refused().startswith("404"), refused()
+    status, code = refused()
+    assert status == 404 and code == "err.cache.stop_no_job", (status, code)
 
     # 2) 心跳指向一个不是缓存进程的 pid（就是本测试进程）-> 拒绝，不发信号
     record = {"pid": os.getpid(), "status": "running", "phase": "latent", "done": 1, "total": 4,
               "rate": 1.0, "unit": "img/s", "started": time.time(), "time": time.time(),
               "cache_dir": os.path.join(workspace, "train_cache"), "exit_code": None, "history": {}}
     runtime.write_json_atomic(path, record)
-    detail = refused()
-    assert detail.startswith("409") and "不是缓存进程" in detail, detail
+    status, code = refused()
+    assert status == 409 and code == "err.cache.stop_foreign", (status, code)
     assert runtime.read_json(path)["status"] == "running", "a refused stop must not touch the record"
 
     # 3) 一个带着缓存进程命令行的真进程：信号必须送达，记录必须变成 stopping
@@ -163,8 +165,8 @@ def check_stop(tmp):
     # 4) 已经结束的任务：再点一次要明确说结束，而不是再发一次信号
     runtime.write_json_atomic(path, {**record, "status": "done", "exit_code": 0,
                                      "finished": time.time(), "time": time.time()})
-    detail = refused()
-    assert detail.startswith("409") and "已经结束" in detail, detail
+    status, code = refused()
+    assert status == 409 and code == "err.cache.stop_finished", (status, code)
 
     # 5) 进程自己把 KeyboardInterrupt 接住时，终态是 stopped / 130，不是 failed
     progress = CacheProgress(fake_config(workspace))
