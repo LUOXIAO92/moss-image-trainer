@@ -248,6 +248,15 @@
               </select>
               <span class="field-help" id="cfg-quantize-dtype-help" data-i18n="train.params.quantizeDtypeHelp">只在上一项不是“不量化”时生效。nf4 更省，fp8 画质更稳。</span>
             </label>
+            <label class="field" for="cfg-quantize-conditioning">
+              <span class="field-label" data-i18n="train.params.quantizeConditioning">conditioning 量化</span>
+              <select id="cfg-quantize-conditioning" aria-describedby="cfg-quantize-conditioning-help">
+                <option value="none" data-i18n="train.params.quantizeNone">不量化（bf16）</option>
+                <option value="fp8" data-i18n="train.params.quantizeConditioningFp8">fp8 e4m3（更稳，省约 0.3 GiB）</option>
+                <option value="nf4" data-i18n="train.params.quantizeConditioningNf4">4bit nf4（最省，省约 0.45 GiB）</option>
+              </select>
+              <span class="field-help" id="cfg-quantize-conditioning-help" data-i18n="train.params.quantizeConditioningHelp">conditioning 半边 = 文本投影、两个 modulation、时间嵌入和最终输出层，共 16 个 Linear、0.62 GiB 权重。默认不量化：per-block modulation 的误差会被每一层放大，省下的半 GiB 不值得冒这个画质风险。</span>
+            </label>
           </div>
           <p class="field-help lr-effective" id="lr-effective" data-i18n="train.params.effectiveDefault">调度：constant · warmup 50 步 · 峰值学习率 5.00e-5</p>
         </fieldset>

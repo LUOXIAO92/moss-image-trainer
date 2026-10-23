@@ -6,7 +6,7 @@
 import { applySmoothWindow, drawChart } from './components/chart.js'; import { startJob, stopJob } from './components/jobsse.js';
 import { clearLog, copyLog, isLogNearBottom } from './components/logview.js'; import { drawMetricCards, positionWidgets, toggleMetricCard } from './components/metriccards.js';
 import { runPreflight } from './components/preflight.js'; import { closeConfigDialog, deleteCurrentRun, openNewRunDialog, saveConfig, submitConfigDialog, switchRun } from './config/file.js';
-import { addLayerRow, clearYamlError, focusYamlLine, markDirty, readLayerControlsIntoConfig, scheduleFormSync, setMode, showYamlError, syncAttentionControls, syncFormFromConfig, syncSaveStateControls, syncYamlScroll, updateCacheEffective, updateLrEffective, updateOutputPreview, updateRegCacheEffective, updateRegCachePlaceholder, updateYamlLineCount } from './config/form.js'; import { selectDashboardConfig, startDashboardTraining } from './config/list.js';
+import { addLayerRow, clearYamlError, focusYamlLine, markDirty, readLayerControlsIntoConfig, scheduleFormSync, setMode, showYamlError, syncAttentionControls, syncFormFromConfig, syncQuantizeControls, syncSaveStateControls, syncYamlScroll, updateCacheEffective, updateLrEffective, updateOutputPreview, updateRegCacheEffective, updateRegCachePlaceholder, updateYamlLineCount } from './config/form.js'; import { selectDashboardConfig, startDashboardTraining } from './config/list.js';
 import { FIELD_DEFS, LAYER_COUNT } from './config/model.js'; import { closeProfileDialog, openProfileDialog, submitProfileDialog, switchProfile } from './config/profiles.js';
 import { setFieldError, validateField } from './config/validate.js'; import { dumpYaml, parseYaml } from './config/yaml.js';
 import { copyText } from './core/clipboard.js'; import { $, $$, setHidden, setText } from './core/dom.js';
@@ -215,6 +215,7 @@ export function bindEvents() {
     input.addEventListener('input', () => {
       if (state.mode !== 'form') return;
       if (field.id === 'cfg-attention') syncAttentionControls();
+      if (field.id === 'cfg-quantize-dit') syncQuantizeControls();
       if (field.id === 'cfg-reg-path') { updateRegCachePlaceholder(); updateRegCacheEffective(); }
       if (field.id === 'cfg-cache-reg-dir') updateRegCacheEffective();
       if (MODEL_FIELD_KINDS[field.id]) setModelStatus(MODEL_FIELD_KINDS[field.id], null);
@@ -226,6 +227,7 @@ export function bindEvents() {
     input.addEventListener('change', () => {
       if (state.mode !== 'form') return;
       if (field.id === 'cfg-attention') syncAttentionControls();
+      if (field.id === 'cfg-quantize-dit') syncQuantizeControls();
       if (field.id === 'cfg-cache-dir') updateCacheEffective();
       if (field.id === 'cfg-reg-path') { updateRegCachePlaceholder(); updateRegCacheEffective(); }
       if (field.id === 'cfg-cache-reg-dir') updateRegCacheEffective();
@@ -233,6 +235,9 @@ export function bindEvents() {
       scheduleFormSync();
       updateOutputPreview();
     });
+  }
+  for (const id of ['cfg-quantize-dtype', 'cfg-quantize-conditioning']) {
+    document.getElementById(id)?.addEventListener('change', syncQuantizeControls);
   }
   for (const id of ['cfg-lr', 'cfg-warmup', 'cfg-lr-scheduler', 'cfg-steps']) {
     const element = document.getElementById(id);

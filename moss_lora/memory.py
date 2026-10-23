@@ -67,7 +67,8 @@ def text_batch(cap: int = TEXT_BATCH_CAP) -> int:
 
 # The transformer is 42 DiT blocks. The bf16 footprint below is the block half
 # of the model only; the conditioning half (text embedder, modulations, time
-# embedding, final projection) stays bf16 and is counted separately.
+# embedding, final projection) is counted separately and stays bf16 unless
+# ``vram.quantize_conditioning`` names a storage format.
 TOTAL_BLOCKS = 42
 BLOCK_WEIGHTS_BF16_GIB = 8.86
 CONDITIONING_BF16_GIB = 0.62
@@ -141,19 +142,19 @@ def _quant_scope(vram) -> tuple[float, str]:
 def _conditioning_storage(vram) -> tuple[float, str]:
     """Multiplier for the conditioning half, plus its storage label.
 
-    HOOK: ``quantize_conditioning`` does not exist on :class:`VramConfig` yet;
-    the trainer keeps that half in bf16 (see quant.py), so this reads as
-    "none". When the field lands, the same storage factors as the blocks apply
-    and the labels below already follow it.
+    The conditioning control names a storage format rather than a scope, and like
+    ``quantize_dtype`` it only applies while the DiT quantization is on: the form
+    disables it when ``quantize_dit`` is ``none``, and the trainer keeps the half
+    in bf16 in that case.
     """
-    scope = str(getattr(vram, "quantize_conditioning", "none") or "none").strip().lower()
+    scope = str(getattr(vram, "quantize_dit", "none") or "none").strip().lower()
     if scope not in ("ffn", "all"):
         return 1.0, "bf16"
-    dtype = str(getattr(vram, "quantize_dtype", "nf4") or "nf4").strip().lower()
+    dtype = str(getattr(vram, "quantize_conditioning", "none") or "none").strip().lower()
     factor = QUANT_FACTORS.get(dtype)
     if factor is None:
         return 1.0, "bf16"
-    return factor, f"{dtype} {scope}"
+    return factor, dtype
 
 
 def _resident_blocks(vram) -> int:

@@ -216,6 +216,24 @@ export function syncSaveStateControls() {
     : t('train.state.disabledTitle');
 }
 
+export function syncQuantizeControls() {
+  const dit = $('#cfg-quantize-dit');
+  const dtype = $('#cfg-quantize-dtype');
+  const conditioning = $('#cfg-quantize-conditioning');
+  if (!dit || !dtype || !conditioning) return;
+  const enabled = String(dit.value || 'none').toLowerCase() !== 'none';
+  for (const select of [dtype, conditioning]) {
+    select.disabled = !enabled;
+    if (enabled) {
+      select.removeAttribute('title');
+      select.removeAttribute('aria-disabled');
+    } else {
+      select.title = t('train.params.quantizeDisabledTitle');
+      select.setAttribute('aria-disabled', 'true');
+    }
+  }
+}
+
 export function syncFormFromConfig(config) {
   for (const field of FIELD_DEFS) {
     const element = document.getElementById(field.id);
@@ -232,6 +250,7 @@ export function syncFormFromConfig(config) {
 
   syncCachePathControl(config);
   syncAttentionControls();
+  syncQuantizeControls();
   const checkpoint = getPath(config, 'vram.gradient_checkpointing');
   const checkpointField = $('#cfg-grad-ckpt');
   if (checkpointField) {

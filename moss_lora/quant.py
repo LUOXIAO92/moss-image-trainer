@@ -16,10 +16,11 @@ Storage format decides the trade-off:
     fp8   e4m3 with one scale per output row, twice the size, error is far below
           bf16's own rounding for the dot products the blocks compute
 
-Only ``layers.*`` is touched by default. ``text_embedder``, both modulations,
-``time_embedding`` and ``final_linear_video`` stay bf16: together they are 0.62
-GiB, and quantizing a per-block scale/shift that every layer multiplies into
-would risk the picture for a rounding error.
+Only ``layers.*`` is touched by the scope arguments. ``text_embedder``, both
+modulations, ``time_embedding`` and ``final_linear_video`` stay bf16 unless
+:func:`quantize_conditioning` is called explicitly: together they are 0.62 GiB,
+and quantizing a per-block scale/shift that every layer multiplies into would
+risk the picture for a rounding error, so that stays opt-in.
 """
 
 from __future__ import annotations
@@ -31,6 +32,17 @@ SCOPES = ("none", "ffn", "all")
 DTYPES = ("nf4", "fp8")
 FP8_MAX = 448.0
 FFN_MARKERS = ("ffn_up_gate", "ffn_down")
+# The conditioning half: the text projection plus its two blocks, the shared
+# per-block modulation, the head modulation, the time embedding and the final
+# projection. ``video_embedder`` is deliberately absent -- it is the latent
+# input projection, not conditioning.
+CONDITIONING_MARKERS = (
+    "text_embedder",
+    "shared_block_modulation",
+    "video_head_modulation",
+    "time_embedding",
+    "final_linear_video",
+)
 
 
 class FP8Linear(nn.Module):
@@ -141,3 +153,26 @@ def quantize_fp8(
         return 0
     targets = _frozen_linears(model, scope, skip, only)
     return _replace(model, targets, lambda module: FP8Linear(module, compute_dtype=dtype))
+
+
+def quantize_conditioning(
+    model: nn.Module,
+    dtype: str = "fp8",
+    compute_dtype: torch.dtype = torch.bfloat16,
+    skip: tuple[str, ...] = ("lora_",),
+) -> int:
+    """Replace the conditioning half's frozen Linears. Returns how many were replaced.
+
+    ``dtype`` is the storage format (``fp8`` or ``nf4``), matching the
+    ``vram.quantize_conditioning`` control. The conditioning half is
+    ``text_embedder`` (projection plus two blocks), ``shared_block_modulation``,
+    ``video_head_modulation``, ``time_embedding`` and ``final_linear_video`` --
+    16 Linears on the real model. ``layers.*`` and ``video_embedder`` are never
+    touched, and anything already carrying a LoRA adapter is skipped.
+    """
+    if dtype not in DTYPES:
+        return 0
+    targets = _frozen_linears(model, "all", skip, CONDITIONING_MARKERS)
+    if dtype == "nf4":
+        return _replace(model, targets, lambda module: _to_linear4bit(module, compute_dtype))
+    return _replace(model, targets, lambda module: FP8Linear(module, compute_dtype=compute_dtype))

@@ -166,6 +166,15 @@ class Trainer:
 
             replaced = quantize_nf4(model, scope, dtype=self.dtype)
             self.log(f"quantize: {replaced} frozen Linears -> nf4 ({scope})")
+        # The conditioning half is quantized only while the DiT quantization is on;
+        # the form disables the control otherwise, and a YAML that sets it anyway
+        # must not quantize a half the run presents as unquantized.
+        conditioning = str(getattr(self.config.vram, "quantize_conditioning", "none") or "none").lower()
+        if conditioning != "none":
+            from .quant import quantize_conditioning
+
+            replaced = quantize_conditioning(model, conditioning, compute_dtype=self.dtype)
+            self.log(f"conditioning: {replaced} Linears -> {conditioning}")
         torch.cuda.empty_cache()
 
     def _maybe_compile(self):
