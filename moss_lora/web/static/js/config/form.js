@@ -3,7 +3,7 @@
  * split from web/static/app.js, source 913-1562 (32 non-contiguous spans, see .tmp/js-map.json); behaviour unchanged
  * ========================================================================= */
 
-import { FIELD_DEFS, LAYER_COUNT, LORA_MODULES, absoluteWorkspacePath, arrayFromPrompts, compactLayerRange, defaultCacheDir, defaultRegCacheDir, displayCacheValue, displayRegCacheValue, parseIntList, resolvedCacheBase } from './model.js';
+import { FIELD_DEFS, LAYER_COUNT, LORA_MODULES, absoluteWorkspacePath, arrayFromPrompts, compactLayerRange, defaultCacheDir, defaultRegCacheDir, displayCacheValue, displayRegCacheValue, parseLayerRange, parseIntList, resolvedCacheBase } from './model.js';
 import { dumpYaml, parseYaml } from './yaml.js';
 import { $, $$, clamp, deletePath, escapeHtml, getPath, setPath, setText } from '../core/dom.js';
 import { fmtLr } from '../core/fmt.js';

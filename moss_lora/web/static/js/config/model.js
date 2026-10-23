@@ -82,7 +82,7 @@ export function compactLayerRange(nums) {
   return chunks.join(', ');
 }
 
-function parseLayerRange(text) {
+export function parseLayerRange(text) {
   const out = [];
   for (const rawPart of String(text || '').split(',')) {
     const part = rawPart.trim();
