@@ -32,7 +32,7 @@ export const FIELD_DEFS = [
   { id: 'cfg-eval-every', path: 'train.eval_every', type: 'number', label: 'train.intervals.eval', min: 0, integer: true, default: 100 },
   { id: 'cfg-optimizer', path: 'train.optimizer', type: 'text', label: 'train.params.optimizer', default: 'adamw' },
   { id: 'cfg-attention', path: 'train.attention', type: 'text', label: 'Attention backend', default: 'auto' },
-  { id: 'cfg-bin-tokens', path: 'train.bin_tokens', type: 'number', label: 'bin size（token）', min: 0, integer: true, default: 0, blankDefault: true },
+  { id: 'cfg-bin-tokens', path: 'train.bin_tokens', type: 'number', label: 'train.advanced.binSize', min: 0, integer: true, default: 0, blankDefault: true },
   { id: 'cfg-vram-preset', path: 'vram.preset', type: 'text', label: 'train.params.vramProfile', default: 'auto' },
   { id: 'cfg-quantize-dit', path: 'vram.quantize_dit', type: 'text', label: 'train.params.quantize', default: 'none' },
   { id: 'cfg-preview-steps', path: 'preview.steps', type: 'number', label: 'train.preview.steps', min: 1, integer: true, default: 50, blankDefault: true },

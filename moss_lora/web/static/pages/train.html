@@ -260,9 +260,9 @@
                   <span class="field-help" id="cfg-attention-help" data-i18n="train.advanced.attentionHelp">auto：装了 FlashAttention-2 就用 flash，没有就回退 SDPA。</span>
                 </label>
                 <label class="field" for="cfg-bin-tokens">
-                  <span class="field-label" data-i18n="train.advanced.binSize">bin size（token）</span>
+                  <span class="field-label" data-i18n="train.advanced.binSize">单步 token 预算</span>
                   <input id="cfg-bin-tokens" type="number" min="0" step="1" inputmode="numeric" placeholder="留空 = 自动" data-i18n-placeholder="train.advanced.binPlaceholder" aria-describedby="cfg-bin-tokens-help">
-                  <span class="field-help" id="cfg-bin-tokens-help" data-i18n="train.advanced.binHelp">每步的 token 预算。留空 = 自动（约 3 张满尺寸图，1M 面积上限时为 13312）。</span>
+                  <span class="field-help" id="cfg-bin-tokens-help" data-i18n="train.advanced.binHelp">一次微批的 token 预算。留空按 max_area 自动算：1M 面积上限下为 5120（一张满尺寸图 + 1k 文本）。</span>
                 </label>
               </div>
             </div>
