@@ -370,6 +370,36 @@ class Trainer:
             )
         return latents, contexts
 
+    def _load_batch(self, entries):
+        """One equal-shape batch for the per-sample forward used by eval."""
+        latents, embeds, masks = [], [], []
+        for entry in entries:
+            path = os.path.join(self.cache_dir, entry["file"])
+            if not os.path.exists(path):
+                raise SystemExit(
+                    f"缓存文件不存在：{path}\n"
+                    "索引和实际文件对不上；到「缓存」页重新生成一次缓存。"
+                )
+            data = load_file(path, device="cpu")
+            missing = [key for key in ("latent", "text_embeds", "text_mask") if key not in data]
+            if missing:
+                raise SystemExit(
+                    f"缓存里缺 {', '.join(missing)}：{path}\n"
+                    "训练需要文本嵌入；先在「缓存」页点「一键生成缓存（latent + 文本）」，"
+                    "或跑 python -m moss_lora.cli encode-text --config <yaml>。"
+                )
+            latents.append(data["latent"])
+            embeds.append(data["text_embeds"])
+            masks.append(data["text_mask"])
+        length = max(e.shape[0] for e in embeds)
+        padded = embeds[0].new_zeros(len(embeds), length, embeds[0].shape[-1])
+        mask = torch.zeros(len(embeds), length, dtype=torch.bool)
+        for index, (embed, item_mask) in enumerate(zip(embeds, masks)):
+            padded[index, : embed.shape[0]] = embed
+            mask[index, : embed.shape[0]] = item_mask[: embed.shape[0]]
+        x0 = torch.stack(latents).to(self.device, self.dtype)
+        return x0, padded.to(self.device, self.dtype), mask.to(self.device)
+
     # -- training --------------------------------------------------------
     def warmup_steps(self) -> int:
         """``train.warmup`` is either a step count or a fraction of the run."""
