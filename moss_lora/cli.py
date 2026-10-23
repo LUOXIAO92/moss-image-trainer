@@ -334,7 +334,7 @@ def cmd_status(args):
         print(json.dumps(rows, ensure_ascii=False, indent=2))
         return 0
     if not rows:
-        print(f"no jobs under {root}")
+        print(f"no {'live ' if args.live else ''}jobs under {root}")
     else:
         print(f"{'STATE':<12}{'AGE':>5}  {'STEP':>11}  {'PID':>7}  {'EXIT':>5}  JOB")
         for row in rows:
@@ -393,9 +393,44 @@ def cmd_train(args):
         config.vram.gradient_checkpointing = args.grad_checkpointing
     if getattr(args, "detach", False):
         return _detach_train(args, config)
-    trainer = Trainer(config).load()
-    trainer.train(resume=args.resume or "")
+    code = 0
+    try:
+        # Load inside the guard: a missing driver or a bad checkpoint fails
+        # here, and that exit still has to reach the record.
+        Trainer(config).load().train(resume=args.resume or "")
+    except KeyboardInterrupt:
+        code = 130
+        raise
+    except BaseException:
+        code = 1
+        raise
+    finally:
+        # A detached run writes its own verdict: the launcher is already gone,
+        # and a record with no exit code would read as "interrupted" forever.
+        _finish_job_record(code)
     return 0
+
+
+def _finish_job_record(exit_code: int) -> None:
+    """Stamp the terminal status into the job record this process inherited."""
+    path = os.environ.get("MOSS_JOB_RECORD") or ""
+    if not path:
+        return
+    from . import runtime
+
+    record = runtime.read_json(path) or {}
+    if not record:
+        return
+    record.update({
+        "status": "done" if exit_code == 0 else ("stopped" if exit_code == 130 else "failed"),
+        "exit_code": int(exit_code),
+        "finished": time.time(),
+        "time": time.time(),
+    })
+    try:
+        runtime.write_json_atomic(path, record)
+    except OSError:
+        pass
 
 
 def _detach_train(args, config) -> int:
@@ -414,14 +449,38 @@ def _detach_train(args, config) -> int:
     argv += [item for item in sys.argv[1:] if item != "--detach"]
     env = dict(os.environ)
     env["PYTHONUNBUFFERED"] = "1"
+    record_path = os.path.join(workspace, "logs", f"{time.strftime('%Y%m%d-%H%M%S')}.json") if workspace else ""
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if env.get("PYTHONPATH"):
         env["PYTHONPATH"] = root + os.pathsep + env["PYTHONPATH"]
     else:
         env["PYTHONPATH"] = root
 
-    job_id = time.strftime("%Y%m%d-%H%M%S")
+    job_id = os.path.basename(record_path)[:-5] if record_path else time.strftime("%Y%m%d-%H%M%S")
+    if record_path:
+        env["MOSS_JOB_RECORD"] = record_path
     log_path = os.path.join(workspace, "logs", f"{job_id}.log") if workspace else ""
+    record = {
+        "id": job_id,
+        "kind": "train",
+        "workspace": os.path.basename(workspace) if workspace else "",
+        "run_id": config.name,
+        "run_dir": out_dir,
+        "log": log_path,
+        "config_path": os.path.abspath(args.config) if getattr(args, "config", None) else "",
+        "argv": argv,
+        "pid": 0,
+        "started": time.time(),
+        "time": time.time(),
+        # "starting" until the child has a pid we can check for liveness.
+        "status": "starting",
+        "exit_code": None,
+    }
+    if record_path:
+        # Written before the spawn: a fast failure must find its record instead
+        # of having the parent overwrite the verdict afterwards.
+        os.makedirs(os.path.dirname(record_path), exist_ok=True)
+        runtime.write_json_atomic(record_path, record)
     if log_path:
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
         sink = open(log_path, "ab")
@@ -436,22 +495,12 @@ def _detach_train(args, config) -> int:
         if sink is not subprocess.DEVNULL:
             sink.close()
 
-    if workspace:
-        runtime.write_json_atomic(os.path.join(workspace, "logs", f"{job_id}.json"), {
-            "id": job_id,
-            "kind": "train",
-            "workspace": os.path.basename(workspace),
-            "run_id": config.name,
-            "run_dir": out_dir,
-            "log": log_path,
-            "config_path": os.path.abspath(args.config) if getattr(args, "config", None) else "",
-            "argv": argv,
-            "pid": process.pid,
-            "started": time.time(),
-            "time": time.time(),
-            "status": "running",
-            "exit_code": None,
-        })
+    if record_path:
+        # Keep the child's verdict if it already wrote one; only fill the pid.
+        current = runtime.read_json(record_path) or {}
+        if current.get("status") in (None, "", "starting"):
+            runtime.write_json_atomic(record_path, {**record, **current, "pid": process.pid,
+                                                    "status": "running", "time": time.time()})
     print(f"detached pid {process.pid}")
     print(f"job  {job_id}")
     print(f"run  {out_dir}")
