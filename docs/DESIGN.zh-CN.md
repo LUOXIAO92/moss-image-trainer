@@ -281,6 +281,8 @@ WebUI 后端采用「路由层 → 服务层 → 共享状态与任务注册表�
 
 内存事件队列配合成对的 `logs/*.log` 与 `metrics.jsonl` 落盘，使页面在 SSE 连接正常时获得毫秒级推送，而在浏览器刷新或 Web 服务重启后仍能从磁盘完整还原历史曲线与日志；代价是 `JOBS` 注册表不跨进程持久化，Web 服务重启期间正在运行的后台子进程会脱离内存句柄（需依赖 `/proc` 与心跳文件接管）。
 
+后端、CLI 与浏览器共用一套错误契约。[problems.py](<../moss_lora/problems.py>) 保存 `CODES`（每个 `err.<code>` 一条中文模板）与 `Problem(code, params)` 记录，`Config.validate()` 和设置校验都返回它；[errors.py](<../moss_lora/web/errors.py>) 把它包成 `raise fail(status, code, **params)`，`detail` 形如 `{code, params, message}`。`message` 是渲染好的中文，日志、CLI 与忽略 code 的客户端仍能读到一句话；`detail.code` 指向各语言包翻译的键，参数原样传递、不预先拼进句子。`POST /api/validate` 并行返回 `problems` 与 `problem_codes`，逐条对应；`POST /api/settings` 返回 `{字段: detail}`，让每条提示落在对应输入框旁。前端 `describeError()` / `describeDetail()` 在语言包有该键时翻译，没有就回落到服务端 `message`。[test_error_keys.py](<../tests/test_error_keys.py>) 解析整个包里的 `err.*` 字面量，缺 manifest 条目、缺译文、占位符与中文不一致，或模板与 zh 语言包脱节，都会失败。
+
 ## 9. WebUI 前端
 
 前端采用零构建步骤、零外部 npm 依赖、零 CDN 的原生浏览器 ES module 架构，通过运行时 HTML 片段注入与双向隔离的状态机管理九个功能标签页。
