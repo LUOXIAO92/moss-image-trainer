@@ -11,7 +11,7 @@
 ## 주요 기능
 
 - **2단계 캐싱**: FLUX.2 VAE로 이미지 latent를, 로컬 Qwen3.5-9B로 텍스트 임베딩을 인코딩하여 디스크에 저장합니다. 텍스트 배치는 우측 인과적(causal) 패딩을 사용하며, 학습 순전파 시 어텐션 마스크에 따라 각 시퀀스의 유효 길이를 슬라이싱하므로 패딩 토큰이 유효한 텍스트 특징을 오염시키지 않습니다.
-- **Flow Matching 학습 및 VRAM 프리셋**: 절단된 logit-normal $\sigma$ 샘플링과 토큰 단위로 정규화된 속도장 MSE 손실로 학습합니다. 내장된 `auto|32|24|16|12|8|6` VRAM 프리셋은 그래디언트 체크포인팅, NF4 양자화(`none|ffn|all`), CPU 블록 스왑, `torch.compile`, `fp16` 누적을 조합하며 `auto`는 `packed`(FlashAttention-2 varlen)와 `padded`(토큰 차원 패딩) 중 하나를 자동으로 고릅니다.
+- **Flow Matching 학습 및 VRAM 프리셋**: 절단된 logit-normal $\sigma$ 샘플링과 토큰 단위로 정규화된 속도장 MSE 손실로 학습합니다. 내장된 `auto|32|24|16|12|8|6` VRAM 프리셋은 그래디언트 체크포인팅, 가중치 전용 양자화(`quantize_dit: none|ffn|all`을 `nf4` 또는 `fp8`로, 선택적 conditioning 절반 포함), 호스트 메모리에서의 블록 스트리밍, `torch.compile`, `fp16` 누적을 `packed`(FlashAttention-2 varlen)와 `padded`(토큰 차원 패딩) 배치 모드 양쪽에 걸쳐 조합하며, `auto`가 그중 하나를 고릅니다. 대시보드는 실행 전과 실행 중에 측정된 VRAM 피크 옆에 예상 VRAM 피크를 함께 표시합니다.
 - **정규화 세트 및 홀드아웃 검증**: `dataset.reg_path`를 통해 정규화 이미지를 로드하여 개념 드리프트를 억제하고, `train.eval_holdout`으로 결정론적 검증 세트를 분리하여 주기적으로 검증 손실을 계산합니다.
 - **이중 스타일 캡션 생성**: OpenAI 호환 비전 모델 엔드포인트를 호출하여 기존 태그를 유지하고 장면 문장을 추가하는 `tag_caption`과 3단계(long / medium / short) 설명을 생성하는 `official` 스타일을 지원하며, 동일한 이름의 sidecar JSON에 저장합니다.
 - **무빌드 WebUI**: 9개 탭(대시보드, 학습 설정, 데이터셋, 캐시, 샘플 이미지, 내보내기, 작업 공간, 설정, 캡션 생성)에서 네이티브 ES module을 직접 실행합니다. 소스 수정 사항은 브라우저 새로고침만으로 즉시 반영됩니다.
@@ -22,7 +22,7 @@
 
 - **OS 및 Python**: Linux 또는 WSL2, Python 3.11 이상.
 - **GPU 및 드라이버**: `bfloat16` 또는 `float16`을 지원하는 NVIDIA GPU 및 PyTorch 2.9 이상에 맞는 CUDA 드라이버.
-- **VRAM 등급**: 16 GB 이상은 비양자화 정밀도(`preset: 16|24|32`), 12 GB는 `preset: 12`(FFN NF4 양자화), 8 GB와 6 GB는 각각 `preset: 8`(전체 선형 계층 NF4 양자화)과 `preset: 6`(블록 스왑 및 8-bit 옵티마이저 추가)을 사용합니다.
+- **VRAM 등급**: 24 GB 이상은 비양자화(`preset: 24|32`)로 동작합니다. 16 GB와 12 GB는 `preset: 16`과 `preset: 12`(FFN 양자화)를 사용합니다. 8 GB와 6 GB는 `preset: 8`과 `preset: 6`을 사용하며, 모든 블록을 양자화하고 42개 블록 전부를 호스트 메모리에서 스트리밍하며 `torch.compile`을 끄고 8-bit 옵티마이저를 켭니다. `preset: auto`는 감지된 카드에서 등급을 도출합니다. 이 값들은 항목별로 재정의할 수 있고, 한 스텝이 메모리에서 모자라면 학습기가 `blocks_to_swap`을 스스로 올립니다.
 - **로컬 가중치**: MOSS-Image DiT, Qwen3.5-9B 텍스트 인코더(HuggingFace 디렉터리 또는 ConvRot int8 양자화 단일 파일 `.safetensors`), FLUX.2 VAE.
 
 ## 설치
@@ -270,7 +270,7 @@ moss-image-trainer/
 ## 알려진 제한 사항
 
 - **배치 크기 및 처리량**: 마이크로 배치는 토큰 예산으로 구성되고 이미지는 각자의 해상도를 유지합니다. 한 스텝의 작업량을 정하는 것은 `batch_size`가 아니라 `train.bin_tokens`입니다. FlashAttention-2를 설치하면 기본값이 `padded`(토큰 패딩 + key mask)에서 `packed`(varlen, 마스크 없음)로 바뀝니다.
-- **저용량 VRAM 정밀도 트레이드오프**: `model.dtype: float16`과 `vram.fp16_accumulate: true` 조합은 높은 학습률이나 장시간 학습에서 `bfloat16`보다 수치적 불안정성이 발생하기 쉽습니다. NF4 양자화(`quantize_dit: ffn|all`)와 CPU 블록 스왑은 6–12 GB GPU를 대상으로 하며, 비양자화 백본에 비해 미세한 디테일 재현력이 약간 절충됩니다.
+- **저용량 VRAM 정밀도 트레이드오프**: `model.dtype: float16`과 `vram.fp16_accumulate: true` 조합은 높은 학습률이나 장시간 학습에서 `bfloat16`보다 수치적 불안정성이 발생하기 쉽습니다. 양자화(`quantize_dit: ffn|all`)와 블록 스트리밍은 16 GB 미만 GPU를 대상으로 하며, 들어가는 대신 미세한 디테일 재현력을 조금 절충합니다. `nf4`가 가장 작은 형식이고 `fp8`이 더 안정적인 형식이며, conditioning 절반을 일부러 양자화하면 오차가 모든 블록으로 누적되므로, 따로 요청하지 않는 한 꺼 두는 것이 기본입니다.
 - **학습 범위**: LoRA 어댑터는 5B DiT(기본적으로 42개 레이어의 `q`, `k`, `v`, `o`, `ffn_up_gate`, `ffn_down` 및 선택적 `text_embedder`)에만 주입되며, Qwen3.5-9B 텍스트 인코더와 VAE는 동결됩니다.
 
 ## 라이선스 및 감사의 글

@@ -221,23 +221,26 @@ Sidecar 文件固定采用 `schema: 2` 结构，容纳两个互不干扰的风�
 
 学习率由 `_lr_at` 按步更新：`train.warmup` 为 `(0, 1)` 之间的小数时按总步数比例折算预热步数，大于等于 1 时直接作为步数；预热结束后按 `train.lr_scheduler`（`constant` 或 `cosine`）衰减。每步经 `grad_accum` 次反向传播累加后，按 `train.max_grad_norm`（默认 `1.0`）裁剪梯度并更新可选的 FP32 指数滑动平均字典（`train.ema`）。
 
-### 6.3 精度、量化、块交换与 OOM 自愈
+### 6.3 精度、量化、块流式加载与 OOM 自愈
 
-显存控制集中在 [config.py](<../moss_lora/config.py>) 的 `VRAM_PRESETS`（`auto|32|24|16|12|8|6`）、[quant.py](<../moss_lora/quant.py>) 与 [offload.py](<../moss_lora/offload.py>)：
+显存控制集中在 [config.py](<../moss_lora/config.py>) 的 `VRAM_PRESETS`（`auto|32|24|16|12|8|6`）、[quant.py](<../moss_lora/quant.py>)、[memory.py](<../moss_lora/memory.py>) 与 [offload.py](<../moss_lora/offload.py>)：
 
-| `vram.preset` | `gradient_checkpointing` | `quantize_dit` | `blocks_to_swap` | `optimizer_in_8bit` |
-| --- | --- | --- | --- | --- |
-| `32` / `24` / `16` | `true` | `none` | `0` | `false` |
-| `12` | `true` | `ffn` | `0` | `false` |
-| `8` | `true` | `all` | `0` | `false` |
-| `6` | `true` | `all` | `20` | `true` |
+| `vram.preset` | `gradient_checkpointing` | `quantize_dit` | `blocks_to_swap` | `optimizer_in_8bit` | `compile` |
+| --- | --- | --- | --- | --- | --- |
+| `32` / `24` | `true` | `none` | `0` | `false` | `true` |
+| `16` / `12` | `true` | `ffn` | `0` | `false` | `true` |
+| `8` / `6` | `true` | `all` | `42` | `true` | `false` |
+
+`vram.preset` 指定档位时，`apply_preset` 覆盖上表五个字段，档位值优先于手改的默认值。设为 `auto` 时，档位取 `32, 24, 16, 12, 8, 6` 中第一个超不超过检测到的显卡容量 1 GB 的值。训练页会打印最终选中的档位，并逐个标注该字段来自预设还是被用户改过，生效配置不靠猜。
 
 各项机制的底层行为如下：
 - 精度与累加器：`model.dtype` 默认 `bfloat16`；设为 `float16` 时自动启用 `GradScaler`，若同时开启 `vram.fp16_accumulate: true`，则设置 `torch.backends.cuda.matmul.allow_fp16_accumulation = True` 以换取消费级显卡更高的半精度 Tensor Core 吞吐。
-- NF4 冻结层量化：`vram.quantize_dit` 设为 `ffn` 或 `all` 时，`quantize_nf4` 将 `layers.*` 下不含 `lora_` 的冻结 `nn.Linear` 替换为 `bitsandbytes.nn.Linear4bit`（`quant_type="nf4"`, `compress_statistics=True`），跳过非块模块（嵌入层与调制层）。
-- CPU 块交换（Block Swap）：`vram.blocks_to_swap > 0`（要求开启 `gradient_checkpointing`）时，`BlockSwap` 将最后 $N$ 个 Transformer 块的冻结参数移至主机锁页内存（`pin_memory()`），而可训练的 LoRA 参数始终留在 GPU。自定义 `torch.autograd.Function`（`_SwapCheckpoint`）在前向与反向重算进入该块前调用 `non_blocking=True` 拷入 GPU，计算完毕立即释放回 CPU，并用零张量 `_dummy` 维持计算图连通，使 GPU 上同一时刻最多只驻留一个被交换块的基座权重。
-- OOM 动态降级：训练循环捕获 `torch.cuda.OutOfMemoryError` 后调用 `_degrade_memory`，自动将 `blocks_to_swap` 增加 8 层（上限 40 层），清空 CUDA 缓存后立即重试当前步。
+- DiT 权重量化：`vram.quantize_dit` 选范围——`ffn` 只替换两个 FFN 投影，`all` 替换每块的 QKVO 与 FFN——`vram.quantize_dtype` 选存储格式。`nf4` 把模块换成 `bitsandbytes.nn.Linear4bit`（`quant_type="nf4"`, `compress_statistics=True`）；`fp8` 换成 [FP8Linear](<../moss_lora/quant.py>)，权重以 `float8_e4m3fn` 存储、每行输出一个缩放因子，计算前再展宽到计算精度。两者都让适配器保持 `bfloat16` 并把梯度透传到输入；只有冻结模块（不含 `lora_` 子模块的那些）会被替换，可训练权重绝不会被取整。模型先在主机内存里构建并量化、再一次性上传，因为模型已在显卡上后再替换模块会切碎分配器。
+- conditioning 半边：`vram.quantize_conditioning` 把同一种格式扩展到 `layers.*` 之外的 16 个冻结 Linear——文本投影及其两个块、两个调制、时间嵌入和最终投影。默认 `none`，且只在 `quantize_dit` 不为 `none` 时生效，因为 per-block 调制会被每一个块乘进去，取整误差会逐层放大而不是相互抵消。
+- 块流式加载：`vram.blocks_to_swap = N` 让前 `42 - N` 块常驻、尾部 `N` 块从主机内存流式载入，`42` 表示整栈流式；`-1` 表示跟随预设。WebUI 呈现的是补集——常驻层数——因为那才是用户思考的量，存储键保持不变。流式加载要求开启 `gradient_checkpointing`。被流式块的冻结基座权重放在锁页主机内存里，其 LoRA 权重常驻显卡；`_SwapCheckpoint` 在该块前向与反向重算之前拷入基座权重、算完立即释放，因此同一时刻显卡上只有一块的基座权重。一个块大小的预取窗口让下一块的拷贝与当前块的计算重叠，拷贝走独立流并配合 `record_stream`，避免分配器在拷贝仍排队时回收目标缓冲区。
+- OOM 动态降级：训练循环捕获 `torch.cuda.OutOfMemoryError` 后调用 `_degrade_memory`，把 `blocks_to_swap` 增加 8 层，直到模型实际的块数上限，清空 CUDA 缓存后立即重试当前步。也就是说缺显存时训练会朝流式加载退化而不是直接死掉，一开始余量给少了也能自己跑下去。
 - 编译加速：`vram.compile: true` 时对 `model.forward` 施加 `torch.compile(..., dynamic=True, fullgraph=False)`，编译失败则自动回退至 eager 模式。
+- 遥测与预估：`_memory_stats` 把已分配、已保留显存和显卡名称写进每条 metrics 记录与日志行，`metrics.jsonl` 因此留下了每次运行真正达到的峰值。`memory.estimate_vram` 回答的是运行之前的同一个问题：它遍历配置，累加选定量化下的冻结权重、开了检查点的激活、LoRA 与优化器状态、样图路径，再加一笔固定的 CUDA 上下文余量，分别给出训练峰值与样图峰值以及合计。`POST /api/estimate` 把它暴露给仪表盘，于是预测峰值与实测峰值并排显示，两者之间的偏差是看得见的，而不是悄悄发生。
 
 ### 6.4 验证、采样、检查点与断点续训
 
@@ -341,6 +344,13 @@ WebUI 后端采用「路由层 → 服务层 → 共享状态与任务注册表�
 3. 视觉服务密钥规则单测（[test_caption_key.py](<../tests/test_caption_key.py>)）：在不联网条件下验证 `_plan_api_key` 与 `resolve_api_key` 的五种状态分支：环境变量名落盘并在运行时解出真值、明文密钥仅存进程内存 `deps._LITERAL_API_KEY` 不写文件、空串清空、旧版文件中的非变量名字符串按 `legacy` 兼容读取、已存变量名但进程环境未设置时返回 `missing` 阻止误将变量名当作密钥发送。
 4. 文本编码器右 padding 隔离测试（[test_text_padding.py](<../tests/test_text_padding.py>)）：设置环境变量 `MOSS_TE=<MODELS_DIR>/text_encoders/Qwen3.5-9B` 后运行，对比短提示词单独编码（`batch_size=1`）与跟长提示词混批右 padding 编码（`batch_size=2`）的输出向量，断言余弦相似度大于 `0.999`，验证因果掩码未发生右侧 padding 泄漏。
 5. 静态资源缓存头契约（[test_static_cache.py](<../tests/test_static_cache.py>)）：以 ASGI 传输构建应用，断言 `/`、ES 模块与页面片段在请求携带 `If-None-Match` 或未来时间戳的 `If-Modified-Since` 时仍返回 `200` 且带 `Cache-Control: no-store`，响应不返回任何校验器头，API 路由仍优先匹配于挂在 `/` 上的静态挂载，缺失模块仍返回 `404`。
+
+6. 量化与显存核算单元测试（[test_quant_linear.py](<../tests/test_quant_linear.py>)、[test_quant_fp8.py](<../tests/test_quant_fp8.py>)、[test_quant_conditioning.py](<../tests/test_quant_conditioning.py>)）：fp8 一项断言被替换的 Linear 在存储误差范围内复现 bf16 输出、并把梯度传回输入；conditioning 一项构造同样 16 个 Linear 布局的玩具模型，断言只有这些层换了格式，块、`video_embedder` 和任何带适配器的模块仍是 `bfloat16`。
+7. 显存预估标定（[test_vram_estimate.py](<../tests/test_vram_estimate.py>)）：把五次已记录的运行回放进 `estimate_vram`，要求预测峰值与实测值相差几个百分点以内，从而把每块权重、conditioning、激活与优化器的系数钉住，防止回归。
+8. 缓存覆盖语义（[test_cache_overwrite.py](<../tests/test_cache_overwrite.py>)）：断言 `cache.overwrite` 关闭时跳过已有样图文件、开启时重新编码，且其后串联的文本阶段在未同时勾选文本编码时保持空操作，全部在临时缓存目录内完成，不需要显卡。
+9. 预检处理函数回归（[test_validate_router.py](<../tests/test_validate_router.py>)）：用 ASGI 传输分别向 `POST /api/validate` 投递一份合法 YAML 和一份坏 YAML，守住那个让所有合法预检都变成 `UnboundLocalError` 的局部变量遮蔽 bug。
+10. 错误键完整性（[test_error_keys.py](<../tests/test_error_keys.py>)）：解析每个 `problem()` 调用点，与错误清单比对错误码，并要求每个错误码在 `zh.json` 里都有对应键、且 `{placeholder}` 集合与该码的参数一致，新的失败模式因此不可能带着未翻译的提示上线。
+11. 流式加载正确性（[test_offload_stream.py](<../tests/test_offload_stream.py>)）：让一个两块的玩具 Transformer 在训练与 eval 两种模式下走 `BlockSwap`，断言流式与常驻权重产出相同输出、主机副本用后即释放、预取路径不会把分配器已回收的缓冲区交出去。
 
 前端回归测试与拆分等价性检查由 [smoke.mjs](<../tests/ui/smoke.mjs>) 及路由展平机制保障：
 - 后端拆分等价性：[server.py](<../moss_lora/web/server.py>) 通过 `_flatten_included_routes` 将拆分后的 11 个子路由原地展开进 `app.router.routes`，保证路由匹配顺序与拆分前的单文件 `app.py` 逐条一致，同时保留 [app.py](<../moss_lora/web/app.py>) 作为兼容导出垫片。

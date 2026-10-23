@@ -11,7 +11,7 @@
 ## 主な機能
 
 - **2段階キャッシュ**: FLUX.2 VAE で画像 latent を、ローカル Qwen3.5-9B でテキスト埋め込みをエンコードしてディスクへ保存します。テキストのバッチ処理には右側因果パディングを使用し、学習の順伝播ではアテンションマスクに従って各系列の有効長を切り出すため、パディングトークンが有効なテキスト特徴を汚染しません。
-- **Flow Matching 学習と VRAM プリセット**: 切断 logit-normal $\sigma$ サンプリングとトークン単位で正規化した速度場 MSE 損失で学習します。組み込みの `auto|32|24|16|12|8|6` VRAM プリセットにより、勾配チェックポイント、NF4 量子化（`none|ffn|all`）、CPU ブロックスワップ、`torch.compile`、`fp16` 累積を組み合わせ、`auto` は `packed`（FlashAttention-2 varlen）と `padded`（トークン次元のパディング）を自動で選びます。
+- **Flow Matching 学習と VRAM プリセット**: 切断 logit-normal $\sigma$ サンプリングとトークン単位で正規化した速度場 MSE 損失で学習します。組み込みの `auto|32|24|16|12|8|6` VRAM プリセットは、勾配チェックポイント、重みのみの量子化（`quantize_dit: none|ffn|all` を `nf4` または `fp8` で、conditioning 側も任意で）、ホストメモリからのブロックストリーミング、`torch.compile`、`fp16` 累積を組み合わせ、`packed`（FlashAttention-2 varlen）と `padded`（トークン次元のパディング）の両バッチモードに対応します。`auto` はそのどちらかを選びます。ダッシュボードは実行前と実行中に、実測値の隣に予測 VRAM ピークを表示します。
 - **正則化セットとホールドアウト検証**: `dataset.reg_path` から正則化画像を読み込んで概念ドリフトを抑制し、`train.eval_holdout` で決定論的な検証セットを分割して定期的に検証損失を計算します。
 - **2種類のスタイルによるキャプション生成**: OpenAI 互換の視覚モデル API を呼び出し、既存の tag を保持してシーン文を追記する `tag_caption` と、3段階（long / medium / short）の記述を生成する `official` スタイルをサポートし、同名の sidecar JSON に保存します。
 - **ビルド不要の WebUI**: 9つのタブ（ダッシュボード、学習設定、データセット、キャッシュ、サンプル画像、エクスポート、ワークスペース、設定、キャプション生成）でネイティブ ES module を直接実行します。ソースコードの変更はブラウザの再読み込みだけで反映されます。
@@ -22,7 +22,7 @@
 
 - **OS と Python**: Linux または WSL2、Python 3.11 以上。
 - **GPU とドライバー**: `bfloat16` または `float16` に対応した NVIDIA GPU、および PyTorch 2.9 以上に対応する CUDA ドライバー。
-- **VRAM ティア**: 16 GB 以上は非量子化精度（`preset: 16|24|32`）、12 GB は `preset: 12`（FFN NF4 量子化）、8 GB と 6 GB はそれぞれ `preset: 8`（全線形層 NF4 量子化）と `preset: 6`（ブロックスワップと 8-bit オプティマイザーを追加）を使用します。
+- **VRAM ティア**: 24 GB 以上は非量子化のまま実行します（`preset: 24|32`）。16 GB と 12 GB は `preset: 16` と `preset: 12`（FFN 量子化）、8 GB と 6 GB は `preset: 8` と `preset: 6` を使い、全ブロックを量子化して 42 個すべてをホストメモリからストリーミングし、`torch.compile` を無効化したうえで 8-bit オプティマイザーを有効にします。`preset: auto` は検出したカードからティアを決めます。これらの値は項目ごとに上書きでき、1 ステップでメモリが足りなくなると学習側が `blocks_to_swap` を自動で引き上げます。
 - **ローカル重み**: MOSS-Image DiT、Qwen3.5-9B テキストエンコーダー（HuggingFace ディレクトリ、または ConvRot int8 量子化済み単一ファイル `.safetensors`）、および FLUX.2 VAE。
 
 ## インストール
@@ -270,7 +270,7 @@ moss-image-trainer/
 ## 既知の制限事項
 
 - **バッチサイズとスループット**: マイクロバッチはトークン予算で組まれ、画像はそれぞれの解像度を保ちます。1 ステップの仕事量を決めるのは `batch_size` ではなく `train.bin_tokens` です。FlashAttention-2 を入れると既定が `padded`（トークンパディング + key mask）から `packed`（varlen、マスクなし）に切り替わります。
-- **低 VRAM 設定での精度トレードオフ**: `model.dtype: float16` と `vram.fp16_accumulate: true` の組み合わせは、高い学習率や長時間の学習において `bfloat16` よりも数値的不安定性を起こしやすくなります。NF4 量子化（`quantize_dit: ffn|all`）と CPU ブロックスワップは 6〜12 GB GPU 向けの設定であり、非量子化バックボーンと比較して微細な再現性がわずかにトレードオフになります。
+- **低 VRAM 設定での精度トレードオフ**: `model.dtype: float16` と `vram.fp16_accumulate: true` の組み合わせは、高い学習率や長時間の学習において `bfloat16` よりも数値的不安定性を起こしやすくなります。量子化（`quantize_dit: ffn|all`）とブロックストリーミングは 16 GB 未満のカードを対象とし、載せきるために細かな再現性をわずかに手放します。`nf4` が最も小さい形式、`fp8` がより安定した形式で、conditioning 側まで意図的に量子化すると誤差が全ブロックに積み重なるため、明示しない限り無効のままです。
 - **学習対象の範囲**: LoRA アダプターは 5B DiT（デフォルトで 42 層の `q`、`k`、`v`、`o`、`ffn_up_gate`、`ffn_down`、および任意の `text_embedder`）にのみ適用され、Qwen3.5-9B テキストエンコーダーと VAE は凍結されます。
 
 ## ライセンスと謝辞

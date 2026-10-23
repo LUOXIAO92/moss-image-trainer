@@ -11,7 +11,7 @@
 ## 主要特性
 
 - 分阶段缓存：FLUX.2 VAE 编码潜变量，本地 Qwen3.5-9B 编码文本特征并落盘。文本批处理采用右侧因果 padding，训练前向按掩码切取有效长度，避免 padding 污染文本特征。
-- 流匹配训练与显存分档：采用截断 logit-normal $\sigma$ 采样与按 token 归一化的速度场 MSE 损失。内置 `auto|32|24|16|12|8|6` 显存档位，组合激活检查点、NF4 量化（`none|ffn|all`）、CPU 块交换、`torch.compile` 与 `fp16` 累加，`auto` 在 `packed`（FlashAttention-2 varlen）与 `padded`（token 维补齐）之间自动选择。
+- 流匹配训练与显存分档：采用截断 logit-normal $\sigma$ 采样与按 token 归一化的速度场 MSE 损失。内置 `auto|32|24|16|12|8|6` 显存档位，组合激活检查点、权重量化（`quantize_dit: none|ffn|all`，格式 `nf4` 或 `fp8`，conditioning 半边可选）、从主机内存流式加载块、`torch.compile` 与 `fp16` 累加，`auto` 在 `packed`（FlashAttention-2 varlen）与 `padded`（token 维补齐）之间自动选择。仪表盘在运行前后并排显示预测显存峰值与实测峰值。
 - 正则集与留出验证：通过 `dataset.reg_path` 引入正则集抑制概念漂移，按 `train.eval_holdout` 切分留出集定期计算验证损失。
 - 双风格提示词生成：调用 OpenAI 兼容视觉模型接口，支持保留原 tag 并补写场景句的 `tag_caption` 与长中短三档描述的 `official` 风格，写入同名 sidecar JSON。
 - 免构建 WebUI：前端运行原生 ES module（含中控台、训练配置、数据集、缓存、采样对比、导出、工作区、设置、提示词生成九个标签页），修改代码后刷新直接生效。
@@ -22,7 +22,7 @@
 
 - 系统与解释器：Linux 或 WSL2，Python 3.11+。
 - 硬件与驱动：支持 `bfloat16` 或 `float16` 的 NVIDIA GPU，CUDA 驱动匹配 PyTorch 2.9+。
-- 显存档位：16 GB+ 使用无量化精度（`preset: 16|24|32`）；12 GB 使用 `preset: 12`（FFN NF4 量化）；8 GB 与 6 GB 分别使用 `preset: 8`（全线性层 NF4 量化）与 `preset: 6`（叠加块交换与 8-bit 优化器）。
+- 显存档位：24 GB 及以上不量化（`preset: 24|32`）；16 GB 与 12 GB 用 `preset: 16`、`preset: 12`（FFN 量化）；8 GB 与 6 GB 用 `preset: 8`、`preset: 6`，这两档量化全部块、把 42 块全部从主机内存流式载入、关掉 `torch.compile` 并启用 8-bit 优化器。`preset: auto` 按检测到的显卡自动选档。每一项都可单独改，训练中显存不够时训练器会自己调高 `blocks_to_swap`。
 - 本地模型：MOSS-Image DiT、Qwen3.5-9B 文本编码器（HuggingFace 目录，或 ConvRot int8 量化的单文件 `.safetensors`）与 FLUX.2 VAE。
 
 ## 安装
@@ -270,7 +270,7 @@ moss-image-trainer/
 ## 已知限制
 
 - 批大小与吞吐：一个微批按 token 预算组装，图片各自保留分辨率，因此决定单步工作量的是 `train.bin_tokens` 而不是 `batch_size`。装上 FlashAttention-2 后默认从 `padded`（token 补齐 + key mask）切到 `packed`（varlen，无 mask）。
-- 低显存精度权衡：`model.dtype: float16` 配合 `vram.fp16_accumulate: true` 在高学习率或长步数下比 `bfloat16` 更易数值不稳定；NF4 量化（`quantize_dit: ffn|all`）与块交换面向 6–12 GB 显存，细粒度还原略逊于全精度主干。
+- 低显存精度权衡：`model.dtype: float16` 配合 `vram.fp16_accumulate: true` 在高学习率或长步数下比 `bfloat16` 更易数值不稳定；量化（`quantize_dit: ffn|all`）与块流式加载面向 16 GB 以下的卡，是用一点细粒度还原换跑得起来；`nf4` 最省、`fp8` 更稳，而 conditioning 半边会被每个块乘进去，刻意量化等于把误差叠加到全网络，所以默认关闭。
 - 训练范围：仅对 5B DiT 注入 LoRA（默认覆盖 42 层的 `q`、`k`、`v`、`o`、`ffn_up_gate`、`ffn_down` 及可选 `text_embedder`），不支持微调 Qwen3.5-9B 文本编码器或 VAE。
 
 ## 许可与上游致谢

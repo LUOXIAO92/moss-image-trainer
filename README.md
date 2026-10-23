@@ -11,7 +11,7 @@ The trainer splits the workflow into offline caching and online training so the 
 ## Features
 
 - **Two-stage caching**: Encodes image latents with the FLUX.2 VAE and text embeddings with a local Qwen3.5-9B, then writes both to disk. Text batches use right-side causal padding, and the training forward pass slices each sequence by its attention mask so padding tokens never pollute valid text embeddings.
-- **Flow Matching training and VRAM presets**: Trains with truncated logit-normal $\sigma$ sampling and per-token normalized velocity MSE loss. Built-in `auto|32|24|16|12|8|6` VRAM presets combine gradient checkpointing, NF4 quantization (`none|ffn|all`), CPU block swap, `torch.compile`, and `fp16` accumulation across `packed` (FlashAttention-2 varlen) and `padded` (token-dimension padding) batch modes; `auto` picks one.
+- **Flow Matching training and VRAM presets**: Trains with truncated logit-normal $\sigma$ sampling and per-token normalized velocity MSE loss. Built-in `auto|32|24|16|12|8|6` VRAM presets combine gradient checkpointing, weight-only quantization (`quantize_dit: none|ffn|all` in `nf4` or `fp8`, plus the optional conditioning half), block streaming from host memory, `torch.compile`, and `fp16` accumulation across `packed` (FlashAttention-2 varlen) and `padded` (token-dimension padding) batch modes; `auto` picks one. The dashboard shows a predicted VRAM peak beside the measured one before and during a run.
 - **Regularization and holdout validation**: Loads regularization images via `dataset.reg_path` to limit concept drift and splits a deterministic validation set via `train.eval_holdout` for periodic loss checks.
 - **Dual-style captioning**: Queries any OpenAI-compatible vision endpoint to generate `tag_caption` (keeps existing tags and appends a scene sentence) and `official` captions (long, medium, and short descriptions), stored in a companion sidecar JSON.
 - **Zero-build WebUI**: Runs native ES modules across nine tabs (Dashboard, Training settings, Dataset, Cache, Samples, Export, Workspace, Settings, and Caption). Source edits take effect on browser refresh.
@@ -22,7 +22,7 @@ The trainer splits the workflow into offline caching and online training so the 
 
 - **OS and Python**: Linux or WSL2 with Python 3.11+.
 - **GPU and drivers**: NVIDIA GPU with `bfloat16` or `float16` support and CUDA drivers matching PyTorch 2.9+.
-- **VRAM tiers**: 16 GB+ runs unquantized (`preset: 16|24|32`); 12 GB uses `preset: 12` (FFN NF4 quantization); 8 GB and 6 GB use `preset: 8` (full linear NF4 quantization) and `preset: 6` (adds block swap and an 8-bit optimizer).
+- **VRAM tiers**: 24 GB and up runs unquantized (`preset: 24|32`); 16 GB and 12 GB use `preset: 16` and `preset: 12` (FFN quantization); 8 GB and 6 GB use `preset: 8` and `preset: 6`, which quantize every block, stream all 42 of them from host memory, drop `torch.compile`, and enable the 8-bit optimizer. `preset: auto` derives the tier from the detected card. Any of these values can be overridden per field, and the trainer raises `blocks_to_swap` by itself when a step runs out of memory.
 - **Local weights**: MOSS-Image DiT, Qwen3.5-9B text encoder (HuggingFace directory, or a ConvRot int8-quantized single-file `.safetensors`), and FLUX.2 VAE.
 
 ## Installation
@@ -270,7 +270,7 @@ See [docs/DESIGN.md](<docs/DESIGN.md>) for module boundaries, data flow, and fro
 ## Known Limitations
 
 - **Batch size and throughput**: A micro-batch is assembled by token budget, so images keep their own resolutions and `train.bin_tokens` (not `batch_size`) sets how much work one step does. Install FlashAttention-2 to switch the default from `padded` (token padding plus a key mask) to `packed` (varlen, no mask).
-- **Low-VRAM precision trade-offs**: `model.dtype: float16` with `vram.fp16_accumulate: true` is more prone to numerical instability than `bfloat16` at higher learning rates or long training runs. NF4 quantization (`quantize_dit: ffn|all`) and CPU block swap target 6–12 GB GPUs and trade slight fine-grained fidelity compared to an unquantized backbone.
+- **Low-VRAM precision trade-offs**: `model.dtype: float16` with `vram.fp16_accumulate: true` is more prone to numerical instability than `bfloat16` at higher learning rates or long training runs. Quantization (`quantize_dit: ffn|all`) and block streaming target cards below 16 GB and trade a little fine-grained fidelity for the fit; `nf4` is the smallest format and `fp8` the steadier one, and quantizing the conditioning half on purpose compounds error into every block, which is why it stays off unless asked for.
 - **Training scope**: LoRA adapters attach only to the 5B DiT (`q`, `k`, `v`, `o`, `ffn_up_gate`, and `ffn_down` across 42 layers by default, plus optional `text_embedder`); the trainer freezes the Qwen3.5-9B text encoder and the VAE.
 
 ## License and Acknowledgements

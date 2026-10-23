@@ -142,9 +142,11 @@ The 9 steps below form a one-way pipeline. Never start Step 7 (training) before 
   vram:
     preset: auto
     gradient_checkpointing: auto
-    blocks_to_swap: -1
+    blocks_to_swap: -1        # tail N blocks stream from host memory; -1 = from the preset
     optimizer_in_8bit: false
-    quantize_dit: none
+    quantize_dit: none        # none | ffn | all
+    quantize_dtype: nf4       # nf4 (smallest) | fp8 (steadier)
+    quantize_conditioning: none   # none | fp8 | nf4; inert unless quantize_dit != none
     fp16_accumulate: false
     compile: true
   export:
@@ -362,12 +364,15 @@ mkdir -p "workspaces/$WORKSPACE"/{train_cache,reg_cache,runs,logs,exports}
 
 ### 5.1 VRAM Presets (`vram.preset` and `cli plan`)
 
-| VRAM Capacity (GB) | `vram.preset` | `model.dtype` | `quantize_dit` | `blocks_to_swap` | `optimizer_in_8bit` | Notes |
+| VRAM Capacity (GB) | `vram.preset` | `quantize_dit` | `blocks_to_swap` | `optimizer_in_8bit` | `compile` | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **32 / 24 / 16** | `32` / `24` / `16` | `bfloat16` | `none` | `0` | `false` | Full-precision frozen backbone; highest throughput and best detail fidelity |
-| **12** | `12` | `bfloat16` or `float16` | `ffn` | `0` | `false` | NF4 quantization on FFN linear layers only; balances precision and VRAM |
-| **8** | `8` | `float16` (`fp16_accumulate: true`) | `all` | `0` | `false` | NF4 quantization on all frozen linear layers without CPU block swapping |
-| **6** | `6` | `float16` (`fp16_accumulate: true`) | `all` | `20` | `true` | NF4 quantization combined with 20-layer CPU block swapping and 8-bit optimizer |
+| **32 / 24** | `32` / `24` | `none` | `0` | `false` | `true` | Full-precision frozen backbone; highest throughput and best detail fidelity |
+| **16 / 12** | `16` / `12` | `ffn` | `0` | `false` | `true` | NF4 on the two FFN projections; the backbone stays in bf16 elsewhere |
+| **8 / 6** | `8` / `6` | `all` | `42` | `true` | `false` | Every frozen Linear quantized and every block streamed from host memory |
+
+`blocks_to_swap: N` streams the trailing `N` of the 42 blocks and keeps the leading `42 - N` resident; `42` means nothing stays resident, `0` means everything does. The WebUI asks for the complement (resident layer count) and stores the same key. A one-block prefetch window hides part of the copy behind compute, so a streamed run costs a fraction of a second per step rather than stalling on every block. Training is slower at these tiers because the PCIe copy dominates, not because of the quantization.
+
+When the preset is not explicitly set, `auto` resolves the tier from the detected card capacity. Every field in the table can be overridden individually, and the training page states which values came from the preset and which the user changed. If a step still runs out of memory, `_degrade_memory` raises `blocks_to_swap` by 8 and retries, so a marginal run finishes instead of dying; lower the resident layer count by hand when the first step already fails.
 
 ### 5.2 Core Training Hyperparameter Decisions
 
