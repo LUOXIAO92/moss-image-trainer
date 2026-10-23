@@ -43,6 +43,11 @@ class CacheProgress:
     A config outside a workspace publishes nothing.
     """
 
+    # A phase that starts right after the previous one ended belongs to the same
+    # build: `cache` then `encode-text` is one job, and the latent bar must not
+    # reset when the text pass takes over.
+    CONTINUE_WINDOW = 900.0
+
     def __init__(self, config):
         self.path = progress_path(config)
         self.cache_dir = os.path.abspath(os.path.expanduser(config.cache.dir))
@@ -62,6 +67,19 @@ class CacheProgress:
             # sees the finished latent bar while the text pass runs
             "history": {},
         }
+        previous = runtime.read_json(self.path) if self.path else None
+        if previous and self._continues(previous):
+            self.record["history"] = dict(previous.get("history") or {})
+            self.record["started"] = previous.get("started") or 0.0
+
+    def _continues(self, previous: dict) -> bool:
+        """True when ``previous`` is the phase this build just finished."""
+        if str(previous.get("status") or "") != "done":
+            return False
+        if str(previous.get("cache_dir") or "") != self.cache_dir:
+            return False
+        finished = float(previous.get("finished") or 0.0)
+        return bool(finished) and (time.time() - finished) < self.CONTINUE_WINDOW
 
     def write(self) -> None:
         if not self.path:
