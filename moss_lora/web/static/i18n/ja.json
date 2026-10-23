@@ -7,7 +7,7 @@
  "app.documentTitle": "{tab} · MOSS-Image LoRA トレーナー",
  "app.title": "MOSS-Image LoRA トレーナー",
  "cache.backToTrain": "学習設定へ戻る",
- "cache.batchHelp": "0 = 空き VRAM から自動。固定値を入れると毎回同じ結果になります（batch で数値が変わります）。",
+ "cache.batchHelp": "0 = 空き VRAM から自動。VAE は fp32 畳み込みで計算するため結果は batch に依存しません。テキスト埋め込みは batch で変わるので、再現するなら固定値を入れてください。",
  "cache.captionSource": "学習用キャプション",
  "cache.captionSourceHelp": "ソースを変更した場合はテキストエンコードを再実行してください。latent キャッシュはそのまま使えます。",
  "cache.eyebrow": "学習準備",

@@ -173,6 +173,11 @@ class LatentCodec:
     def __init__(self, vae, dtype=torch.float16):
         self.vae = vae
         self.dtype = dtype
+        # cuDNN runs float32 convolutions on TF32 tensor cores by default, which
+        # rounds the mantissa to 10 bits: the same image then encodes differently
+        # at batch 1 and batch 4 (measured 3.9e-3), and TF32 is slower here anyway
+        # (268 ms/image against 167). Precision first, and batch stops mattering.
+        torch.backends.cudnn.allow_tf32 = False
         bn = vae.bn
         self.mean = bn.running_mean.detach().float().view(1, -1, 1, 1)
         self.std = (bn.running_var.detach().float() + BN_EPS).sqrt().view(1, -1, 1, 1)

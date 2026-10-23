@@ -7,7 +7,7 @@
  "app.documentTitle": "{tab} · MOSS-Image LoRA 训练台",
  "app.title": "MOSS-Image LoRA 训练台",
  "cache.backToTrain": "返回训练设置",
- "cache.batchHelp": "0 = 按剩余显存自动；填固定值可让每次编码的结果完全一致（batch 会改变数值）。",
+ "cache.batchHelp": "0 = 按剩余显存自动。VAE 编码用全精度 fp32 卷积，结果与批次无关；文本编码的结果会随批次变化，要复现就填固定值。",
  "cache.captionSource": "训练用 caption",
  "cache.captionSourceHelp": "切换来源后需重新运行文本编码，无需重建 latent 缓存。",
  "cache.eyebrow": "训练准备",

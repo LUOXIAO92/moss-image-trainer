@@ -7,7 +7,7 @@
  "app.documentTitle": "{tab} · MOSS-Image LoRA Trainer",
  "app.title": "MOSS-Image LoRA Trainer",
  "cache.backToTrain": "Back to training settings",
- "cache.batchHelp": "0 = size from free VRAM; a fixed value keeps every encode identical, because batch size changes the numbers.",
+ "cache.batchHelp": "0 = size from free VRAM. VAE encoding runs full-precision fp32 convolutions, so its result does not depend on the batch; text encoding does, so pin a value to reproduce it.",
  "cache.captionSource": "Training caption source",
  "cache.captionSourceHelp": "Re-run text encoding after changing the source; latent cache stays untouched",
  "cache.eyebrow": "Pre-training",
