@@ -18,7 +18,9 @@ class BlockSwap:
         self.device = device
         # Hard cap on how many streamed blocks may sit on the card at once: an
         # uncapped policy would walk the whole model back up.
-        self.window = max(1, int(window or 1))
+        # 1 = strictly one block on the card; more only pays off if a copy ever
+        # outruns a block, and every extra slot is a resident block.
+        self.window = max(1, min(4, int(window or 1)))
         self.params: dict[int, list[torch.nn.Parameter]] = {}
         for index in range(self.start, len(blocks)):
             params = [p for p in blocks[index].parameters() if p.requires_grad is False]

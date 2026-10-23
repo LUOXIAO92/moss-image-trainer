@@ -1065,6 +1065,7 @@ class Trainer:
 
         preview = self.config.preview
         was_training = self.model.training
+        started = time.perf_counter()
         self.model.eval()
         # 0 = one forward for every prompt; 1 = one prompt at a time, which keeps
         # the sampling peak flat on a card that cannot hold all of them at once.
@@ -1093,7 +1094,7 @@ class Trainer:
             target = os.path.join(out_dir, f"step{step:06d}_{index}.png")
             Image.fromarray(pixels).save(target)
             paths.append(target)
-        self.log(f"preview -> {paths}")
+        self.log(f"preview -> {paths} ({time.perf_counter() - started:.1f}s)")
         return paths
 
 
