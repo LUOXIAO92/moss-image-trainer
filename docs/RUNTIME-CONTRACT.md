@@ -75,6 +75,13 @@ same way a training heartbeat does.
 started in a terminal, and the page polls it faster than the page heartbeat
 while the build is live.
 
+`POST /api/cache/stop?workspace=<name>` stops a build whoever started it. It
+takes the pid from the record, checks that the pid really is a cache process,
+sends SIGINT and marks the record `stopping`. A finished record, a pid that is
+gone, or a pid that belongs to something else all come back as 409. The writer
+records `stopped` with exit code 130 when the interrupt lands, so the panel says
+the build was stopped, not failed.
+
 ## The heartbeat
 
 `runs/<run>/training.json` is written atomically: a temporary file, then

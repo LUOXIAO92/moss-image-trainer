@@ -51,6 +51,8 @@ workspaces/<workspace>/
 
 `GET /api/cache` 把这记录作为 `job` 返回，缓存页因此能看到在终端里发起的构建；构建进行中，页面比常规轮询更快地刷新它。
 
+`POST /api/cache/stop?workspace=<name>` 能停掉任何人起的构建。它从记录里取 pid，先核对这个 pid 确实是缓存进程，再发 SIGINT，并把记录标成 `stopping`。记录已经结束、pid 已经不在、或者 pid 属于别的进程，一律返回 409。中断落地时写入方把记录写成 `stopped`、退出码 130，所以面板说的是“已停止”，不是“失败”。
+
 ## 心跳
 
 `runs/<run>/training.json` 采用原子写：先写临时文件，再 `os.replace`。读者要么看到旧记录，要么看到新记录，不会读到一半新一半旧。
