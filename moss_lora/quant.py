@@ -1,13 +1,25 @@
-"""NF4 weight-only quantization for QLoRA-style training.
+"""Weight-only quantization for QLoRA-style training.
 
-Three levels, by memory saved:
+The base weights are frozen, so only the forward value of each Linear matters:
+the adapter gradient flows through the input, and bitsandbytes' 4-bit matmul and
+our fp8 storage both support that. LoRA adapters are never quantized.
+
+Scope decides which frozen Linears are replaced:
 
     none  every Linear stays bf16                     9.5 GiB of block weights
-    ffn   only ffn_up_gate / ffn_down become nf4      4.5 GiB  (saves ~5.0)
-    all   every frozen Linear becomes nf4             2.5 GiB  (saves ~7.0)
+    ffn   only ffn_up_gate / ffn_down                 4.5 GiB nf4 / 7.3 GiB fp8
+    all   every frozen Linear in ``layers.*``         2.5 GiB nf4 / 4.7 GiB fp8
 
-LoRA adapters are never quantized. The base weights are frozen, so bitsandbytes'
-4-bit linears only have to support the input gradient -- which they do.
+Storage format decides the trade-off:
+
+    nf4   4-bit NormalFloat, smallest, needs bitsandbytes, most quality risk
+    fp8   e4m3 with one scale per output row, twice the size, error is far below
+          bf16's own rounding for the dot products the blocks compute
+
+Only ``layers.*`` is touched by default. ``text_embedder``, both modulations,
+``time_embedding`` and ``final_linear_video`` stay bf16: together they are 0.62
+GiB, and quantizing a per-block scale/shift that every layer multiplies into
+would risk the picture for a rounding error.
 """
 
 from __future__ import annotations
@@ -16,11 +28,19 @@ import torch
 from torch import nn
 
 SCOPES = ("none", "ffn", "all")
+DTYPES = ("nf4", "fp8")
 FP8_MAX = 448.0
+FFN_MARKERS = ("ffn_up_gate", "ffn_down")
 
 
 class FP8Linear(nn.Module):
-    """Frozen linear stored as fp8 e4m3 with per-row scales (inference only)."""
+    """Frozen linear stored as fp8 e4m3 with one scale per output row.
+
+    The weight is dequantized to the activation dtype per forward pass. That
+    keeps the stored footprint at one byte per parameter and costs one cast of
+    the block's largest matrix, which is why this is usable for training and not
+    only for inference.
+    """
 
     def __init__(self, linear: nn.Linear):
         super().__init__()
@@ -29,6 +49,8 @@ class FP8Linear(nn.Module):
         self.register_buffer("weight", (weight / scale).to(torch.float8_e4m3fn), persistent=False)
         self.register_buffer("scale", scale.to(torch.bfloat16), persistent=False)
         self.bias = linear.bias
+        if self.bias is not None:
+            self.bias.requires_grad_(False)
         self.in_features = linear.in_features
         self.out_features = linear.out_features
 
@@ -37,7 +59,6 @@ class FP8Linear(nn.Module):
         weight = self.weight.to(dtype) * self.scale.to(dtype)
         bias = self.bias.to(dtype) if self.bias is not None else None
         return torch.nn.functional.linear(x.to(dtype), weight, bias)
-FFN_MARKERS = ("ffn_up_gate", "ffn_down")
 
 
 def _to_linear4bit(linear: nn.Linear, dtype: torch.dtype = torch.bfloat16) -> nn.Module:
@@ -63,6 +84,36 @@ def _to_linear4bit(linear: nn.Linear, dtype: torch.dtype = torch.bfloat16) -> nn
     return quantized
 
 
+def _frozen_linears(
+    model: nn.Module,
+    scope: str,
+    skip: tuple[str, ...],
+    only: tuple[str, ...] | None,
+) -> list[tuple[str, nn.Linear]]:
+    """The Linears this scope may replace, in module order."""
+    targets = []
+    for name, module in model.named_modules():
+        if not isinstance(module, nn.Linear) or any(token in name for token in skip):
+            continue
+        module.weight.requires_grad = False  # base weights are frozen either way
+        if only is not None and not any(marker in name for marker in only):
+            continue
+        if only is None and not name.startswith("layers."):
+            continue  # the conditioning half of the model stays accurate
+        if scope == "ffn" and not any(marker in name for marker in FFN_MARKERS):
+            continue
+        targets.append((name, module))
+    return targets
+
+
+def _replace(model: nn.Module, targets: list[tuple[str, nn.Linear]], build) -> int:
+    for name, module in targets:
+        parent_name, _, leaf = name.rpartition(".")
+        parent = model.get_submodule(parent_name) if parent_name else model
+        setattr(parent, leaf, build(module))
+    return len(targets)
+
+
 def quantize_nf4(
     model: nn.Module,
     scope: str = "all",
@@ -73,20 +124,19 @@ def quantize_nf4(
     """Replace frozen Linears with nf4 ones. Returns how many were replaced."""
     if scope not in ("ffn", "all"):
         return 0
-    targets = []
-    for name, module in model.named_modules():
-        if not isinstance(module, nn.Linear) or any(token in name for token in skip):
-            continue
-        module.weight.requires_grad = False  # base weights are frozen either way
-        if only is not None and not any(marker in name for marker in only):
-            continue
-        if only is None and not name.startswith("layers."):
-            continue  # skip the small non-block modules (326M params total)
-        if scope == "ffn" and not any(marker in name for marker in FFN_MARKERS):
-            continue
-        targets.append((name, module))
-    for name, module in targets:
-        parent_name, _, leaf = name.rpartition(".")
-        parent = model.get_submodule(parent_name) if parent_name else model
-        setattr(parent, leaf, _to_linear4bit(module, dtype))
-    return len(targets)
+    targets = _frozen_linears(model, scope, skip, only)
+    return _replace(model, targets, lambda module: _to_linear4bit(module, dtype))
+
+
+def quantize_fp8(
+    model: nn.Module,
+    scope: str = "all",
+    dtype: torch.dtype = torch.bfloat16,
+    skip: tuple[str, ...] = ("lora_",),
+    only: tuple[str, ...] | None = None,
+) -> int:
+    """Replace frozen Linears with fp8 e4m3 storage. Returns how many."""
+    if scope not in ("ffn", "all"):
+        return 0
+    targets = _frozen_linears(model, scope, skip, only)
+    return _replace(model, targets, FP8Linear)

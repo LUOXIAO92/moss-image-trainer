@@ -603,14 +603,20 @@ def cmd_sample(args):
 
 
 # reference measurements at 1024^2 / 4096 image tokens, batch 1, rank 32;
-# interpolated rows are marked and get replaced by `plan --measure`
-MEMORY_TABLE = [  # precision, quantize, swap, peak GiB, s/step (1024^2, batch 1, rank 32, compile on)
-    ("fp16acc", "none", 0, 12.7, 0.79),
-    ("fp16acc", "ffn", 0, 8.4, 0.82),
-    ("fp16acc", "all", 0, 6.2, 0.84),
-    ("bf16", "none", 0, 12.7, 0.96),
-    ("bf16", "none", 30, 6.5, 1.76),
-    ("bf16", "none", 40, 4.4, 1.90),  # estimated from the eager 2.10
+# interpolated rows are marked and get replaced by `plan --measure`.
+# (precision, quantize scope, quantize dtype, swap, peak GiB, s/step, measured)
+MEMORY_TABLE = [
+    ("fp16acc", "none", "nf4", 0, 12.7, 0.79, True),
+    ("fp16acc", "ffn", "nf4", 0, 8.4, 0.82, True),
+    ("fp16acc", "all", "nf4", 0, 6.2, 0.84, True),
+    ("bf16", "none", "nf4", 0, 12.7, 0.96, True),
+    ("bf16", "none", "nf4", 30, 6.5, 1.76, True),
+    ("bf16", "none", "nf4", 40, 4.4, 1.90, True),  # estimated from the eager 2.10
+    # fp8 costs no bitsandbytes kernel and keeps far more of the weight precision,
+    # at twice the storage of nf4. The peaks are arithmetic on the 9.47 GiB bf16
+    # file, so they are listed for planning but never auto-selected.
+    ("bf16", "ffn", "fp8", 0, 11.0, 0.0, False),
+    ("bf16", "all", "fp8", 0, 8.4, 0.0, False),
 ]
 
 def cmd_plan(args):
@@ -621,23 +627,27 @@ def cmd_plan(args):
         vram = round(detect_vram_gb() or 32)
     reserve = 2.0 if args.preview else 1.0
     budget = vram - reserve
-    fitting = [row for row in MEMORY_TABLE if row[3] <= budget]
-    # among the rows that fit, the fastest wins
-    choice = min(fitting, key=lambda row: row[4]) if fitting else MEMORY_TABLE[-1]
+    measured = [row for row in MEMORY_TABLE if row[6]]
+    fitting = [row for row in measured if row[4] <= budget]
+    # among the measured rows that fit, the fastest wins
+    choice = min(fitting, key=lambda row: row[5]) if fitting else measured[-1]
     print(f"target VRAM {vram:.0f} GiB (reserve {reserve:.0f} GiB for VAE/preview) -> budget {budget:.1f} GiB\n")
-    print(f"{'precision':>9} {'quantize':>9} {'swap':>5} {'peak':>7} {'s/step':>8}")
-    for prec, quant, swap, peak, speed in MEMORY_TABLE:
-        mark = "  <- chosen" if (prec, quant, swap, peak, speed) == choice else ""
-        print(f"{prec:>9} {quant:>9} {swap:5d} {peak:6.1f}G {speed:7.2f}s{mark}")
+    print(f"{'precision':>9} {'quantize':>9} {'dtype':>6} {'swap':>5} {'peak':>7} {'s/step':>8}")
+    for prec, quant, qdtype, swap, peak, speed, is_measured in MEMORY_TABLE:
+        mark = "  <- chosen" if (choice[0], choice[1], choice[2], choice[3]) == (prec, quant, qdtype, swap) else ""
+        timing = f"{speed:6.2f}s" if is_measured else "    est"
+        print(f"{prec:>9} {quant:>9} {qdtype:>6} {swap:5d} {peak:6.1f}G {timing}{mark}")
     print(f"\nrecommended: dtype={'float16' if choice[0] == 'fp16acc' else 'bfloat16'}, "
           f"fp16_accumulate={choice[0] == 'fp16acc'}, quantize_dit={choice[1]}, "
-          f"blocks_to_swap={choice[2]}  (peak ~{choice[3]} GiB, ~{choice[4]} s/step)")
+          f"quantize_dtype={choice[2]}, blocks_to_swap={choice[3]}  "
+          f"(peak ~{choice[4]} GiB, ~{choice[5]} s/step)")
     if args.write:
         from .config import Config
 
         config = Config.load(args.config).resolve_paths()
-        config.vram.blocks_to_swap = choice[2]
+        config.vram.blocks_to_swap = choice[3]
         config.vram.quantize_dit = choice[1]
+        config.vram.quantize_dtype = choice[2]
         config.model.dtype = "float16" if choice[0] == "fp16acc" else "bfloat16"
         config.vram.fp16_accumulate = choice[0] == "fp16acc"
         config.vram.gradient_checkpointing = True

@@ -258,7 +258,11 @@ def progress_event(record: dict) -> dict | None:
         "avg": float(record.get("avg") or 0.0),
         "lr": float(record.get("lr") or 0.0),
         "sec": float(record.get("sec") or 0.0),
+        # `vram` stays the allocated peak every older client reads; the other two
+        # explain the gap to what the driver reports for the card.
         "vram": float(record.get("peak") or 0.0),
+        "vram_reserved": float(record.get("reserved") or 0.0),
+        "vram_device": float(record.get("device") or 0.0),
     }
 
 

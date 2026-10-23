@@ -157,11 +157,14 @@ def _stream_command(job: Job, command: list[str], log_handle, parse_steps: bool)
             if parse_steps:
                 match = STEP_RE.search(line)
                 if match:
-                    step, total, loss, avg, lr, sec, peak = match.groups()
+                    step, total, loss, avg, lr, sec, peak, reserved, device = match.groups()
                     event = {
                         "type": "progress", "step": int(step), "total": int(total),
                         "loss": float(loss), "avg": float(avg), "lr": float(lr),
                         "sec": float(sec), "vram": float(peak),
+                        # absent on log lines written before the two were logged
+                        "vram_reserved": float(reserved) if reserved else 0.0,
+                        "vram_device": float(device) if device else 0.0,
                     }
                     job.last = event
                     _persist_job(job)

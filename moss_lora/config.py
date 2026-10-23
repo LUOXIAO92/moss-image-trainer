@@ -162,8 +162,10 @@ class VramConfig:
     gradient_checkpointing: str = "auto"
     blocks_to_swap: int = -1    # -1 = from preset
     optimizer_in_8bit: bool = False
-    # weight-only quantization of the frozen DiT: none (bf16) | ffn | all (nf4)
+    # weight-only quantization of the frozen DiT: none (bf16) | ffn | all
     quantize_dit: str = "none"
+    # storage format for the replaced Linears: nf4 (smallest) | fp8 (e4m3, safer)
+    quantize_dtype: str = "nf4"
     # fp16 only: let cuBLAS accumulate in fp16 (2x the bf16 tensor-core rate, less precise)
     fp16_accumulate: bool = False
     compile: bool = True   # torch.compile the block loop (~25% faster, dynamic shapes)

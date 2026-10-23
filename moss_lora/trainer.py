@@ -141,12 +141,19 @@ class Trainer:
         scope = str(getattr(self.config.vram, "quantize_dit", "none") or "none").lower()
         if scope == "none":
             return
-        from .quant import quantize_nf4
-
+        dtype_name = str(getattr(self.config.vram, "quantize_dtype", "nf4") or "nf4").lower()
         model = getattr(getattr(self.model, "base_model", self.model), "model", self.model)
-        replaced = quantize_nf4(model, scope, dtype=self.dtype)
+        if dtype_name == "fp8":
+            from .quant import quantize_fp8
+
+            replaced = quantize_fp8(model, scope, dtype=self.dtype)
+            self.log(f"quantize: {replaced} frozen Linears -> fp8 e4m3 ({scope})")
+        else:
+            from .quant import quantize_nf4
+
+            replaced = quantize_nf4(model, scope, dtype=self.dtype)
+            self.log(f"quantize: {replaced} frozen Linears -> nf4 ({scope})")
         torch.cuda.empty_cache()
-        self.log(f"quantize: {replaced} frozen Linears -> nf4 ({scope})")
 
     def _maybe_compile(self):
         if not bool(getattr(self.config.vram, "compile", False)):
@@ -179,6 +186,25 @@ class Trainer:
         path = os.path.join(self.out_dir, "metrics.jsonl")
         with open(path, "a", encoding="utf-8") as handle:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    def _memory_stats(self) -> dict:
+        """Allocated, reserved and device-wide usage in GiB.
+
+        ``max_memory_allocated`` alone reads well below what the card holds: the
+        CUDA context, the cuBLAS and flash-attention workspaces, and the blocks
+        the allocator keeps reserved but free are invisible to it. Someone
+        deciding whether a run fits needs the driver's number next to ours.
+        """
+        try:
+            free, total = torch.cuda.mem_get_info()
+            device = (total - free) / 2**30
+        except Exception:  # driver or NVML unavailable: keep the two torch numbers
+            device = 0.0
+        return {
+            "peak": torch.cuda.max_memory_allocated() / 2**30,
+            "reserved": torch.cuda.max_memory_reserved() / 2**30,
+            "device": device,
+        }
 
     def _gpu_util(self) -> int | None:
         """GPU utilisation in %, sampled at most once every 2 s.
@@ -595,17 +621,21 @@ class Trainer:
                 step_loss = self._train_step(step, rng)
             running += step_loss
             if (step + 1) % cfg.log_every == 0:
-                peak = torch.cuda.max_memory_allocated() / 2**30
+                memory = self._memory_stats()
+                peak = memory["peak"]
                 self.state.peak_gib = peak
                 elapsed = time.perf_counter() - started
                 self.log(
                     f"step {step + 1}/{cfg.steps}  loss {step_loss:.4f}  avg {running / cfg.log_every:.4f}  "
                     f"lr {self.state.lr:.2e}  {elapsed:.2f}s  peak {peak:.1f} GiB"
+                    f" (reserved {memory['reserved']:.1f}, device {memory['device']:.1f})"
                 )
                 self._append_metrics({
                     "step": step + 1, "total": cfg.steps, "train": step_loss,
                     "avg": running / cfg.log_every, "lr": self.state.lr,
                     "sec": round(elapsed, 3), "peak": round(peak, 2),
+                    "reserved": round(memory["reserved"], 2),
+                    "device": round(memory["device"], 2),
                     "gpu": self._gpu_util(),
                 })
                 running = 0.0

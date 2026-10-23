@@ -53,7 +53,20 @@ export function updateTrainMetrics() {
   setText('#dash-train', fmtNum(loss, 4));
   setText('#dash-train-sub', lastStep != null ? t('dash.kpi.trainSub', { avg: fmtNum(avg, 4), step: fmtInt(lastStep) }) : t('train.msg47'));
   setText('#dash-speed', fmtNum(meta?.sec, 2));
-  setText('#dash-peak', meta?.vram != null ? fmtNum(meta.vram, 1) : '--');
+  // What the card actually holds, not what PyTorch allocated: the context and the
+  // workspaces live outside `vram`, and that gap is what decides whether a run fits.
+  const allocated = meta?.vram != null ? Number(meta.vram) : null;
+  const deviceWide = meta?.vram_device ? Number(meta.vram_device) : null;
+  const shown = deviceWide || allocated;
+  setText('#dash-peak', shown != null ? fmtNum(shown, 1) : '--');
+  setText('#dash-peak-sub', shown != null
+    ? t('dash.kpi.peakBreakdown', {
+      allocated: fmtNum(allocated, 1),
+      reserved: fmtNum(meta?.vram_reserved, 1),
+    })
+    : t('dash.kpi.peakNone'));
+  const peakCell = $('#dash-peak');
+  if (peakCell) peakCell.title = t('dash.kpi.peakTitle');
   const total = state.trainTotal || meta?.total || 0;
   const percent = total > 0 && lastStep != null ? clamp((lastStep / total) * 100, 0, 100) : 0;
   setText('#dash-step', total > 0 ? `${fmtInt(lastStep || 0)} / ${fmtInt(total)}` : '--');

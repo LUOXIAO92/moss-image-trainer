@@ -37,6 +37,7 @@ export const FIELD_DEFS = [
   { id: 'cfg-bin-tokens', path: 'train.bin_tokens', type: 'number', label: 'train.advanced.binSize', min: 0, integer: true, default: 0, blankDefault: true },
   { id: 'cfg-vram-preset', path: 'vram.preset', type: 'text', label: 'train.params.vramProfile', default: 'auto' },
   { id: 'cfg-quantize-dit', path: 'vram.quantize_dit', type: 'text', label: 'train.params.quantize', default: 'none' },
+  { id: 'cfg-quantize-dtype', path: 'vram.quantize_dtype', type: 'text', label: 'train.params.quantizeDtype', default: 'nf4' },
   { id: 'cfg-preview-steps', path: 'preview.steps', type: 'number', label: 'train.preview.steps', min: 1, integer: true, default: 50, blankDefault: true },
   { id: 'cfg-preview-guidance', path: 'preview.guidance', type: 'float', label: 'train.msg5', min: 0, default: 3.0, blankDefault: true },
   { id: 'cfg-preview-shift', path: 'preview.shift', type: 'float', label: 'Shift', min: 0, default: 5.0, blankDefault: true },

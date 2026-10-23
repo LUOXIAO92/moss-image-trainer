@@ -146,11 +146,17 @@ export async function readJobLogFile() {
     clearLog();
     for (const line of lines) {
       if (!line) continue;
-      const match = line.match(/step (\d+)\/(\d+) loss ([0-9.]+) avg ([0-9.]+) lr ([0-9.eE+-]+) ([0-9.]+)s peak ([0-9.]+) GiB/);
+      const match = line.match(/step (\d+)\/(\d+) loss ([0-9.]+) avg ([0-9.]+) lr ([0-9.eE+-]+) ([0-9.]+)s peak ([0-9.]+) GiB(?: \(reserved ([0-9.]+), device ([0-9.]+)\))?/);
       if (match) {
-        const [_, step, total, loss, avg, lr, sec, peak] = match;
+        const [_, step, total, loss, avg, lr, sec, peak, reserved, device] = match;
         pushLog(line, 'info');
-        state.series.meta.set(Number(step), { lr: Number(lr), sec: Number(sec), vram: Number(peak), total: Number(total), loss: Number(loss), avg: Number(avg) });
+        state.series.meta.set(Number(step), {
+          lr: Number(lr), sec: Number(sec), vram: Number(peak), total: Number(total),
+          loss: Number(loss), avg: Number(avg),
+          // older log lines only carry the allocated peak
+          vram_reserved: reserved ? Number(reserved) : null,
+          vram_device: device ? Number(device) : null,
+        });
       } else {
         pushLog(line, line.startsWith('$ ') ? 'cmd' : 'info');
       }
