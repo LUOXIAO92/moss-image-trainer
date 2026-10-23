@@ -214,6 +214,10 @@ class CacheBuilder:
             base = base + reg
         self.progress = CacheProgress(config)
         self.sizing = sizing_spec(config.dataset.max_area, ALIGN)
+        # Batch sizes affect the numbers: vectors in a bigger batch are summed by
+        # a different kernel, so the same caption encodes to a slightly different
+        # vector at batch 1 than at 64. Record what each phase actually used.
+        self.batch: dict[str, int] = {}
         self.items = assign_sizes(base, area=config.dataset.max_area, align=ALIGN)
         self.dir = os.path.abspath(os.path.expanduser(config.cache.dir))
         self.reg_dir = reg_cache_dir(config)
@@ -284,6 +288,7 @@ class CacheBuilder:
             sample = pending[0]
             batch_size = latent_batch(*sample.size)
         batch_size = max(1, min(int(batch_size), 4))
+        self.batch["latent"] = batch_size
         self.log(f"latents: {len(pending)} images (batch {batch_size}, free {free_gib():.1f} GiB)")
         codec = LatentCodec(load_vae(self.config.model.vae, dtype=torch.float32, device="cuda"))
         groups: dict[tuple[int, int], list] = {}
@@ -361,9 +366,24 @@ class CacheBuilder:
         existing.update(tensors)
         save_file(existing, path, metadata=self.item_metadata(item))
 
+    def record_batch(self, phase: str, size: int) -> None:
+        """Remember the batch size a phase used, so the index can carry it."""
+        if size:
+            self.batch[phase] = int(size)
+
     def write_index(self):
         from safetensors import safe_open
 
+        path = os.path.join(self.dir, "index.json")
+        # Keep batches recorded by an earlier run of the other phase; running
+        # only `encode-text` must not erase the latent batch that built these.
+        batch = {}
+        try:
+            with open(path, encoding="utf-8") as handle:
+                batch = dict(json.load(handle).get("batch") or {})
+        except (OSError, ValueError):
+            batch = {}
+        batch.update(self.batch)
         index = {
             "schema": 2,          # 2 = 训练集/正则集分目录，file 为相对路径
             "cache_dir": self.dir,
@@ -372,6 +392,9 @@ class CacheBuilder:
             # Geometry that produced every latent below; readers compare it with
             # the current config before trusting the shapes.
             "sizing": self.sizing,
+            # Batch sizes that produced them. Batching changes the numbers, so a
+            # cache without this cannot say how its vectors were computed.
+            "batch": batch,
             "items": [
                 {
                     "file": os.path.relpath(self.path_for(item), self.dir),
@@ -386,10 +409,9 @@ class CacheBuilder:
                 for item in self.items
             ],
         }
-        path = os.path.join(self.dir, "index.json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump(index, f, ensure_ascii=False, indent=1)
-        self.log(f"index: {path} ({len(index['items'])} items)")
+        self.log(f"index: {path} ({len(index['items'])} items, batch {batch})")
 
     def run(self):
         self.run_latents()

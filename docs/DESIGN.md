@@ -169,6 +169,7 @@ On every write, both `CacheBuilder._write` and `run_encode_text` store `image`, 
   "cache_dir": "<WORKSPACE>/train_cache",
   "reg_dir": "<WORKSPACE>/reg_cache",
   "caption_source": "tag_caption",
+  "batch": { "latent": 4, "text": 64 },
   "items": [
     {
       "file": "<uid>.safetensors",
@@ -185,6 +186,8 @@ On every write, both `CacheBuilder._write` and `run_encode_text` store `image`, 
 ```
 
 For regularization entries, `file` stores a path relative to `train_cache` (`../reg_cache/<uid>.safetensors`), allowing the trainer to resolve every sample uniformly with `os.path.join(cache_dir, entry["file"])`.
+
+Batch size belongs in that record because it changes the numbers. A caption encoded alone and the same caption inside a batch of 64 reach the GPU as differently shaped matmuls, land on different kernels, and come back a few `1e-4` apart. `batch.latent` comes from `CacheBuilder.run_latents`, `batch.text` from `run_encode_text`; running one phase alone keeps the other phase's value instead of erasing it. An index written before this field existed has no `batch`, which is the honest answer for a cache nobody recorded.
 
 Cache invalidation and incremental re-encoding follow three rules:
 - Incremental latent check: `CacheBuilder._pending("latent")` checks whether `<uid>.safetensors` exists and contains a `latent` tensor, skipping the sample when present and `cache.overwrite: false`.

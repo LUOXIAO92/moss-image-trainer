@@ -169,6 +169,7 @@ Sidecar 文件固定采用 `schema: 2` 结构，容纳两个互不干扰的风�
   "cache_dir": "<WORKSPACE>/train_cache",
   "reg_dir": "<WORKSPACE>/reg_cache",
   "caption_source": "tag_caption",
+  "batch": { "latent": 4, "text": 64 },
   "items": [
     {
       "file": "<uid>.safetensors",
@@ -185,6 +186,8 @@ Sidecar 文件固定采用 `schema: 2` 结构，容纳两个互不干扰的风�
 ```
 
 对于正则集条目，`file` 字段保存相对于 `train_cache` 的路径（即 `../reg_cache/<uid>.safetensors`），因此训练器只需拼接 `os.path.join(cache_dir, entry["file"])` 即可统一读取。
+
+这份索引必须记下 batch，因为 batch 会改变数值：同一段提示词单独编码与放在 64 条里编码，进入 GPU 的矩阵形状不同、落到不同 kernel 上，结果会差出 `1e-4` 量级。`batch.latent` 由 `CacheBuilder.run_latents` 写入，`batch.text` 由 `run_encode_text` 写入；只跑其中一个阶段时，另一个阶段已记录的值原样保留而不是被抹掉。早于该字段生成的索引没有 `batch`，这就是它诚实的答案：没人记过。
 
 缓存失效与增量重编码遵循三条判定规则：
 - 潜变量增量判定：`CacheBuilder._pending("latent")` 检查目标 `<uid>.safetensors` 是否存在且包含 `latent` 张量；已存在且 `cache.overwrite: false` 时直接跳过。

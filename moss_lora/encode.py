@@ -107,6 +107,9 @@ def run_encode_text(
             torch.cuda.empty_cache()
         batch_size = text_batch()
         log(f"encode-text: batch {batch_size} (free {free_gib():.1f} GiB after loading the encoder)")
+    # A bigger batch is summed by a different kernel, so the same caption encodes
+    # to a slightly different vector. Stamp the batch into the cache index.
+    builder.record_batch("text", batch_size)
     encode = lambda texts: encoder.encode(texts, batch_size=batch_size)  # noqa: E731
     if preview_only:
         pending = []
