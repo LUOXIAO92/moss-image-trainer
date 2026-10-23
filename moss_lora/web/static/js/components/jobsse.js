@@ -7,6 +7,7 @@ import { applyJobRunInfo, loadJobs, renderActivity, resetTrainSeries, syncTrainC
 import { beginCacheProgress, beginCaptionProgress, clearLog, completeCacheProgress, copyLog, finalizeCaptionProgress, logErrorMessage, pushLog } from './logview.js';
 import { hidePreflight, runPreflight, setPreflight } from './preflight.js';
 import { clearYamlError, focusYamlLine, getCurrentYaml, showYamlError } from '../config/form.js';
+import { saveConfig } from '../config/file.js';
 import { parseYaml } from '../config/yaml.js';
 import { api } from '../core/api.js';
 import { $ } from '../core/dom.js';
@@ -328,6 +329,14 @@ export async function startJob(kind, options = {}) {
         }
         return false;
       }
+    }
+
+    if (state.activeRun) {
+      // With a run selected the server reads runs/<run>/config.yaml from disk,
+      // so a value typed on a page and never saved would be ignored by the job
+      // that was just started. Persist it first, and stop if that fails.
+      const persisted = await saveConfig({ silent: true });
+      if (!persisted) return false;
     }
 
     const data = await api('/api/jobs', {
