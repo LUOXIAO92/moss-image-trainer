@@ -294,6 +294,8 @@ WebUI 后端采用「路由层 → 服务层 → 共享状态与任务注册表�
 4. 并发拉取 `/api/settings`、`/api/workspaces`、`/api/system`、`/api/jobs` 与 `/api/presets`，随后加载当前工作区配置，执行 `applyI18n(document)` 并根据 `location.hash` 路由至对应标签页；若后端标记 `first_run: true` 则弹出五步首次使用引导对话框。
 5. 将核心状态与操作函数挂载到 `window.__mossUI`，供无头浏览器回归测试脚本直接调用。
 
+`static/` 下的所有文件由 [server.py](<../moss_lora/web/server.py>) 的 `UncachedStaticFiles` 提供，响应带 `Cache-Control: no-store`，且不带 `ETag` 与 `Last-Modified`。URL 里没有内容哈希，一旦允许条件请求，`304` 就会让上一版模块图继续存活，与刚写好的 HTML 拼在一起；这个窗口里新增导出的模块会链接失败，页面于是白屏。刷新必须拿到磁盘上的文件。
+
 ### 9.2 双模表单状态机与 i18n
 
 - 表单与 YAML 双模互斥状态机（[form.js](<../moss_lora/web/static/js/config/form.js>)、[model.js](<../moss_lora/web/static/js/config/model.js>) 与 [yaml.js](<../moss_lora/web/static/js/config/yaml.js>)）：全局状态（[state.js](<../moss_lora/web/static/js/core/state.js>)）中的 `state.mode` 只有 `form` 与 `yaml` 两种取值。在表单模式下，36 个 `FIELD_DEFS` 控件与层范围选择器直接读写内存中的 `state.config` 对象，右侧 YAML 预览框为只读投影（由自研的缩进子集序列化器 `dumpYaml` 生成）；切换至「高级 YAML」模式后，左侧表单控件全部禁用，YAML 文本框成为唯一数据源（由 `parseYaml` 实时解析并定位行列语法错误），彻底杜绝双源双向同步互相覆盖。
@@ -329,11 +331,12 @@ WebUI 后端采用「路由层 → 服务层 → 共享状态与任务注册表�
 
 仓库配备了无需 GPU 的单元测试、可选的编码器数值一致性测试、零依赖的 CDP 前端回归夹具以及强制性的文档脱敏扫描。
 
-四类自动化检查脚本均位于 `tests/` 目录：
+自动化检查脚本位于 `tests/` 目录：
 1. Sidecar 读写与迁移单测（[test_sidecar.py](<../tests/test_sidecar.py>)）：在临时目录中验证 `schema: 2` 的单风格写入、双风格无损合并、单风格覆盖更新、`reference_tags` 的 `.txt` 与历史 `kept_tags` 优先级回退，以及旧版扁平 JSON 向 `tag_caption_style` / `official_style` 的自动迁移与校验。
 2. 多语言词典完整性单测（[test_i18n.py](<../tests/test_i18n.py>)）：以内置中文包 `zh.json` 为基准，检查 `zh`、`en`、`ja`、`ko` 四套内置语言包的键集合完全相等、无空值翻译，且每条译文中的 `{placeholder}` 占位符集合与中文基准完全一致。
 3. 视觉服务密钥规则单测（[test_caption_key.py](<../tests/test_caption_key.py>)）：在不联网条件下验证 `_plan_api_key` 与 `resolve_api_key` 的五种状态分支：环境变量名落盘并在运行时解出真值、明文密钥仅存进程内存 `deps._LITERAL_API_KEY` 不写文件、空串清空、旧版文件中的非变量名字符串按 `legacy` 兼容读取、已存变量名但进程环境未设置时返回 `missing` 阻止误将变量名当作密钥发送。
 4. 文本编码器右 padding 隔离测试（[test_text_padding.py](<../tests/test_text_padding.py>)）：设置环境变量 `MOSS_TE=<MODELS_DIR>/text_encoders/Qwen3.5-9B` 后运行，对比短提示词单独编码（`batch_size=1`）与跟长提示词混批右 padding 编码（`batch_size=2`）的输出向量，断言余弦相似度大于 `0.999`，验证因果掩码未发生右侧 padding 泄漏。
+5. 静态资源缓存头契约（[test_static_cache.py](<../tests/test_static_cache.py>)）：以 ASGI 传输构建应用，断言 `/`、ES 模块与页面片段在请求携带 `If-None-Match` 或未来时间戳的 `If-Modified-Since` 时仍返回 `200` 且带 `Cache-Control: no-store`，响应不返回任何校验器头，API 路由仍优先匹配于挂在 `/` 上的静态挂载，缺失模块仍返回 `404`。
 
 前端回归测试与拆分等价性检查由 [smoke.mjs](<../tests/ui/smoke.mjs>) 及路由展平机制保障：
 - 后端拆分等价性：[server.py](<../moss_lora/web/server.py>) 通过 `_flatten_included_routes` 将拆分后的 11 个子路由原地展开进 `app.router.routes`，保证路由匹配顺序与拆分前的单文件 `app.py` 逐条一致，同时保留 [app.py](<../moss_lora/web/app.py>) 作为兼容导出垫片。

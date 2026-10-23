@@ -14,10 +14,33 @@ import os
 from fastapi import FastAPI
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
+from starlette.responses import FileResponse
 
 from .deps import STATIC
 from .routers import (config, dataset, export, files, i18n, jobs, samples, settings,
                       system, validate, workspaces)
+
+# The front end ships as loose files with no build step and no asset hashes, so
+# the browser caches modules by URL alone. A conditional request then answers
+# 304 with whatever that URL held last time, and a page load can pair the HTML
+# just written with a module graph from an older edit. When a module gained an
+# export in the meantime the graph fails to link and the app renders an empty
+# page. Serving every static file as uncached keeps a reload truthful.
+STATIC_CACHE_CONTROL = "no-store"
+
+
+class UncachedStaticFiles(StaticFiles):
+    """Static files that never answer 304."""
+
+    def file_response(self, full_path, stat_result, scope, status_code=200):
+        response = FileResponse(full_path, status_code=status_code, stat_result=stat_result)
+        response.headers["cache-control"] = STATIC_CACHE_CONTROL
+        # Validators are useless without a stored copy, and their presence
+        # invites an intermediary to revalidate on the browser's behalf.
+        for header in ("etag", "last-modified"):
+            if header in response.headers:
+                del response.headers[header]
+        return response
 
 
 def _flatten_included_routes(app: FastAPI) -> None:
@@ -60,7 +83,7 @@ def create_app() -> FastAPI:
         return Response(status_code=204)
 
     if os.path.isdir(STATIC):
-        app.mount("/", StaticFiles(directory=STATIC, html=True), name="static")
+        app.mount("/", UncachedStaticFiles(directory=STATIC, html=True), name="static")
     return app
 
 
