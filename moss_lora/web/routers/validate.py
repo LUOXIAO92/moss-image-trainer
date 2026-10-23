@@ -30,12 +30,15 @@ async def api_validate(request: Request):
         data = yaml.safe_load(text)
     except yaml.YAMLError as exc:
         mark = getattr(exc, "problem_mark", None)
-        problem = str(getattr(exc, "problem", exc))
+        # Do not name this `problem`: the same function calls the imported
+        # `problem()` helper further down, and a local assignment would shadow it
+        # for the whole function, raising UnboundLocalError on every clean YAML.
+        yaml_problem = str(getattr(exc, "problem", exc))
         if mark:
             detail = error_detail("err.yaml.syntax", line=mark.line + 1, column=mark.column + 1,
-                                  problem=problem)
+                                  problem=yaml_problem)
         else:
-            detail = error_detail("err.yaml.syntax_plain", problem=problem)
+            detail = error_detail("err.yaml.syntax_plain", problem=yaml_problem)
         return {
             "ok": False,
             "yaml_error": {**detail,
