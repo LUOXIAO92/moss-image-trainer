@@ -240,8 +240,7 @@ class HfTextEncoder:
         return _quantize(self.model, mode)
 
     @torch.no_grad()
-    def encode(self, prompts: list[str], max_tokens: int = MAX_TOKENS, batch_size: int = 1,
-               group_by_length: bool = False, bucket_step: int = 32):
+    def encode(self, prompts: list[str], max_tokens: int = MAX_TOKENS, batch_size: int = 1):
         """Encode prompts with right padding and an attention mask.
 
         ``batch_size=1`` encodes each prompt alone. Larger batches change results by
@@ -252,30 +251,15 @@ class HfTextEncoder:
         if not prompts:
             return torch.zeros(0, 0, 4096, device=self.device), torch.zeros(0, 0, dtype=torch.bool, device=self.device)
         texts = [PROMPT.format(text=prompt) for prompt in prompts]
-        groups: list[list[int]] = []
-        if batch_size > 1 and group_by_length:
-            # only worth it when lengths cluster; with varied lengths bucketing leaves
-            # few prompts per bucket, so batches shrink while plain padding keeps them full
-            # bucket lengths like the image side buckets sizes: pad up to the next
-            # multiple of bucket_step, group by that, so padding waste is bounded
-            by_length: dict[int, list[int]] = {}
-            for position, text in enumerate(texts):
-                length = len(self.tokenizer(text, add_special_tokens=False)["input_ids"])
-                bucket = max(bucket_step, ((length + bucket_step - 1) // bucket_step) * bucket_step)
-                by_length.setdefault(bucket, []).append(position)
-            for bucket, positions in sorted(by_length.items()):
-                for start in range(0, len(positions), batch_size):
-                    groups.append((bucket, positions[start : start + batch_size]))
-        else:
-            groups = [(None, list(range(start, min(start + max(1, batch_size), len(texts)))))
-                      for start in range(0, len(texts), max(1, batch_size))]
+        groups = [list(range(start, min(start + max(1, batch_size), len(texts))))
+                  for start in range(0, len(texts), max(1, batch_size))]
         chunks = []
-        for bucket, group in groups:
+        for group in groups:
             texts_in_group = [texts[position] for position in group]
             batch = self.tokenizer(
                 texts_in_group,
-                padding="max_length" if bucket else "longest",
-                max_length=min(bucket or max_tokens, max_tokens),
+                padding="longest",
+                max_length=max_tokens,
                 truncation=True,
                 add_special_tokens=False,
                 return_tensors="pt",

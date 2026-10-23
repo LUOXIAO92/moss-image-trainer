@@ -179,6 +179,8 @@ export:
 
 `dataset.moss_caption_source`는 학습 시 읽을 필드(`tag_caption`, `official_long`, `official_medium` 또는 `official_short`)를 선택합니다. `dataset.metadata`를 설정하면 `metadata.jsonl`이 우선 적용되며, 선택한 스타일이 없는 샘플은 `<stem>.txt`/`.caption` 및 `reg_caption`으로 대체됩니다. 캡션 소스를 변경한 후에는 `encode-text`만 다시 실행하면 되며 latent 캐시는 그대로 유지됩니다.
 
+배치 크기는 캐시 설정입니다. `cache.text_batch`와 `cache.vae_batch`로 고정할 수 있고(`0`은 남은 VRAM에서 자동), 실제로 사용한 값은 `train_cache/index.json`의 `batch`에 기록됩니다. VAE latent는 배치와 무관하며(`LatentCodec`는 fp32 합성곱으로 계산), 텍스트 임베딩은 배치에 따라 달라지므로 재현이 필요하면 텍스트 배치를 고정하세요.
+
 ## UI 언어
 
 WebUI는 간체 중국어(`zh`), 영어(`en`), 일본어(`ja`), 한국어(`ko`) 사전(`moss_lora/web/static/i18n/<code>.json`)을 내장하고 있으며, 상단 바에서 페이지 새로고침 없이 언어를 전환할 수 있습니다.

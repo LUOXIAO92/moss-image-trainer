@@ -30,7 +30,4 @@
 .table td.actions-cell { text-align: right; white-space: nowrap; }
 .table-wrap-tall { max-height: 640px; }
 .table-empty { padding: 24px 12px !important; color: var(--color-text-muted); text-align: center; }
-.bucket-cell { display: flex; align-items: center; gap: 10px; min-width: 160px; }
-.bucket-bar { height: 6px; border-radius: var(--radius-full); background: var(--color-primary); opacity: .75; min-width: 2px; }
-.bucket-label { font-family: var(--font-mono); color: var(--color-text-secondary); }
 

@@ -179,6 +179,8 @@ export:
 
 `dataset.moss_caption_source` 指定训练读取字段（`tag_caption`、`official_long`、`official_medium` 或 `official_short`）；配置 `dataset.metadata` 时优先读 `metadata.jsonl`，缺失所选风格时回退至同名 `.txt`/`.caption` 与 `reg_caption`。切换来源后只需重跑 `encode-text`，无需重建潜变量缓存。
 
+批次是缓存配置而不是隐式猜测：`cache.text_batch` 与 `cache.vae_batch` 可以把它固定下来（`0` 表示按空闲显存自适应），构建这份缓存时用的批次记录在 `train_cache/index.json` 的 `batch` 字段。VAE latent 与批次无关（`LatentCodec` 用全精度 fp32 卷积计算），文本嵌入则随批次变化，需要可复现的缓存时把文本批次固定下来。
+
 ## 界面语言
 
 WebUI 内置简体中文（`zh`）、English（`en`）、日本語（`ja`）、한국어（`ko`）词典（`moss_lora/web/static/i18n/<code>.json`），通过顶栏下拉框无刷新切换。

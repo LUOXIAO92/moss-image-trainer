@@ -179,6 +179,8 @@ Both styles share `<stem>_moss-image-trainer.json` (`schema: 2`) and leave the o
 
 `dataset.moss_caption_source` selects which field training reads (`tag_caption`, `official_long`, `official_medium`, or `official_short`). Setting `dataset.metadata` gives `metadata.jsonl` priority; if a sample lacks the chosen style, the loader falls back to `<stem>.txt`/`.caption` and `reg_caption`. Switching the caption source only requires re-running `encode-text`; the latent cache stays valid.
 
+Batch size is a cache setting rather than an implicit guess: `cache.text_batch` and `cache.vae_batch` pin it (`0` sizes it from free VRAM), and the batch that built a cache is recorded in `train_cache/index.json` under `batch`. VAE latents do not depend on the batch, because `LatentCodec` runs convolutions in true fp32; text embeddings do, so pin the text batch when a cache must be reproducible.
+
 ## Interface Language
 
 The WebUI includes built-in Simplified Chinese (`zh`), English (`en`), Japanese (`ja`), and Korean (`ko`) dictionaries (`moss_lora/web/static/i18n/<code>.json`) and switches languages from the top bar without reloading the page.

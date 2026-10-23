@@ -179,6 +179,8 @@ export:
 
 `dataset.moss_caption_source` で学習時に読み込むフィールド（`tag_caption`、`official_long`、`official_medium`、または `official_short`）を選択します。`dataset.metadata` を設定した場合は `metadata.jsonl` が優先され、選択したスタイルが存在しないサンプルは `<stem>.txt`/`.caption` および `reg_caption` にフォールバックします。キャプションソースを切り替えた後は `encode-text` のみを再実行すればよく、latent キャッシュの再構築は不要です。
 
+バッチサイズはキャッシュの設定です。`cache.text_batch` と `cache.vae_batch` で固定でき（`0` は空き VRAM から自動）、実際に使った値は `train_cache/index.json` の `batch` に記録されます。VAE の latent はバッチに依存しません（`LatentCodec` は fp32 畳み込みで計算）。テキスト埋め込みは依存するため、再現したい場合はテキスト側のバッチを固定してください。
+
 ## 表示言語
 
 WebUI は簡体字中国語（`zh`）、英語（`en`）、日本語（`ja`）、韓国語（`ko`）の辞書（`moss_lora/web/static/i18n/<code>.json`）を内蔵しており、トップバーからページを再読み込みせずに言語を切り替えられます。
