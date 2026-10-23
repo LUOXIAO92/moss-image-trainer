@@ -126,11 +126,19 @@ def load_text_model(directory: str, dtype: torch.dtype = torch.bfloat16, device:
         config = Qwen3_5Config.from_pretrained(resolved_config, local_files_only=True).text_config
     # A 9B random init on CPU costs ~58s of pure host work; do it on the device instead.
     build_on = device if torch.cuda.is_available() and str(device).startswith("cuda") else "cpu"
-    with torch.device(build_on):
-        model = Qwen3_5TextModel(config)
+    # Build in the target dtype. Constructing in float32 costs 4 bytes per
+    # parameter (29.6 GiB for this tower) and the later cast needs both copies
+    # alive at once, which by itself exceeds a 32 GB card.
+    previous_dtype = torch.get_default_dtype()
+    torch.set_default_dtype(dtype)
+    try:
+        with torch.device(build_on):
+            model = Qwen3_5TextModel(config)
+    finally:
+        torch.set_default_dtype(previous_dtype)
     # Build first, then copy one tensor at a time. Dequantising into a dict first
-    # kept an 18 GB bf16 copy alive next to the 18 GB model, which is enough to
-    # overflow a 32 GB card and did.
+    # kept a second full copy alive beside the model, which is the other way to
+    # run this card out of memory.
     targets = dict(model.named_parameters())
     targets.update(model.named_buffers())
     unexpected = []
