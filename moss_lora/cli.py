@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
+import time
 
 from .config import Config, apply_preset
 
@@ -299,6 +301,68 @@ def cmd_queue(args):
     return run_pipeline(args.workspace)
 
 
+def _human_age(seconds) -> str:
+    if seconds is None:
+        return "-"
+    seconds = max(0, int(seconds))
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    if seconds < 86400:
+        return f"{seconds // 3600}h"
+    return f"{seconds // 86400}d"
+
+
+def cmd_status(args):
+    """Print the rows the WebUI dashboard draws, straight from disk.
+
+    Nothing here talks to a server and nothing is cached: the run heartbeat and
+    the job record are the source of truth, so the board, the API and this
+    command cannot drift apart.
+    """
+    from . import runtime
+    from .settings import load_settings, resolve_settings
+
+    root = resolve_settings(load_settings())["paths"]["workspaces"]
+    rows = runtime.scan_jobs(root)
+    if args.workspace:
+        rows = [row for row in rows if row.get("workspace") == args.workspace]
+    if args.live:
+        rows = [row for row in rows if row.get("state") not in runtime.TERMINAL]
+    if args.json:
+        print(json.dumps(rows, ensure_ascii=False, indent=2))
+        return 0
+    if not rows:
+        print(f"no jobs under {root}")
+    else:
+        print(f"{'STATE':<12}{'AGE':>5}  {'STEP':>11}  {'PID':>7}  {'EXIT':>5}  JOB")
+        for row in rows:
+            step = row.get("step")
+            total = row.get("total")
+            progress = f"{step}/{total}" if step is not None and total else ("-" if step is None else str(step))
+            pid = row.get("pid")
+            exit_code = row.get("exit_code")
+            label = "/".join(str(part) for part in (row.get("workspace"), row.get("run_id") or row.get("id"))
+                             if part)
+            note = "  stale" if row.get("stale") else ""
+            print(f"{row.get('state') or 'unknown':<12}{_human_age(row.get('age')):>5}  "
+                  f"{progress:>11}  {pid if pid else '-':>7}  "
+                  f"{exit_code if exit_code is not None else '-':>5}  {label}{note}")
+            last = row.get("last") or {}
+            if last.get("step") is not None:
+                print(f"{'':<12}{'':>5}  loss {last.get('loss', 0.0):.4f}  "
+                      f"avg {last.get('avg', 0.0):.4f}  {last.get('sec', 0.0):.2f}s/step  "
+                      f"vram {last.get('vram', 0.0):.1f} GiB")
+    holders = runtime.scan_locks(root)
+    for holder in holders:
+        print(f"gpu lock: {holder.get('workspace')}  pid {holder.get('pid')}  "
+              f"kind {holder.get('kind')}  run {holder.get('run_id') or '-'}")
+    if not holders:
+        print("gpu lock: free")
+    return 0
+
+
 def cmd_train(args):
     if getattr(args, "smoke", False):
         # a pre-flight that touches every code path a long run will hit
@@ -327,8 +391,72 @@ def cmd_train(args):
         config.lora.alpha = args.alpha if args.alpha is not None else args.rank
     if args.grad_checkpointing is not None:
         config.vram.gradient_checkpointing = args.grad_checkpointing
+    if getattr(args, "detach", False):
+        return _detach_train(args, config)
     trainer = Trainer(config).load()
     trainer.train(resume=args.resume or "")
+    return 0
+
+
+def _detach_train(args, config) -> int:
+    """Start the run in its own session so a dropped ssh connection cannot kill it.
+
+    The run then writes the same heartbeat a foreground run writes, so the
+    WebUI and any agent see it either way.
+    """
+    import subprocess
+
+    from . import runtime
+
+    workspace = runtime.workspace_root(config)
+    out_dir = os.path.join(config.output_dir, config.name)
+    argv = [sys.executable, "-m", "moss_lora.cli"]
+    argv += [item for item in sys.argv[1:] if item != "--detach"]
+    env = dict(os.environ)
+    env["PYTHONUNBUFFERED"] = "1"
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if env.get("PYTHONPATH"):
+        env["PYTHONPATH"] = root + os.pathsep + env["PYTHONPATH"]
+    else:
+        env["PYTHONPATH"] = root
+
+    job_id = time.strftime("%Y%m%d-%H%M%S")
+    log_path = os.path.join(workspace, "logs", f"{job_id}.log") if workspace else ""
+    if log_path:
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        sink = open(log_path, "ab")
+    else:
+        sink = subprocess.DEVNULL
+    try:
+        process = subprocess.Popen(
+            argv, cwd=root, env=env, stdin=subprocess.DEVNULL,
+            stdout=sink, stderr=subprocess.STDOUT, start_new_session=True,
+        )
+    finally:
+        if sink is not subprocess.DEVNULL:
+            sink.close()
+
+    if workspace:
+        runtime.write_json_atomic(os.path.join(workspace, "logs", f"{job_id}.json"), {
+            "id": job_id,
+            "kind": "train",
+            "workspace": os.path.basename(workspace),
+            "run_id": config.name,
+            "run_dir": out_dir,
+            "log": log_path,
+            "config_path": os.path.abspath(args.config) if getattr(args, "config", None) else "",
+            "argv": argv,
+            "pid": process.pid,
+            "started": time.time(),
+            "time": time.time(),
+            "status": "running",
+            "exit_code": None,
+        })
+    print(f"detached pid {process.pid}")
+    print(f"job  {job_id}")
+    print(f"run  {out_dir}")
+    if log_path:
+        print(f"log  {log_path}")
     return 0
 
 
@@ -560,6 +688,12 @@ def build_parser():
     p_queue.add_argument("--workspace", required=True)
     p_queue.set_defaults(func=cmd_queue)
 
+    p_status = sub.add_parser("status", help="show every job the way the WebUI dashboard shows it")
+    p_status.add_argument("--workspace", help="limit to one workspace")
+    p_status.add_argument("--live", action="store_true", help="only jobs that have not finished")
+    p_status.add_argument("--json", action="store_true", help="print the rows as JSON")
+    p_status.set_defaults(func=cmd_status)
+
     p_train = sub.add_parser("train", help="train a LoRA on a built cache")
     p_train.add_argument("--config")
     p_train.add_argument("--dataset", help="dataset directory (relative to the current directory)")
@@ -584,6 +718,8 @@ def build_parser():
     p_train.add_argument("--grad-checkpointing", dest="grad_checkpointing", action="store_true", default=None)
     p_train.add_argument("--smoke", action="store_true",
                            help="3-step pre-flight: touches every code path a long run hits")
+    p_train.add_argument("--detach", action="store_true",
+                         help="start in a new session and return immediately (survives an ssh disconnect)")
     p_train.add_argument("--resume")
     p_train.set_defaults(func=cmd_train)
 

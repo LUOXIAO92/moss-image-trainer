@@ -29,6 +29,9 @@ class Job:
     run_name: str = ""
     output_dir: str = ""
     log_path: str = ""
+    # Where this job publishes its own heartbeat, so the WebUI can report it
+    # after a server restart or when the job was started from a terminal.
+    state_path: str = ""
     env: dict = field(default_factory=dict)
     # Optional serial pre-steps (currently the no-LoRA baseline).  A failure is
     # reported but never prevents the training command from running.
@@ -36,6 +39,9 @@ class Job:
     stage: str = ""
     baseline_status: str = ""
     baseline_error: str = ""
+    last_pid: int = 0
+    exit_code: int | None = None
+    persisted_at: float = 0.0
 
     def push(self, event: dict):
         event["t"] = round(time.time() - self.created, 3)

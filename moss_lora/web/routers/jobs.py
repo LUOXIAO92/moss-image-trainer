@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import random
+import signal
 import threading
 import time
 import uuid
@@ -15,18 +16,20 @@ import yaml
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
+from ... import runtime
 from ... import settings as runtime_settings
 from ...config import apply_preset
 from .. import deps
-from ..deps import _rel, _settings_snapshot, _write_text
+from ..deps import _rel, _safe_name, _settings_snapshot, _write_text
 from ..jobs import JOBS, Job, _terminate
 from ..services.cache_cmd import _cache_parts, _cache_summary
 from ..services.caption import (_caption_command, _caption_env, _caption_selection,
                                 resolve_api_key)
 from ..services.launcher import _command, _python, _run
 from ..services.workspace import (_resolve_workspace, _section, _workspace_cache_dir,
-                                  _workspace_config, _workspace_dir, _workspace_logs_dir,
-                                  _workspace_runs_dir, _workspace_target_run)
+                                  _workspace_config, _workspace_configs_dir, _workspace_dir,
+                                  _workspace_logs_dir, _workspace_root, _workspace_runs_dir,
+                                  _workspace_target_run)
 
 router = APIRouter()
 
@@ -39,9 +42,19 @@ async def api_start(request: Request):
         raise HTTPException(400, f"unknown job kind {kind}")
     datasets, styles, overwrite = _caption_selection(body) if kind == "caption" else ([], [], False)
     parts = _cache_parts(body) if kind == "cache" else []
+    workspace = _resolve_workspace(body.get("workspace"))
     text = body.get("yaml") or ""
+    if not text and body.get("config"):
+        # Naming a config beats shipping a copy of it: the agent passes the
+        # name the WebUI shows, and both paths read the same file.
+        config_name = _safe_name(body.get("config"), "配置名称")
+        candidate = os.path.join(_workspace_configs_dir(workspace), f"{config_name}.yaml")
+        if not os.path.isfile(candidate):
+            raise HTTPException(404, f"配置不存在：{config_name}")
+        with open(candidate, encoding="utf-8") as handle:
+            text = handle.read()
     if not text:
-        raise HTTPException(400, "yaml required")
+        raise HTTPException(400, 'yaml required (or pass {"config": "<name>"})')
     try:
         data = yaml.safe_load(text)
     except yaml.YAMLError as exc:
@@ -52,7 +65,6 @@ async def api_start(request: Request):
         raise HTTPException(400, "配置必须是一个 YAML 映射")
 
     settings, resolved = _settings_snapshot()
-    workspace = _resolve_workspace(body.get("workspace"))
     config = _workspace_config(workspace, data)
     apply_preset(config)
     problems = config.validate()
@@ -69,6 +81,17 @@ async def api_start(request: Request):
 
     profile = workspace
     python = _python()
+
+    # The lock is the machine-wide truth: it also covers a run that a terminal
+    # or an agent started, which the in-memory registry cannot see.
+    holder = runtime.check_lock(_workspace_dir(workspace))
+    if holder:
+        raise HTTPException(
+            409,
+            f"已有任务占用 GPU：{holder.get('kind') or 'job'} pid {holder.get('pid')}"
+            f"（{holder.get('run_id') or '-'}）",
+            headers={"Retry-After": "10"},
+        )
 
     running = JOBS.active()
     if running is not None:
@@ -161,9 +184,10 @@ async def api_start(request: Request):
 
     job_id = uuid.uuid4().hex[:10]
     snapshot = os.path.join(log_dir, f"{job_id}.yaml")
-    if kind == "caption":
-        snapshot = os.path.join(log_dir, f"{job_id}.yaml")
-        _write_text(snapshot, text)
+    # Every kind passes this snapshot to its child process, so write it for all
+    # of them. Only writing it for caption left train and cache pointing at a
+    # file that never existed.
+    _write_text(snapshot, text)
     if kind == "train" and body.get("baseline"):
         pre_commands.append({
             "stage": "baseline",
@@ -206,6 +230,7 @@ async def api_start(request: Request):
         run_name=run_label,
         output_dir=_rel(run_dir) if run_dir else "",
         log_path=log_path,
+        state_path=os.path.join(log_dir, f"{job_id}.json"),
         env=job_env,
         pre_commands=pre_commands,
     )
@@ -226,24 +251,128 @@ async def api_start(request: Request):
     }
 
 
+def _disk_jobs() -> list[dict]:
+    """Every job any process started, read from the workspace, not from memory.
+
+    This is what makes the WebUI show a run that a terminal or an agent
+    started: same files, same list, and the same function the CLI reads.
+    """
+    return runtime.scan_jobs(_workspace_root())
+
+
+_LEGACY_STATUS = {
+    "running": "running",
+    "starting": "running",
+    "stopping": "stopping",
+    "done": "done",
+    "stopped": "stopped",
+    "failed": "error",
+    "interrupted": "error",
+    "unknown": "error",
+}
+
+
+def _disk_job(job_id: str) -> dict | None:
+    for entry in _disk_jobs():
+        if entry.get("id") == job_id:
+            return entry
+    return None
+
+
 @router.get("/api/jobs")
 def api_jobs():
-    return [
-        {
-            "id": j.id, "kind": j.kind, "status": j.status, "created": j.created,
-            "last": j.last, "finished": j.finished,
-            "config_path": _rel(j.config_path) if j.config_path else "",
-            "profile": j.profile, "workspace": j.workspace,
-            "run_name": j.run_name, "output_dir": j.output_dir, "log_path": _rel(j.log_path) if j.log_path else "",
-            "stage": j.stage, "baseline_status": j.baseline_status, "baseline_error": j.baseline_error,
-        }
-        for j in sorted(JOBS.items.values(), key=lambda j: j.created, reverse=True)
-    ]
+    """Merge the on-disk records with live in-memory handles.
+
+    Disk wins on identity and outcome; memory only fills in detail that has not
+    been flushed yet (the stage a pre-command is in).
+    """
+    merged: dict[str, dict] = {}
+    for record in _disk_jobs():
+        merged[record["id"]] = record
+    for job in JOBS.all():
+        entry = merged.get(job.id) or {}
+        entry.update({
+            "id": job.id,
+            "kind": job.kind,
+            "source": entry.get("source") or "server",
+            "state": entry.get("state") or job.status,
+            "workspace": job.workspace,
+            "profile": job.profile,
+            "run_id": job.run_name,
+            "run_dir": entry.get("run_dir") or job.output_dir,
+            "log": entry.get("log") or job.log_path,
+            "config_path": job.config_path,
+            "stage": job.stage or entry.get("stage") or "",
+            "phase": job.stage or entry.get("phase") or "",
+            "baseline_status": job.baseline_status,
+            "baseline_error": job.baseline_error,
+            "pid": job.last_pid or entry.get("pid"),
+            "started": job.created,
+            "finished": job.finished,
+            "exit_code": job.exit_code,
+            "last": job.last or entry.get("last"),
+            "stale": entry.get("stale", False),
+            "age": entry.get("age"),
+            "_live": True,
+        })
+        merged[job.id] = entry
+
+    items = []
+    for entry in merged.values():
+        state = str(entry.get("state") or "")
+        created = float(entry.get("started") or 0.0)
+        items.append({
+            # legacy shape, still consumed by the WebUI
+            "id": entry.get("id"),
+            "kind": entry.get("kind") or "job",
+            "status": _LEGACY_STATUS.get(state, state or "error"),
+            "created": created,
+            "last": entry.get("last") or {},
+            "finished": float(entry.get("finished") or 0.0),
+            "config_path": _rel(entry["config_path"]) if entry.get("config_path") else "",
+            "profile": entry.get("profile") or entry.get("workspace") or "",
+            "workspace": entry.get("workspace") or "",
+            "run_name": entry.get("run_id") or "",
+            "output_dir": _rel(entry["run_dir"]) if entry.get("run_dir") else "",
+            "log_path": _rel(entry["log"]) if entry.get("log") else "",
+            "stage": entry.get("stage") or entry.get("phase") or "",
+            "baseline_status": entry.get("baseline_status") or "",
+            "baseline_error": entry.get("baseline_error") or "",
+            # the honest vocabulary
+            "state": state,
+            "source": entry.get("source") or "server",
+            "stale": bool(entry.get("stale")),
+            "age": entry.get("age"),
+            "pid": entry.get("pid"),
+            "exit_code": entry.get("exit_code"),
+        })
+    items.sort(key=lambda item: item.get("created") or 0.0, reverse=True)
+    return items
+
+
+@router.get("/api/jobs/{job_id}")
+def api_job_detail(job_id: str):
+    """One job, projected from the same files the list uses."""
+    for entry in api_jobs():
+        if entry["id"] == job_id:
+            return entry
+    raise HTTPException(404, f"job not found: {job_id}")
 
 
 @router.get("/api/jobs/{job_id}/events")
 async def api_events(job_id: str, from_index: int = 0):
-    job = JOBS.get(job_id)
+    """Live events for a job, whichever process owns it.
+
+    Jobs this server spawned stream from memory. Everything else -- a run
+    started from a terminal, or one that outlived a server restart -- is
+    tailed from the workspace files, so the panel looks the same either way.
+    """
+    job = JOBS.items.get(job_id)
+    if job is None:
+        record = _disk_job(job_id)
+        if record is None:
+            raise HTTPException(404, f"job not found: {job_id}")
+        return StreamingResponse(_tail_disk_job(record), media_type="text/event-stream")
 
     async def stream():
         index = from_index
@@ -255,7 +384,11 @@ async def api_events(job_id: str, from_index: int = 0):
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
                 idle = 0.0
             if job.status != "running" and index >= len(job.events):
-                yield "data: {\"type\": \"closed\"}\n\n"
+                yield "data: " + json.dumps({
+                    "type": "closed",
+                    "state": "done" if job.status == "done" else "stopped" if job.status == "stopped" else "failed",
+                    "exit_code": job.exit_code,
+                }) + "\n\n"
                 return
             import asyncio
 
@@ -268,14 +401,83 @@ async def api_events(job_id: str, from_index: int = 0):
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
+async def _tail_disk_job(record: dict):
+    """Stream a job we did not spawn by tailing its log and heartbeat."""
+    import asyncio
+
+    log_path = record.get("log") or ""
+    run_dir = record.get("run_dir") or ""
+    state_path = record.get("state_path") or ""
+    offset = 0
+    seen_step = None
+    idle = 0.0
+    while True:
+        if log_path and os.path.isfile(log_path):
+            try:
+                with open(log_path, encoding="utf-8", errors="replace") as handle:
+                    handle.seek(offset)
+                    chunk = handle.read()
+                    offset = handle.tell()
+            except OSError:
+                chunk = ""
+            for line in chunk.splitlines():
+                if line.strip():
+                    yield "data: " + json.dumps({"type": "log", "line": line}, ensure_ascii=False) + "\n\n"
+                    idle = 0.0
+        beat = runtime.read_json(state_path) if state_path else None
+        if beat:
+            metrics = runtime.last_metrics(run_dir) if run_dir else None
+            step = (metrics or {}).get("step")
+            if step is None:
+                step = beat.get("step")
+            if step is not None and step != seen_step:
+                seen_step = step
+                event = runtime.progress_event({**(metrics or {}), "step": step,
+                                                "total": beat.get("total") or (metrics or {}).get("total")})
+                if event:
+                    yield "data: " + json.dumps(event, ensure_ascii=False) + "\n\n"
+                    idle = 0.0
+            state = runtime.classify(beat)["state"]
+            exit_code = beat.get("exit_code")
+        else:
+            state, exit_code = record.get("state") or "unknown", record.get("exit_code")
+        if state in runtime.TERMINAL or state == "unknown":
+            yield "data: " + json.dumps({"type": "closed", "state": state, "exit_code": exit_code}) + "\n\n"
+            return
+        await asyncio.sleep(0.5)
+        idle += 0.5
+        if idle >= 15:
+            yield ": keep-alive\n\n"
+            idle = 0.0
+
+
 @router.get("/api/jobs/{job_id}/log")
 def api_job_log(job_id: str):
-    job = JOBS.get(job_id)
-    if not job.log_path or not os.path.isfile(job.log_path):
+    job = JOBS.items.get(job_id)
+    path = job.log_path if job is not None else ""
+    if not path:
+        record = _disk_job(job_id) or {}
+        path = record.get("log") or ""
+    if not path or not os.path.isfile(path):
         raise HTTPException(404, "日志文件不存在")
-    with open(job.log_path, encoding="utf-8", errors="replace") as handle:
+    with open(path, encoding="utf-8", errors="replace") as handle:
         return Response(handle.read(), media_type="text/plain; charset=utf-8")
+
 
 @router.post("/api/jobs/{job_id}/stop")
 def api_stop(job_id: str):
-    return {"ok": _terminate(JOBS.get(job_id))}
+    job = JOBS.items.get(job_id)
+    if job is not None:
+        return {"ok": _terminate(job), "state": "stopping"}
+    record = _disk_job(job_id)
+    if record is None:
+        raise HTTPException(404, f"job not found: {job_id}")
+    pid = record.get("pid")
+    if not runtime.pid_alive(pid):
+        raise HTTPException(409, "任务已经不在运行")
+    # SIGINT lets the trainer checkpoint before it exits; SIGKILL would not.
+    try:
+        os.kill(int(pid), signal.SIGINT)
+    except (ProcessLookupError, PermissionError) as exc:
+        raise HTTPException(409, f"无法发送停止信号：{exc}") from exc
+    return {"ok": True, "state": "stopping"}

@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "moss-lora"
+version = "0.1.0"
+description = "Local LoRA trainer for MOSS-Image: dataset scanning, caching, training, previews and a WebUI"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+dependencies = []
+
+[project.scripts]
+moss-lora = "moss_lora.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["moss_lora*"]
+
+[tool.setuptools.package-data]
+moss_lora = ["web/static/**/*"]

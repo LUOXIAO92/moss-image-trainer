@@ -13,6 +13,7 @@ import yaml
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from ... import runtime
 from ..deps import RESERVED_WORKSPACES, _rel, _safe_name, _write_text
 from ..jobs import JOBS
 from ..services.system import (_is_cli_train_process, _parse_metrics, _run_samples)
@@ -168,34 +169,18 @@ def _has_live_cli_training(name: str) -> bool:
 
 @router.get("/api/workspaces/{name}/active")
 def api_active_run(name: str):
-    """Which run is training right now, judged by the heartbeat file."""
+    """Which run is training right now, derived from the workspace files."""
     name = _workspace_name(name)
-    runs_dir = _workspace_runs_dir(name)
-    best = None
-    if os.path.isdir(runs_dir):
-        for run in os.listdir(runs_dir):
-            beat = os.path.join(runs_dir, run, "training.json")
-            if not os.path.isfile(beat):
-                continue
-            try:
-                data = json.load(open(beat, encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            age = time.time() - float(data.get("time") or 0)
-            pid = data.get("pid")
-            if pid:
-                try:
-                    alive = int(pid) > 0 and os.path.exists(f"/proc/{int(pid)}")
-                except (TypeError, ValueError):
-                    alive = False
-                if not alive:
-                    continue
-            if data.get("status") != "done" and age < 120 and (best is None or age < best["age"]):
-                best = {"run": run, "step": data.get("step"), "total": data.get("total"),
-                        "status": data.get("status"), "age": round(age, 1)}
-    if best is None and _has_live_cli_training(name):
+    runs = runtime.scan_runs(os.path.abspath(_workspace_dir(name)))
+    live = [run for run in runs if run["state"] in ("running", "starting", "stopping")]
+    if live:
+        run = live[0]
+        return {"active": {"run": run["id"], "step": run.get("step"), "total": run.get("total"),
+                           "status": "running", "age": run.get("age"), "state": run["state"]}}
+    if _has_live_cli_training(name):
         # fall back to the log mtime only while a matching python CLI process lives
         logs = _workspace_logs_dir(name)
+        best = None
         if os.path.isdir(logs):
             for entry in os.scandir(logs):
                 if not entry.name.endswith(".log"):
@@ -204,7 +189,8 @@ def api_active_run(name: str):
                 if age < 120 and (best is None or age < best["age"]):
                     best = {"run": os.path.splitext(entry.name)[0], "step": None,
                             "total": None, "status": "running", "age": round(age, 1)}
-    return {"active": best}
+        return {"active": best}
+    return {"active": None}
 
 
 @router.post("/api/workspaces/{name}/stop")
@@ -329,6 +315,21 @@ def api_dashboard(run: str = "", workspace: str = ""):
                 "step": job.last.get("step"), "total": job.last.get("total"),
                 "profile": job.profile, "workspace": job.workspace, "run": job.run_name,
             }
+    if active is None:
+        # A training started in a terminal is not in this process's memory, and
+        # the dashboard still has to say it is running. The heartbeat knows.
+        for row in runtime.scan_jobs(_workspace_root()):
+            if (row.get("workspace") or "") != scope or row.get("kind") != "train":
+                continue
+            if row.get("state") not in ("running", "starting", "stopping"):
+                continue
+            active = {
+                "id": row.get("id"), "kind": "train",
+                "step": row.get("step"), "total": row.get("total"),
+                "profile": row.get("profile") or scope, "workspace": scope,
+                "run": row.get("run_id") or "", "source": row.get("source") or "cli",
+            }
+            break
     gpu = {"util": None, "mem_used": None, "mem_total": None, "temp": None, "name": None}
     try:
         out = subprocess.run(

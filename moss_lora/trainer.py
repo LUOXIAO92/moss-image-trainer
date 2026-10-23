@@ -18,6 +18,7 @@ import torch
 from safetensors.torch import load_file, save_file
 from torch.nn import functional as F
 
+from . import runtime
 from .config import Config
 from .sigma import SigmaSampler
 from .weights import LatentCodec, load_transformer, load_vae
@@ -59,6 +60,10 @@ class Trainer:
         self.ckpt_dir = os.path.join(self.out_dir, "checkpoints")
         os.makedirs(self.ckpt_dir, exist_ok=True)
         self.generator = torch.Generator("cpu").manual_seed(config.train.seed)
+        # The workspace owns the run artefacts; the repository only owns code.
+        self.workspace_root = runtime.workspace_root(config)
+        self._lock_held = False
+        self._started = time.time()
 
     # -- setup -----------------------------------------------------------
     def _configure_precision(self):
@@ -535,6 +540,41 @@ class Trainer:
             )
 
     def train(self, resume: str = ""):
+        """Run the loop, holding the GPU lock and publishing a terminal status.
+
+        Every exit path writes a final heartbeat with an exit code, so a reader
+        can tell "finished", "failed" and "someone killed it" apart without
+        scraping the log.
+        """
+        self._acquire_lock()
+        try:
+            return self._train_loop(resume)
+        except KeyboardInterrupt:
+            self._write_heartbeat(self.state.step, "stopped", "stopped", exit_code=130)
+            raise
+        except BaseException:
+            self._write_heartbeat(self.state.step, "failed", "failed", exit_code=1)
+            raise
+        finally:
+            self._release_lock()
+
+    def _acquire_lock(self):
+        """One GPU job per machine, whether it started from the CLI or the WebUI."""
+        if not self.workspace_root:
+            return
+        try:
+            runtime.acquire_gpu_lock(self.workspace_root, kind="train",
+                                     run_id=self.config.name, run_dir=self.out_dir)
+        except runtime.GpuBusy as busy:
+            raise SystemExit(f"GPU busy: {busy}") from None
+        self._lock_held = True
+
+    def _release_lock(self):
+        if self._lock_held and self.workspace_root:
+            runtime.release_gpu_lock(self.workspace_root)
+            self._lock_held = False
+
+    def _train_loop(self, resume: str = ""):
         cfg = self.config.train
         self._report_allocator()
         start_step = self._load_checkpoint(resume) if resume else 0
@@ -579,24 +619,43 @@ class Trainer:
             if cfg.save_every and (step + 1) % cfg.save_every == 0:
                 self.save_checkpoint(step + 1)
             if cfg.sample_every and (step + 1) % cfg.sample_every == 0:
+                # Sampling takes minutes; without a beat here a live run looks
+                # dead to every reader while it renders previews.
+                self._write_heartbeat(step + 1, "running", "preview")
                 try:
                     self.preview(step + 1)
                 except Exception as exc:  # a broken preview must not kill the run
                     self.log(f"preview failed at step {step + 1}: {type(exc).__name__}: {exc}")
+                self._write_heartbeat(step + 1, "running", "train")
+        self._write_heartbeat(cfg.steps, "running", "export")
         self.save_checkpoint(cfg.steps, final=True)
         self.export()
         self.make_contact_sheet()
-        self._write_heartbeat(cfg.steps, "done")
+        self._write_heartbeat(cfg.steps, "done", "done", exit_code=0)
         return self.state
 
-    def _write_heartbeat(self, step: int, status: str):
-        """Let the dashboard see a CLI-started run without the web job system."""
+    def _write_heartbeat(self, step: int, status: str, phase: str = "train",
+                         exit_code: int | None = None):
+        """Publish this run's state so any reader can see it without the web app.
+
+        Written atomically: a reader must never catch a half-written file and
+        conclude the run is gone.
+        """
+        record = {
+            "pid": os.getpid(),
+            "step": int(step),
+            "total": int(self.config.train.steps),
+            "status": status,
+            "phase": phase,
+            "run_id": self.config.name,
+            "started": self._started,
+            "time": time.time(),
+        }
+        if exit_code is not None:
+            record["exit_code"] = int(exit_code)
+            record["finished"] = time.time()
         try:
-            path = os.path.join(self.out_dir, "training.json")
-            with open(path, "w", encoding="utf-8") as handle:
-                json.dump({"pid": os.getpid(), "step": int(step),
-                           "total": int(self.config.train.steps), "status": status,
-                           "time": time.time()}, handle)
+            runtime.write_json_atomic(os.path.join(self.out_dir, "training.json"), record)
         except OSError:
             pass
 

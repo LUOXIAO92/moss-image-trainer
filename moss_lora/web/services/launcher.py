@@ -13,6 +13,7 @@ import time
 import yaml
 from fastapi import HTTPException
 
+from ... import runtime
 from ..deps import ROOT, STEP_RE
 from ..jobs import Job
 from .cache_cmd import CACHE_PARTS
@@ -89,6 +90,50 @@ def _write_preview_sidecars(job: Job) -> None:
         return
 
 
+def _persist_job(job: Job, force: bool = False) -> None:
+    """Publish this job's state to ``logs/<id>.json``.
+
+    The WebUI reads that file instead of the in-memory registry, so a run stays
+    visible after a server restart and a terminal-started run shows up in the
+    same list. Writes are throttled: one per second is plenty for a 1 Hz reader.
+    """
+    if not job.state_path:
+        return
+    now = time.time()
+    if not force and now - job.persisted_at < 1.0:
+        return
+    job.persisted_at = now
+    process = job.process
+    record = {
+        "id": job.id,
+        "kind": job.kind,
+        "workspace": job.workspace,
+        "profile": job.profile,
+        "run_id": job.run_name,
+        "run_dir": job.output_dir if os.path.isabs(job.output_dir) else os.path.join(ROOT, job.output_dir),
+        "log": job.log_path,
+        "config_path": job.config_path,
+        "argv": list(job.command or []),
+        "pid": process.pid if process is not None and process.poll() is None else (job.last_pid or 0),
+        "started": job.created,
+        "finished": job.finished,
+        # "starting" until the worker reports a pid, so a reader knows the
+        # difference between "not spawned yet" and "spawned and running".
+        "status": "starting" if job.status == "running" and not job.last_pid else job.status,
+        "stage": job.stage,
+        "phase": job.stage,
+        "baseline_status": job.baseline_status,
+        "baseline_error": job.baseline_error,
+        "exit_code": job.exit_code,
+        "last": job.last or None,
+        "time": time.time(),
+    }
+    try:
+        runtime.write_json_atomic(job.state_path, record)
+    except OSError:
+        pass
+
+
 def _stream_command(job: Job, command: list[str], log_handle, parse_steps: bool) -> int:
     """Run one child process, stream it into the job log, and return its code."""
     job.push({"type": "start", "command": " ".join(command)})
@@ -99,6 +144,8 @@ def _stream_command(job: Job, command: list[str], log_handle, parse_steps: bool)
         command, cwd=ROOT, env=dict(job.env or {}), stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT, text=True, bufsize=1, start_new_session=True,
     )
+    job.last_pid = job.process.pid
+    _persist_job(job, force=True)
     try:
         for line in job.process.stdout:
             line = line.rstrip()
@@ -117,6 +164,7 @@ def _stream_command(job: Job, command: list[str], log_handle, parse_steps: bool)
                         "sec": float(sec), "vram": float(peak),
                     }
                     job.last = event
+                    _persist_job(job)
                     job.push(event)
                     continue
                 if "preview ->" in line:
@@ -137,6 +185,7 @@ def _run(job: Job):
     try:
         os.makedirs(os.path.dirname(job.log_path), exist_ok=True)
         log_handle = open(job.log_path, "a", encoding="utf-8")
+        _persist_job(job, force=True)
 
         stopped = False
         for step in job.pre_commands:
@@ -187,6 +236,8 @@ def _run(job: Job):
             job.push({"type": "error", "message": "stopped"})
             return
         job.status = "done" if code == 0 else "error"
+        job.exit_code = code
+        _persist_job(job, force=True)
         if code == 0 and job.kind == "train":
             _write_preview_sidecars(job)
         if log_handle is not None:
@@ -202,3 +253,6 @@ def _run(job: Job):
         if log_handle is not None:
             log_handle.close()
         job.finished = time.time()
+        if job.exit_code is None:
+            job.exit_code = 130
+        _persist_job(job, force=True)
