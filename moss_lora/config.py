@@ -409,12 +409,14 @@ VRAM_PRESETS: dict[str, dict[str, Any]] = {
     "24": {"gradient_checkpointing": True, "blocks_to_swap": 0, "optimizer_in_8bit": False,
            "quantize_dit": "none", "compile": True},
     "16": {"gradient_checkpointing": True, "blocks_to_swap": 0, "optimizer_in_8bit": False,
-           "quantize_dit": "none", "compile": True},
+           "quantize_dit": "ffn", "compile": True},
     "12": {"gradient_checkpointing": True, "blocks_to_swap": 0, "optimizer_in_8bit": False,
            "quantize_dit": "ffn", "compile": True},
-    # 8 GB and below: the base weights must leave bf16, and the compiled block
-    # loop costs workspace the card does not have.
-    "8": {"gradient_checkpointing": True, "blocks_to_swap": 0, "optimizer_in_8bit": True,
+    # 8 GB and below: the base weights leave bf16, the compiled block loop goes
+    # away, and every block streams from host memory. A run at nf4 without
+    # streaming still needs about 8.4 GiB of card once the CUDA context is
+    # counted, which is more than these cards have.
+    "8": {"gradient_checkpointing": True, "blocks_to_swap": 42, "optimizer_in_8bit": True,
           "quantize_dit": "all", "compile": False},
     "6": {"gradient_checkpointing": True, "blocks_to_swap": 42, "optimizer_in_8bit": True,
           "quantize_dit": "all", "compile": False},

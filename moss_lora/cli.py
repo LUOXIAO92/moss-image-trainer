@@ -609,14 +609,16 @@ MEMORY_TABLE = [
     ("fp16acc", "none", "nf4", 0, 12.7, 0.79, True),
     ("fp16acc", "ffn", "nf4", 0, 8.4, 0.82, True),
     ("fp16acc", "all", "nf4", 0, 6.2, 0.84, True),
-    ("bf16", "none", "nf4", 0, 12.7, 0.96, True),
+    ("bf16", "none", "nf4", 0, 12.2, 1.32, True),
     ("bf16", "none", "nf4", 30, 6.5, 1.76, True),
     ("bf16", "none", "nf4", 40, 4.4, 1.90, True),  # estimated from the eager 2.10
-    # fp8 costs no bitsandbytes kernel and keeps far more of the weight precision,
-    # at twice the storage of nf4. The peaks are arithmetic on the 9.47 GiB bf16
-    # file, so they are listed for planning but never auto-selected.
-    ("bf16", "ffn", "fp8", 0, 11.0, 0.0, False),
-    ("bf16", "all", "fp8", 0, 8.4, 0.0, False),
+    # fp8 keeps far more of the weight precision than nf4 at twice the storage,
+    # and needs no bitsandbytes kernel.
+    ("bf16", "all", "fp8", 0, 9.0, 1.37, True),
+    ("bf16", "all", "nf4", 0, 6.9, 1.35, True),
+    # every block streamed from host memory: the smallest footprint this trainer
+    # reaches without touching resolution or sequence length.
+    ("bf16", "all", "nf4", 42, 3.9, 1.56, True),
 ]
 
 def cmd_plan(args):
@@ -625,13 +627,18 @@ def cmd_plan(args):
         from .config import detect_vram_gb
 
         vram = round(detect_vram_gb() or 32)
-    reserve = 2.0 if args.preview else 1.0
+    # `peak` counts PyTorch allocations only; the CUDA context, the cuBLAS and
+    # flash workspaces live on top of it, and a run that "fits" without them does
+    # not start. 1.5 GiB is the measured difference on a clean process.
+    context = 1.5
+    reserve = (2.0 if args.preview else 1.0) + context
     budget = vram - reserve
     measured = [row for row in MEMORY_TABLE if row[6]]
     fitting = [row for row in measured if row[4] <= budget]
     # among the measured rows that fit, the fastest wins
     choice = min(fitting, key=lambda row: row[5]) if fitting else measured[-1]
-    print(f"target VRAM {vram:.0f} GiB (reserve {reserve:.0f} GiB for VAE/preview) -> budget {budget:.1f} GiB\n")
+    print(f"target VRAM {vram:.0f} GiB (reserve {reserve:.1f} GiB: {context:.1f} CUDA context "
+          f"+ {reserve - context:.0f} for VAE/preview) -> budget {budget:.1f} GiB\n")
     print(f"{'precision':>9} {'quantize':>9} {'dtype':>6} {'swap':>5} {'peak':>7} {'s/step':>8}")
     for prec, quant, qdtype, swap, peak, speed, is_measured in MEMORY_TABLE:
         mark = "  <- chosen" if (choice[0], choice[1], choice[2], choice[3]) == (prec, quant, qdtype, swap) else ""
