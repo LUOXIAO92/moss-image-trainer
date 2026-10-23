@@ -62,8 +62,14 @@ def _shard_files(directory: str) -> list[str]:
     )
 
 
-def _load_text_weights(source: str, dtype: torch.dtype = torch.bfloat16, config_hint: str = "") -> dict[str, torch.Tensor]:
-    """Load the text tower from a HF directory, a packed file, or ConvRot int8 weights."""
+def _load_text_weights(source: str, dtype: torch.dtype = torch.bfloat16, config_hint: str = "",
+                       device: str = "cpu") -> dict[str, torch.Tensor]:
+    """Load the text tower from a HF directory, a packed file, or ConvRot int8 weights.
+
+    ``device`` decides where dequantisation runs. On the host, 9B int8 parameters
+    become a ~36 GB float32 working set and pin every core for a minute; on the
+    device the same arithmetic takes seconds and never materialises that copy.
+    """
     from safetensors import safe_open
 
     from . import convrot
@@ -89,9 +95,10 @@ def _load_text_weights(source: str, dtype: torch.dtype = torch.bfloat16, config_
                         scale_key = key[: -len(".weight")] + ".weight_scale"
                         scale = handle.get_tensor(scale_key) if scale_key in keys else torch.tensor(1.0)
                         marker = markers.get(key[: -len(".weight")], {})
-                        state[name] = convrot.dequantize(tensor, scale, 256, marker).to(dtype)
+                        state[name] = convrot.dequantize(tensor.to(device), scale.to(device),
+                                                         256, marker).to(dtype)
                     elif tensor.dtype in (torch.bfloat16, torch.float16, torch.float32):
-                        state[name] = tensor.to(dtype)
+                        state[name] = tensor.to(device=device, dtype=dtype)
     return state
 
 
@@ -111,9 +118,9 @@ def load_text_model(directory: str, dtype: torch.dtype = torch.bfloat16, device:
             config = Qwen3_5TextConfig(**json.load(handle))
     else:
         config = Qwen3_5Config.from_pretrained(resolved_config, local_files_only=True).text_config
-    state = _load_text_weights(directory, dtype=dtype, config_hint=config_dir)
     # A 9B random init on CPU costs ~58s of pure host work; do it on the device instead.
     build_on = device if torch.cuda.is_available() and str(device).startswith("cuda") else "cpu"
+    state = _load_text_weights(directory, dtype=dtype, config_hint=config_dir, device=build_on)
     with torch.device(build_on):
         model = Qwen3_5TextModel(config)
     unexpected = model.load_state_dict(state, strict=False).unexpected_keys

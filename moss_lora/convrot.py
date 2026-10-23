@@ -70,7 +70,7 @@ def dequantize(int8_weight: torch.Tensor, scale: torch.Tensor, group: int, marke
     in_features = weight.shape[-1]
     if in_features % group:
         raise ValueError(f"in_features {in_features} not divisible by convrot group {group}")
-    h = regular_hadamard(group).to(weight.dtype)
+    h = regular_hadamard(group).to(device=weight.device, dtype=weight.dtype)
     grouped = weight.reshape(weight.shape[0], in_features // group, group)
     return (grouped @ h).reshape(weight.shape)
 

@@ -36,6 +36,40 @@ def _load(args) -> Config:
     return config.resolve_paths()
 
 
+class _GpuLock:
+    """Hold the workspace GPU lock around a cache build or a text encode.
+
+    Training always took this lock; caching and encoding did not, so a second
+    click on 开始缓存 started a second encoder on the same device and the two
+    fought over VRAM. A second job now stops before it loads anything.
+    """
+
+    def __init__(self, config: Config, kind: str):
+        from . import runtime
+
+        self._runtime = runtime
+        self.root = runtime.workspace_root(config)
+        self.kind = kind
+        self.run_id = getattr(config, "name", "") or ""
+        self.held = False
+
+    def __enter__(self):
+        if self.root:
+            try:
+                self._runtime.acquire_gpu_lock(self.root, kind=self.kind, run_id=self.run_id)
+            except self._runtime.GpuBusy as exc:
+                print(f"GPU 正忙：{exc}")
+                print("  等它结束再试，或先停掉正在运行的任务。")
+                raise SystemExit(3) from None
+            self.held = True
+        return self
+
+    def __exit__(self, *exc_info):
+        if self.held:
+            self._runtime.release_gpu_lock(self.root)
+        return False
+
+
 def cmd_cache(args):
     from .cache import CacheBuilder
 
@@ -44,30 +78,33 @@ def cmd_cache(args):
     if problems:
         print("config problems:\n  " + "\n  ".join(problems))
         return 2
-    builder = CacheBuilder(config)
-    print(f"dataset: {len(builder.items)} images -> {builder.dir}")
-    if args.text_only:
-        builder.run_text()
+    with _GpuLock(config, "cache"):
+        builder = CacheBuilder(config)
+        print(f"dataset: {len(builder.items)} images -> {builder.dir}")
+        if args.text_only:
+            builder.run_text()
+            return 0
+        builder.run_latents(batch_size=getattr(args, "cache_batch", None),
+                            workers=getattr(args, "workers", 6) or 6)
+        builder.write_index()
+        print("\nnext: encode captions with the local Qwen3.5-9B encoder")
+        print(f"  python -m moss_lora.cli encode-text --config {args.config or '<config.yaml>'}")
         return 0
-    builder.run_latents(batch_size=getattr(args, "cache_batch", None),
-                        workers=getattr(args, "workers", 6) or 6)
-    builder.write_index()
-    print("\nnext: encode captions with the local Qwen3.5-9B encoder")
-    print(f"  python -m moss_lora.cli encode-text --config {args.config or '<config.yaml>'}")
-    return 0
 
 
 def cmd_encode_text(args):
     from .encode import run_encode_text
 
-    return run_encode_text(
-        args.config,
-        overwrite=args.overwrite,
-        text_model=args.text_model,
-        quantize=args.quantize,
-        batch_size=args.batch_size,
-        preview_only=getattr(args, "preview_only", False),
-    )
+    config = _load(args)
+    with _GpuLock(config, "text"):
+        return run_encode_text(
+            args.config,
+            overwrite=args.overwrite,
+            text_model=args.text_model,
+            quantize=args.quantize,
+            batch_size=args.batch_size,
+            preview_only=getattr(args, "preview_only", False),
+        )
 
 
 def cmd_encode_prompt(args):
