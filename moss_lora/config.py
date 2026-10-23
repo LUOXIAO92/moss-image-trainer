@@ -462,6 +462,11 @@ def apply_preset(config: Config, vram_gb: float | None = None, *, detect: bool =
         config.vram.optimizer_in_8bit = preset["optimizer_in_8bit"]
     if config.vram.quantize_dit == "none":
         config.vram.quantize_dit = preset["quantize_dit"]
+    # compile has no "unset" value to test against, so auto only ever turns it
+    # off. The streaming tiers do: a compiled block loop that copies weights
+    # between host and card re-traces on every shape it has not seen.
+    if preset["compile"] is False:
+        config.vram.compile = False
     return config
 
 
