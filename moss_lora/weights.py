@@ -89,23 +89,45 @@ def _note(log, message: str) -> None:
         log(message)
 
 
-def _place_block(block, device, offloaded: bool, quantized: bool) -> None:
-    """Put one block where it belongs.
+def _target(model, key: str):
+    try:
+        return model.get_parameter(key)
+    except AttributeError:
+        return model.get_buffer(key)
 
-    A tail block that was never quantized is already in host memory, so it stays
-    there and the swap picks it up at the first step. A quantized one makes the
-    trip up and back for a reason: packing happens on the host, and the swap
-    moves only ``param.data``, so the scales have to reach the card now or they
-    would still be on the host when the packed weight comes up.
+
+def _max_block_bytes(model) -> int:
+    return max(sum(p.numel() * p.element_size() for p in block.parameters())
+               for block in model.layers)
+
+
+def _fill_cpu(model, state) -> None:
+    """Copy one block's mmap views into parameters that live in host memory."""
+    for key, tensor in state.items():
+        _target(model, key).data.copy_(tensor)
+
+
+def _fill_device(model, state, buffer) -> None:
+    """Fill one block's parameters through a pinned staging buffer.
+
+    A pageable host buffer reaches the card at about 4.7 GiB/s, a pinned one at
+    22, and the difference is the whole load time for a bf16 model. Each tensor
+    takes one copy into the pinned buffer and one asynchronous copy up; the
+    caller syncs before reusing the buffer for the next block.
     """
-    if not offloaded:
-        block.to(device)
-        return
-    if not quantized:
-        return
-    block.to(device)
-    for parameter in block.parameters():
-        parameter.data = parameter.data.to("cpu")
+    offset = 0
+    plan = []
+    for key, tensor in state.items():
+        target = _target(model, key)
+        nbytes = target.numel() * target.element_size()
+        chunk = buffer[offset:offset + nbytes]
+        view = chunk.view(target.dtype).reshape(target.shape)
+        view.copy_(tensor)  # casts when the file and the run disagree on dtype
+        plan.append((target, view))
+        offset += nbytes
+    for target, source in plan:
+        target.data.copy_(source, non_blocking=True)
+    torch.cuda.synchronize()
 
 
 def _load_transformer_streamed(path: str, *, dtype, device, quantize_scope: str, quantize_dtype: str,
@@ -116,6 +138,7 @@ def _load_transformer_streamed(path: str, *, dtype, device, quantize_scope: str,
     scope = str(quantize_scope or "none").lower()
     fmt = str(quantize_dtype or "nf4").lower()
     pack = quantize_fp8 if fmt == "fp8" else quantize_nf4
+    on_card = str(QUANTIZE_DEVICE).lower() != "cpu" and torch.cuda.is_available()
 
     with torch.device("meta"):
         model = MOSSImageTransformer(dtype=dtype)
@@ -123,6 +146,8 @@ def _load_transformer_streamed(path: str, *, dtype, device, quantize_scope: str,
     model.eval()
     blocks = len(model.layers)
     swap = max(0, min(blocks, int(blocks_to_swap or 0)))
+    buffer = torch.empty(_max_block_bytes(model), dtype=torch.uint8,
+                         pin_memory=torch.cuda.is_available(), device="cpu")
 
     with safe_open(path, framework="pt") as handle:
         keys = list(handle.keys())
@@ -136,36 +161,34 @@ def _load_transformer_streamed(path: str, *, dtype, device, quantize_scope: str,
             replaced = quantize_conditioning_half(model, quantize_conditioning, compute_dtype=dtype)
             _note(log, f"conditioning: {replaced} Linears -> {quantize_conditioning}")
         # Only the conditioning half goes up now; the blocks follow one at a time
-        # and the streamed tail never touches the card.
+        # and a streamed tail never touches the card unless it is being packed.
         for name, module in model.named_children():
             if name != "layers":
                 module.to(device)
 
-        on_card = str(QUANTIZE_DEVICE).lower() != "cpu" and torch.cuda.is_available()
         for index in range(blocks):
             state = split_fused_qkv({k: handle.get_tensor(k) for k in block_keys[index]})
-            model.load_state_dict(state, strict=False)
-            del state
             block = model.layers[index]
             offloaded = index >= blocks - swap
             if scope == "none":
-                _place_block(block, device, offloaded=offloaded, quantized=False)
-                continue
-            if on_card:
-                # bf16 up, packed in place, and only a tail block's packed weight
-                # comes back. Its scales stay on the card, which is where the
-                # swap expects them.
-                block.to(device)
-                kwargs = {"device": device} if fmt == "nf4" else {}
+                if offloaded:
+                    _fill_cpu(model, state)
+                else:
+                    block.to_empty(device=device)
+                    _fill_device(model, state, buffer)
+            else:
+                block.to_empty(device=device)
+                _fill_device(model, state, buffer)
+                kwargs = {"device": device} if (on_card and fmt == "nf4") else {}
                 replaced = pack(block, scope, dtype=dtype, prefix="", **kwargs)
                 if offloaded:
+                    # The packed weight goes back to host memory; the scales stay
+                    # on the card, where the swap expects them.
                     for parameter in block.parameters():
                         parameter.data = parameter.data.to("cpu")
-            else:
-                replaced = pack(block, scope, dtype=dtype, prefix="")
-                _place_block(block, device, offloaded=offloaded, quantized=True)
-            if index == 0:
-                _note(log, f"quantize: {replaced} frozen Linears per block -> {fmt} ({scope})")
+                if index == 0:
+                    _note(log, f"quantize: {replaced} frozen Linears per block -> {fmt} ({scope})")
+            del state
     return model.eval()
 
 
