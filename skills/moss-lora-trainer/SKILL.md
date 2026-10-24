@@ -140,9 +140,8 @@ The 9 steps below form a one-way pipeline. Never start Step 7 (training) before 
     eval_holdout: 0.05
     save_state: last
   vram:
-    preset: auto
-    gradient_checkpointing: auto
-    blocks_to_swap: -1        # tail N blocks stream from host memory; -1 = from the preset
+    gradient_checkpointing: true
+    blocks_to_swap: 0         # tail N of 42 blocks stream from host memory; 0 = all resident
     optimizer_in_8bit: false
     quantize_dit: none        # none | ffn | all
     quantize_dtype: nf4       # nf4 (smallest) | fp8 (steadier)
@@ -362,17 +361,17 @@ mkdir -p "workspaces/$WORKSPACE"/{train_cache,reg_cache,runs,logs,exports}
 
 ## 5. Parameter Decision Tables
 
-### 5.1 VRAM Presets (`vram.preset` and `cli plan`)
+### 5.1 VRAM Presets (bundle applied on request, and `cli plan`)
 
-| VRAM Capacity (GB) | `vram.preset` | `quantize_dit` | `blocks_to_swap` | `optimizer_in_8bit` | `compile` | Notes |
+| Preset | `quantize_dit` | `blocks_to_swap` | `optimizer_in_8bit` | `compile` | `preview.vae_dtype` | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **32 / 24** | `32` / `24` | `none` | `0` | `false` | `true` | Full-precision frozen backbone; highest throughput and best detail fidelity |
-| **16 / 12** | `16` / `12` | `ffn` | `0` | `false` | `true` | NF4 on the two FFN projections; the backbone stays in bf16 elsewhere |
-| **8 / 6** | `8` / `6` | `all` | `42` | `true` | `false` | Every frozen Linear quantized and every block streamed from host memory |
+| **`32` / `24`** | `none` | `0` | `false` | `true` | `fp32` | Full-precision frozen backbone; highest throughput and best detail fidelity |
+| **`16` / `12`** | `ffn` | `0` | `false` | `true` | `fp32` | NF4 on the two FFN projections; the backbone stays in bf16 elsewhere |
+| **`8` / `6`** | `all` | `42` | `true` | `false` | `fp16` | Every frozen Linear quantized, every block streamed, fp16 preview decode |
 
 `blocks_to_swap: N` streams the trailing `N` of the 42 blocks and keeps the leading `42 - N` resident; `42` means nothing stays resident, `0` means everything does. The WebUI asks for the complement (resident layer count) and stores the same key. A one-block prefetch window uploads the next block while the current one computes, and released GPU buffers are pooled instead of freed, so a streamed step costs a little more than a resident one instead of stalling on every block or growing the reserved footprint step after step. Training is slower at these tiers because of the copy latency, not because of the quantization.
 
-When the preset is not explicitly set, `auto` resolves the tier from the detected card capacity. Every field in the table can be overridden individually, and the training page states which values came from the preset and which the user changed. If a step still runs out of memory, `_degrade_memory` raises `blocks_to_swap` by 8 and retries, so a marginal run finishes instead of dying; lower the resident layer count by hand when the first step already fails.
+A preset is a bundle of concrete values, written into the config once when a human picks it (the training page selector, `--preset`, or `apply_preset(config, tier)` in code). The trainer never resolves a preset, so a config without a `preset` key is a complete run and a field set by hand is never reinterpreted. There is no `auto`: nothing derives the tier from the installed card. A new run starts at the defaults (all 42 blocks resident, unquantized, checkpointing on, `compile: true`). If a step still runs out of memory, `_degrade_memory` raises `blocks_to_swap` by 8 and retries, so a marginal run finishes instead of dying; lower the resident layer count by hand when the first step already fails.
 
 ### 5.2 Core Training Hyperparameter Decisions
 
@@ -414,7 +413,7 @@ When the preset is not explicitly set, `auto` resolves the tier from the detecte
    - **Fix**:
      - Latent caching OOM: Run `cli cache --config ... --batch-size 1`.
      - Text encoding OOM: Run `cli encode-text --config ... --quantize nf4 --batch-size 2`.
-     - Training OOM: Lower `vram.preset` by one tier in the run's `config.yaml` (e.g., `16` → `12` or `8`), set `train.batch_size: 1`, or explicitly raise `vram.blocks_to_swap: 20` (`vram.gradient_checkpointing` must be `true` when `blocks_to_swap` is enabled).
+     - Training OOM: raise `vram.blocks_to_swap` (e.g. `20`, or `42` for the whole stack) or lower `vram.quantize_dit` to `ffn`/`all`; `vram.gradient_checkpointing` must be `true` when `blocks_to_swap` is enabled. The trainer also raises `blocks_to_swap` by 8 per OOM on its own.
 2. **Cache schema mismatch or missing index**
    - **Symptom**: `缓存未就绪：缺 index.json` (cache not ready: missing `index.json`) or `缓存格式不对：不是当前版本的索引` (invalid cache format: outdated index schema).
    - **Fix**: Check whether `"schema"` in `workspaces/<WORKSPACE>/train_cache/index.json` equals `2`. If missing or outdated, re-run `cli cache --config ...` followed by `cli encode-text --config ...` (no `--overwrite` needed; incremental logic backfills missing entries and rewrites the v2 index).

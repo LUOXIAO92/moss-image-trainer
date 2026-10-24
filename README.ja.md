@@ -22,7 +22,7 @@
 
 - **OS と Python**: Linux または WSL2、Python 3.11 以上。
 - **GPU とドライバー**: `bfloat16` または `float16` に対応した NVIDIA GPU、および PyTorch 2.9 以上に対応する CUDA ドライバー。
-- **VRAM ティア**: 24 GB 以上は非量子化のまま実行します（`preset: 24|32`）。16 GB と 12 GB は `preset: 16` と `preset: 12`（FFN 量子化）、8 GB と 6 GB は `preset: 8` と `preset: 6` を使い、全ブロックを量子化して 42 個すべてをホストメモリからストリーミングし、`torch.compile` を無効化したうえで 8-bit オプティマイザーを有効にします。`preset: auto` は検出したカードからティアを決めます。これらの値は項目ごとに上書きでき、1 ステップでメモリが足りなくなると学習側が `blocks_to_swap` を自動で引き上げます。
+- **VRAM 設定。プリセットは出発点にすぎない**: VRAM の各項目は実行設定に書かれた普通の値で、学習側はその値をそのまま使います。WebUI のプリセット選択（`32`、`24`、`16`、`12`、`8`、`6`）と CLI の `--preset` は、そのティアの値——勾配チェックポイント、常駐レイヤー数、量子化の範囲と形式、`torch.compile`、8bit オプティマイザー、プレビュー VAE の精度——を一度だけ書き込み、その後は関与しません。新しい run はデフォルト値で始まり、どのティアも適用されず、カードから何かを導くこともありません。1 ステップで本当にメモリが足りないときだけ、学習側が `blocks_to_swap` を自分で引き上げます。
 - **ローカル重み**: MOSS-Image DiT、Qwen3.5-9B テキストエンコーダー（HuggingFace ディレクトリ、または ConvRot int8 量子化済み単一ファイル `.safetensors`）、および FLUX.2 VAE。
 
 特定のカード向けに設定を選ぶときは [VRAM ガイド](<docs/VRAM.md>) を読んでください。量子化とブロックストリーミングの実測コストを示し、アロケーターの設定を説明し、カードのクラスごとにプレビューサイズを一覧にしています。
@@ -103,7 +103,7 @@ CONFIG="$WS/runs/$RUN/config.yaml"
 
 `settings.yaml` はローカルマシンの設定を保持します（`.gitignore` で除外されており、初回起動時に [settings.example.yaml](<settings.example.yaml>) からコピーされます）。ワークスペースのルート `paths.workspaces`、CUDA アロケーター設定 `runtime`（`allocator: expandable|async|off` と `gc_threshold`）、表示言語 `ui.language`、およびキャプション生成サービス `caption`（`base_url`、環境変数名 `api_key`、モデル名、並列数、プロンプトテンプレート）を管理します。設定画面で直接入力した平文の API キーはプロセスメモリ内にのみ保持され、ディスクには書き込まれません。
 
-各実行の完全な設定は `workspaces/<WORKSPACE>/runs/<RUN>/config.yaml` にあり、モデル、データセット、キャッシュ、LoRA の rank と alpha、学習ハイパーパラメーター、VRAM プリセット、プレビュー用プロンプトを定義します。相対パス（`cache.dir` や `output_dir` など）はワークスペースディレクトリ基準で解決されるため、ワークスペースディレクトリごと移動しても参照は維持されます。このファイルは実行中は読み取り専用で、終了後は編集できます。WebUI で実行を作成すると 1 つの設定ができ、実行ダイアログから既存の実行を複製することもできます。
+各実行の完全な設定は `workspaces/<WORKSPACE>/runs/<RUN>/config.yaml` にあり、モデル、データセット、キャッシュ、LoRA の rank と alpha、学習ハイパーパラメーター、VRAM 設定、プレビュー用プロンプトを定義します。相対パス（`cache.dir` や `output_dir` など）はワークスペースディレクトリ基準で解決されるため、ワークスペースディレクトリごと移動しても参照は維持されます。このファイルは実行中は読み取り専用で、終了後は編集できます。WebUI で実行を作成すると 1 つの設定ができ、実行ダイアログから既存の実行を複製することもできます。
 
 ```yaml
 name: my-lora
@@ -129,7 +129,9 @@ train:
   save_every: 250
   sample_every: 250
 vram:
-  preset: auto
+  gradient_checkpointing: true
+  blocks_to_swap: 0
+  quantize_dit: none
   compile: true
 export:
   formats: [kohya]

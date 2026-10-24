@@ -11,7 +11,7 @@ The trainer splits the workflow into offline caching and online training so the 
 ## Features
 
 - **Two-stage caching**: Encodes image latents with the FLUX.2 VAE and text embeddings with a local Qwen3.5-9B, then writes both to disk. Text batches use right-side causal padding, and the training forward pass slices each sequence by its attention mask so padding tokens never pollute valid text embeddings.
-- **Flow Matching training and VRAM presets**: Trains with truncated logit-normal $\sigma$ sampling and per-token normalized velocity MSE loss. Built-in `auto|32|24|16|12|8|6` VRAM presets combine gradient checkpointing, weight-only quantization (`quantize_dit: none|ffn|all` in `nf4` or `fp8`, plus the optional conditioning half), block streaming from host memory, `torch.compile`, and `fp16` accumulation across `packed` (FlashAttention-2 varlen) and `padded` (token-dimension padding) batch modes; `auto` picks one. The dashboard shows a predicted VRAM peak beside the measured one before and during a run.
+- **Flow Matching training and VRAM presets**: Trains with truncated logit-normal $\sigma$ sampling and per-token normalized velocity MSE loss. Six presets (`32`, `24`, `16`, `12`, `8`, `6` GB) combine gradient checkpointing, weight-only quantization (`quantize_dit: none|ffn|all` in `nf4` or `fp8`, plus the optional conditioning half), block streaming from host memory, `torch.compile`, and `fp16` accumulation across `packed` (FlashAttention-2 varlen) and `padded` (token-dimension padding) batch modes. A preset writes values into the config; the run reads the values. The dashboard shows a predicted VRAM peak beside the measured one before and during a run.
 - **Regularization and holdout validation**: Loads regularization images via `dataset.reg_path` to limit concept drift and splits a deterministic validation set via `train.eval_holdout` for periodic loss checks.
 - **Dual-style captioning**: Queries any OpenAI-compatible vision endpoint to generate `tag_caption` (keeps existing tags and appends a scene sentence) and `official` captions (long, medium, and short descriptions), stored in a companion sidecar JSON.
 - **Zero-build WebUI**: Runs native ES modules across nine tabs (Dashboard, Training settings, Dataset, Cache, Samples, Export, Workspace, Settings, and Caption). Source edits take effect on browser refresh.
@@ -22,7 +22,7 @@ The trainer splits the workflow into offline caching and online training so the 
 
 - **OS and Python**: Linux or WSL2 with Python 3.11+.
 - **GPU and drivers**: NVIDIA GPU with `bfloat16` or `float16` support and CUDA drivers matching PyTorch 2.9+.
-- **VRAM tiers**: 24 GB and up runs unquantized (`preset: 24|32`); 16 GB and 12 GB use `preset: 16` and `preset: 12` (FFN quantization); 8 GB and 6 GB use `preset: 8` and `preset: 6`, which quantize every block, stream all 42 of them from host memory, drop `torch.compile`, and enable the 8-bit optimizer. `preset: auto` derives the tier from the detected card. Any of these values can be overridden per field, and the trainer raises `blocks_to_swap` by itself when a step runs out of memory.
+- **VRAM settings, with presets as starting points**: every VRAM field is a plain value in the run's config, and the trainer reads those values as written. The preset selector in the WebUI (`32`, `24`, `16`, `12`, `8`, `6`) and `--preset` on the CLI fill in one tier's values once — gradient checkpointing, resident blocks, quantization scope and format, `torch.compile`, the 8-bit optimizer, and the preview VAE dtype — and then get out of the way. A new run starts at the defaults with no preset applied, nothing is derived from the card, and the trainer raises `blocks_to_swap` by itself only when a step runs out of memory.
 - **Local weights**: MOSS-Image DiT, Qwen3.5-9B text encoder (HuggingFace directory, or a ConvRot int8-quantized single-file `.safetensors`), and FLUX.2 VAE.
 
 To choose settings for a specific card, read the [VRAM guide](<docs/VRAM.md>). It gives the measured cost of quantization and block streaming, explains the allocator setting, and lists a preview size for each card class.
@@ -103,7 +103,7 @@ Configuration splits into machine-level `settings.yaml` and per-run configs.
 
 `settings.yaml` holds local machine settings (`.gitignore` excludes it, and the first launch copies it from [settings.example.yaml](<settings.example.yaml>)). It configures the workspaces root `paths.workspaces`, CUDA allocator settings `runtime` (`allocator: expandable|async|off` and `gc_threshold`), UI language `ui.language`, and the caption service `caption` (`base_url`, environment variable name `api_key`, model name, concurrency, and prompt templates). Plaintext API keys entered in the Settings tab stay in process memory and never touch disk.
 
-Each run carries a complete config at `workspaces/<WORKSPACE>/runs/<RUN>/config.yaml`; it defines models, datasets, caches, LoRA rank and alpha, training hyperparameters, VRAM preset, and preview prompts. Relative paths (such as `cache.dir` and `output_dir`) resolve against the workspace directory, so moving a workspace directory keeps its paths valid. The file is frozen while its run trains; editing it afterwards is allowed. Create a run in the WebUI to get one, or copy an existing run with the run dialog:
+Each run carries a complete config at `workspaces/<WORKSPACE>/runs/<RUN>/config.yaml`; it defines models, datasets, caches, LoRA rank and alpha, training hyperparameters, VRAM settings, and preview prompts. Relative paths (such as `cache.dir` and `output_dir`) resolve against the workspace directory, so moving a workspace directory keeps its paths valid. The file is frozen while its run trains; editing it afterwards is allowed. Create a run in the WebUI to get one, or copy an existing run with the run dialog:
 
 ```yaml
 name: my-lora
@@ -129,7 +129,9 @@ train:
   save_every: 250
   sample_every: 250
 vram:
-  preset: auto
+  gradient_checkpointing: true
+  blocks_to_swap: 0
+  quantize_dit: none
   compile: true
 export:
   formats: [kohya]

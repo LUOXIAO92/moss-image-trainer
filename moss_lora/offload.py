@@ -39,7 +39,8 @@ POOL_SETS = 1
 class BlockSwap:
     def __init__(self, blocks, count: int, device="cuda"):
         self.blocks = blocks
-        self.start = max(0, len(blocks) - int(count))
+        self.count = max(0, min(len(blocks), int(count)))
+        self.start = max(0, len(blocks) - self.count)
         self.device = device
         self._device = torch.device(device)
         self.copy_stream = torch.cuda.Stream(device=self._device)
@@ -66,6 +67,62 @@ class BlockSwap:
 
     def is_swapped(self, index: int) -> bool:
         return index in self.params
+
+    def set_count(self, count: int) -> int:
+        """Move blocks so exactly ``count`` tail blocks live in host memory.
+
+        Only the difference moves. Both directions are rare -- a preview asking
+        for a different residency than training does it once per preview -- so
+        the copies are synchronous and run on the compute stream instead of the
+        lookahead machinery the inner loop uses.
+
+        Returns the number of blocks that changed sides.
+        """
+        target = max(0, min(len(self.blocks), int(count)))
+        start = len(self.blocks) - target
+        if start == self.start:
+            return 0
+        torch.cuda.synchronize(self._device)
+        moved = 0
+        if start > self.start:
+            # More blocks stream: copy the ones that just left the card into
+            # pinned host memory and let the pool reuse their VRAM.
+            for index in range(self.start, start):
+                params = [p for p in self.blocks[index].parameters() if p.requires_grad is False]
+                if not params:
+                    continue
+                self.params[index] = params
+                host = self._staging(index)
+                tensors = self.resident.pop(index, None)
+                if tensors is not None:
+                    self._give_back(host, tensors)
+                self.upload_done.pop(index, None)
+                self.download_done.pop(index, None)
+                moved += 1
+        else:
+            # Fewer blocks stream: bring the tail back for good and drop the
+            # pinned copies, which is the host memory the caller wanted back.
+            for index in range(start, self.start):
+                params = self.params.pop(index, None)
+                host = self.host.pop(index, None)
+                if params is None or host is None:
+                    self.resident.pop(index, None)
+                    continue
+                tensors = self._borrow(host)
+                if tensors is None:
+                    tensors = [torch.empty_like(buffer, device=self._device) for buffer in host]
+                with torch.no_grad():
+                    for buffer, tensor in zip(host, tensors):
+                        tensor.copy_(buffer)
+                for param, tensor in zip(params, tensors):
+                    param.data = tensor
+                self.resident.pop(index, None)
+                self.upload_done.pop(index, None)
+                self.download_done.pop(index, None)
+                moved += 1
+        self.count = target
+        self.start = start
+        return moved
 
     def _compute_stream(self) -> torch.cuda.Stream:
         return torch.cuda.current_stream(self._device)

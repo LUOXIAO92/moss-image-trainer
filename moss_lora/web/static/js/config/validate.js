@@ -73,6 +73,12 @@ export function validateField(field) {
       return t('train.validation.residentRange', { max: field.max });
     }
   }
+  if (field.type === 'previewResident' && raw !== '') {
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value < -1 || value > field.max) {
+      return t('train.validation.previewResidentRange', { max: field.max });
+    }
+  }
   if (field.type === 'intlist' && raw !== '') {
     const list = parseIntList(raw);
     if (!list) return t('common.msg29');

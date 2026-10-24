@@ -144,6 +144,35 @@ def check_streaming(model, latent, context):
         model.block_swap = None
 
 
+def check_set_count(model, latent, context):
+    """A preview with its own residency must produce the resident result.
+
+    Moving blocks for the preview and back is the one path that changes
+    residency outside the training loop, so the values have to survive both
+    directions: 4 streamed -> 2 streamed -> none streamed, sampled each time.
+    """
+    model.eval()
+    with torch.no_grad():
+        reference = preview(model, latent, context)
+    swap = BlockSwap(model.layers, BLOCKS, device="cuda")
+    model.block_swap = swap
+    try:
+        with torch.no_grad():
+            for count in (BLOCKS, 2, 0):
+                moved = swap.set_count(count)
+                assert swap.count == count, (count, swap.count)
+                assert swap.start == BLOCKS - count, (count, swap.start)
+                output = preview(model, latent, context)
+                for index, (want, got) in enumerate(zip(reference, output)):
+                    assert_close(want, got, f"set_count({count}) preview tensor {index}")
+                print(f"residency switch to {count}    : ok  {moved} block(s) moved, "
+                      f"sampling matches resident weights")
+    finally:
+        model.block_swap = None
+        swap.set_count(0)
+    model.train()
+
+
 def check_window(swap):
     # Nothing is resident after a completed walk; fill both slots by hand and
     # confirm the third block waits for a release instead of taking VRAM.
@@ -198,6 +227,7 @@ def main():
     model = build_model()
     latent, context = inputs()
     check_streaming(model, latent, context)
+    check_set_count(model, latent, context)
     print("block streaming checks passed")
 
 

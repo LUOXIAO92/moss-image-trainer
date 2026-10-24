@@ -223,21 +223,21 @@ Sidecar 文件固定采用 `schema: 2` 结构，容纳两个互不干扰的风�
 
 ### 6.3 精度、量化、块流式加载与 OOM 自愈
 
-显存控制集中在 [config.py](<../moss_lora/config.py>) 的 `VRAM_PRESETS`（`auto|32|24|16|12|8|6`）、[quant.py](<../moss_lora/quant.py>)、[memory.py](<../moss_lora/memory.py>) 与 [offload.py](<../moss_lora/offload.py>)：
+显存控制集中在 [config.py](<../moss_lora/config.py>) 的 `VRAM_PRESETS`、[quant.py](<../moss_lora/quant.py>)、[memory.py](<../moss_lora/memory.py>) 与 [offload.py](<../moss_lora/offload.py>)：
 
-| `vram.preset` | `gradient_checkpointing` | `quantize_dit` | `blocks_to_swap` | `optimizer_in_8bit` | `compile` |
-| --- | --- | --- | --- | --- | --- |
-| `32` / `24` | `true` | `none` | `0` | `false` | `true` |
-| `16` / `12` | `true` | `ffn` | `0` | `false` | `true` |
-| `8` / `6` | `true` | `all` | `42` | `true` | `false` |
+| 预设 | `gradient_checkpointing` | `quantize_dit` | `blocks_to_swap` | `optimizer_in_8bit` | `compile` | `preview.vae_dtype` |
+| --- | --- | --- | --- | --- | --- | --- |
+| `32` / `24` | `true` | `none` | `0` | `false` | `true` | `fp32` |
+| `16` / `12` | `true` | `ffn` | `0` | `false` | `true` | `fp32` |
+| `8` / `6` | `true` | `all` | `42` | `true` | `false` | `fp16` |
 
-`apply_preset` 只填那些还写着“跟随预设”的字段——`gradient_checkpointing: auto`、`blocks_to_swap: -1`、`optimizer_in_8bit: false`、`quantize_dit: none`——显式写死的值一律不动，所以手调过的选择不会因为换档位而被丢掉。`compile` 没有可判断的“未设置”值，因此档位只能把它关掉，流式档位正是这么做的。设为 `auto` 时，档位取 `32, 24, 16, 12, 8, 6` 中第一个超不超过检测到的显卡容量 1 GB 的值。训练页会打印最终选中的档位、每一项的生效值，以及它来自预设还是用户手改，真正会跑的配置不靠猜。
+人选中某一档时，`apply_preset` 把那一行的每个值写进配置，之后不再有任何东西读这一档。运行读的是字段本身，所以文件里写着 `quantize_dit: none` 就是真的不量化，哪怕之前套过 8 GB 档；完全不带 `preset` 键的配置也是一份完整配置。这一版替换掉的是一层哨兵解析（`gradient_checkpointing: auto`、`blocks_to_swap: -1` 按检测到的显卡选档再填值）：它让 YAML、表单和实际运行三者互相不一致，而所谓“自动”只是一次容量查表，不是优化。两个退役的哨兵现在由 `Config.normalize` 在加载时折叠——`auto` 变 `true`、`-1` 变 `0`——旧配置照常启动。配置里的每个计数都是块的数量，取值 0–42：不存在 42 号块，块编号是 0–41。
 
 各项机制的底层行为如下：
 - 精度与累加器：`model.dtype` 默认 `bfloat16`；设为 `float16` 时自动启用 `GradScaler`，若同时开启 `vram.fp16_accumulate: true`，则设置 `torch.backends.cuda.matmul.allow_fp16_accumulation = True` 以换取消费级显卡更高的半精度 Tensor Core 吞吐。
 - DiT 权重量化：`vram.quantize_dit` 选范围——`ffn` 只替换两个 FFN 投影，`all` 替换每块的 QKVO 与 FFN——`vram.quantize_dtype` 选存储格式。`nf4` 把模块换成 `bitsandbytes.nn.Linear4bit`（`quant_type="nf4"`, `compress_statistics=True`）；`fp8` 换成 [FP8Linear](<../moss_lora/quant.py>)，权重以 `float8_e4m3fn` 存储、每行输出一个缩放因子，计算前再展宽到计算精度。这份权重是冻结的 `Parameter` 而不是 buffer，因为块流式加载靠遍历 `parameters()` 决定什么可以离开显卡：存成 buffer 它会一直常驻，让 fp8 运行的 `blocks_to_swap` 变成一个静默的空操作。两者都让适配器保持 `bfloat16` 并把梯度透传到输入；只有冻结模块（不含 `lora_` 子模块的那些）会被替换，可训练权重绝不会被取整。模型先在主机内存里构建并量化、再一次性上传，因为模型已在显卡上后再替换模块会切碎分配器。
 - conditioning 半边：`vram.quantize_conditioning` 把同一种格式扩展到 `layers.*` 之外的 16 个冻结 Linear——文本投影及其两个块、两个调制、时间嵌入和最终投影。默认 `none`，且只在 `quantize_dit` 不为 `none` 时生效，因为 per-block 调制会被每一个块乘进去，取整误差会逐层放大而不是相互抵消。
-- 块流式加载：`vram.blocks_to_swap = N` 让前 `42 - N` 块常驻、尾部 `N` 块从主机内存流式载入，`42` 表示整栈流式；`-1` 表示跟随预设。WebUI 呈现的是补集——常驻层数——因为那才是用户思考的量，存储键保持不变。流式加载要求开启 `gradient_checkpointing`。被流式块的冻结基座权重放在锁页主机内存里，其 LoRA 权重常驻显卡；`_SwapCheckpoint` 在该块前向与反向重算之前拷入基座权重、算完立即释放，因此同一时刻显卡上只有一块的基座权重。一个块大小的预取窗口让下一块的拷贝与当前块的计算重叠，拷贝走独立流并配合 `record_stream`，避免分配器在拷贝仍排队时回收目标缓冲区。释放的 GPU 缓冲区进池复用而不是还给分配器：每个块形状完全相同，所以一组缓冲区可以直接交给下一次上传。流式加载到底省下多少显存取决于 `runtime.allocator`：`expandable_segments` 会把卸载时释放的整块段还给驱动，而 `backend:cudaMallocAsync` 按流把它们留在池里什么都不还，于是流式运行“分配量”降得很多、占卡量却不变。训练器遇到后一种情况会打印一条警告，因为这项功能的意义就在占卡量。若在每次载入时分配、每次释放时归还——每步 84 次瞬时分配——分配器永远无法合并这些碎片，reserved 会一步步往上爬直到把显卡占满，等于把流式加载省下来的显存又赔回去。
+- 块流式加载：`vram.blocks_to_swap = N` 让前 `42 - N` 块常驻、尾部 `N` 块从主机内存流式载入，`42` 表示整栈流式。`preview.blocks_to_swap` 在采样时覆盖这个值、采样结束后恢复训练时的值，`-1` 表示跟随训练。WebUI 呈现的是补集——42 块里常驻几块，所以是 0–42——因为那才是用户思考的量，存储键保持不变。流式加载要求开启 `gradient_checkpointing`。被流式块的冻结基座权重放在锁页主机内存里，其 LoRA 权重常驻显卡；`_SwapCheckpoint` 在该块前向与反向重算之前拷入基座权重、算完立即释放，因此同一时刻显卡上只有一块的基座权重。一个块大小的预取窗口让下一块的拷贝与当前块的计算重叠，拷贝走独立流并配合 `record_stream`，避免分配器在拷贝仍排队时回收目标缓冲区。释放的 GPU 缓冲区进池复用而不是还给分配器：每个块形状完全相同，所以一组缓冲区可以直接交给下一次上传。流式加载到底省下多少显存取决于 `runtime.allocator`：`expandable_segments` 会把卸载时释放的整块段还给驱动，而 `backend:cudaMallocAsync` 按流把它们留在池里什么都不还，于是流式运行“分配量”降得很多、占卡量却不变。训练器遇到后一种情况会打印一条警告，因为这项功能的意义就在占卡量。若在每次载入时分配、每次释放时归还——每步 84 次瞬时分配——分配器永远无法合并这些碎片，reserved 会一步步往上爬直到把显卡占满，等于把流式加载省下来的显存又赔回去。
 - OOM 动态降级：训练循环捕获 `torch.cuda.OutOfMemoryError` 后调用 `_degrade_memory`，把 `blocks_to_swap` 增加 8 层，直到模型实际的块数上限，清空 CUDA 缓存后立即重试当前步。也就是说缺显存时训练会朝流式加载退化而不是直接死掉，一开始余量给少了也能自己跑下去。
 - 编译加速：`vram.compile: true` 时对 `model.forward` 施加 `torch.compile(..., dynamic=True, fullgraph=False)`，编译失败则自动回退至 eager 模式。只要有块在流式加载，这项就整体跳过：换入路径每次拷贝都会记录一个 CUDA event，Dynamo 无法追踪，而且这个错误不会在启动时报出来，要等到第一次验证才炸。流式运行本来也拿不到编译的收益。
 - 遥测与预估：`_memory_stats` 把已分配、已保留显存和显卡名称写进每条 metrics 记录与日志行，`metrics.jsonl` 因此留下了每次运行真正达到的峰值。`memory.estimate_vram` 回答的是运行之前的同一个问题：它遍历配置，累加选定量化下的冻结权重、开了检查点的激活、LoRA 与优化器状态、样图路径，再加一笔固定的 CUDA 上下文余量，分别给出训练峰值与样图峰值以及合计。`POST /api/estimate` 把它暴露给仪表盘，于是预测峰值与实测峰值并排显示，两者之间的偏差是看得见的，而不是悄悄发生。
@@ -330,7 +330,7 @@ WebUI 后端采用「路由层 → 服务层 → 共享状态与任务注册表�
 
 校验与预设机制贯穿前后端与 CLI：
 - 静态与运行时校验：`Config.validate()` 检查必填路径（`dataset.path`、`model.dit`、`model.vae` 必须存在；`model.text_encoder` 可为空以支持纯缓存训练，非空时须为含 `config.json` 的目录或 `.safetensors` 文件）、枚举合法性（`dataset.moss_caption_source`、`train.attention`、`train.batch_mode`）、数值范围（`lora.rank > 0`、`lora.layers` 与 `preview.uncond_skip_layers` 落在 `0..41`、`preview.width` 与 `preview.height` 为 16 的正整数倍）。Web 端 `POST /api/validate`（[validate.py](<../moss_lora/web/routers/validate.py>)）在此基础上叠加缓存就绪检查，并返回 `next_tab` 与 `focus_field` 引导前端自动跳转到首个出错控件。
-- 显存预设与 CLI 规划：`apply_preset` 根据 `vram.preset`（`32|24|16|12|8|6`）或 `detect_vram_gb()` 自动探测的显卡容量填充 `gradient_checkpointing`、`blocks_to_swap`、`optimizer_in_8bit` 与 `quantize_dit`。CLI 子命令 `python -m moss_lora.cli plan --vram <GB> --config workspaces/<WORKSPACE>/runs/<RUN>/config.yaml --write workspaces/<WORKSPACE>/runs/<RUN>/config.yaml` 则扣除采样预留余量后，在内置基准表 `MEMORY_TABLE` 中挑选满足显存预算且单步最快的精度、NF4 量化与块交换组合写回配置文件。
+- 显存预设与 CLI 规划：`apply_preset(config, tier)` 把该档位的整包值——`gradient_checkpointing`、`blocks_to_swap`、`optimizer_in_8bit`、`quantize_dit`、`quantize_dtype`、`quantize_conditioning`、`compile` 与预览 VAE 精度——写进配置，且只有调用方明确传入档位时才会发生（WebUI 下拉、`--preset`、`plan` 辅助）。训练器从不解析档位，`detect_vram_gb()` 不在训练路径上。CLI 子命令 `python -m moss_lora.cli plan --vram <GB> --config workspaces/<WORKSPACE>/runs/<RUN>/config.yaml --write workspaces/<WORKSPACE>/runs/<RUN>/config.yaml` 则扣除采样预留余量后，在内置基准表 `MEMORY_TABLE` 中挑选满足显存预算且单步最快的精度、NF4 量化与块交换组合写回配置文件。
 
 两层配置分离配合相对路径解析，确保工作区配置不含任何本机敏感信息，而将 `settings.yaml` 排除在版本控制之外则保护了本机目录结构与 API 密钥；代价是同一工作区下的每次运行共享同一个 `train_cache/`，若某次运行的配置改动了分辨率或提示词来源，启动训练前必须手动重跑缓存。
 
@@ -351,7 +351,7 @@ WebUI 后端采用「路由层 → 服务层 → 共享状态与任务注册表�
 9. 预检处理函数回归（[test_validate_router.py](<../tests/test_validate_router.py>)）：用 ASGI 传输分别向 `POST /api/validate` 投递一份合法 YAML 和一份坏 YAML，守住那个让所有合法预检都变成 `UnboundLocalError` 的局部变量遮蔽 bug。
 10. 错误键完整性（[test_error_keys.py](<../tests/test_error_keys.py>)）：解析每个 `problem()` 调用点，与错误清单比对错误码，并要求每个错误码在 `zh.json` 里都有对应键、且 `{placeholder}` 集合与该码的参数一致，新的失败模式因此不可能带着未翻译的提示上线。
 11. 流式加载正确性（[test_offload_stream.py](<../tests/test_offload_stream.py>)）：让一个两块的玩具 Transformer 在训练与 eval 两种模式下走 `BlockSwap`，断言流式与常驻权重产出相同输出、主机副本用后即释放、预取路径不会把分配器已回收的缓冲区交出去。
-12. 预估接口隔离（[test_estimate_router.py](<../tests/test_estimate_router.py>)）：在把 `detect_vram_gb` 打桩成直接报错的前提下用合法 YAML 调用 `POST /api/estimate`，证明处理函数是从 nvidia-smi 探测拿容量来解 `vram.preset: auto`、绝不会在 Web 进程里创建 CUDA 上下文；同时校验返回的训练、样图与合计三项数值自洽，以及拿不到驱动回答时会降级而不是报错。
+12. 预估接口隔离（[test_estimate_router.py](<../tests/test_estimate_router.py>)）：在把 `detect_vram_gb` 打桩成直接报错的前提下用合法 YAML 调用 `POST /api/estimate`，证明处理函数只读配置自己的块数、绝不会去问驱动（那会在 Web 进程里创建 CUDA 上下文）；同时校验返回的训练、样图与合计三项数值自洽，以及带退役 `preset: auto` 的旧配置仍可加载。
 
 前端回归测试与拆分等价性检查由 [smoke.mjs](<../tests/ui/smoke.mjs>) 及路由展平机制保障：
 - 后端拆分等价性：[server.py](<../moss_lora/web/server.py>) 通过 `_flatten_included_routes` 将拆分后的 11 个子路由原地展开进 `app.router.routes`，保证路由匹配顺序与拆分前的单文件 `app.py` 逐条一致，同时保留 [app.py](<../moss_lora/web/app.py>) 作为兼容导出垫片。

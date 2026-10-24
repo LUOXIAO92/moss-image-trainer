@@ -13,6 +13,8 @@ separate ``context`` term and added once in ``total``.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import os
 
 import torch
@@ -171,9 +173,11 @@ def _resident_blocks(vram) -> int:
 def _checkpointing(vram) -> bool:
     value = getattr(vram, "gradient_checkpointing", True)
     if isinstance(value, str):
+        # A config that still says "auto" is normalised on load; treat it as on
+        # here too, because streaming cannot run without it.
         text = value.strip().lower()
         if text in ("", "auto"):
-            return True  # every preset turns it on; streaming requires it
+            return True
         return text not in ("0", "false", "no", "off")
     return bool(value)
 
@@ -280,9 +284,17 @@ def estimate_vram(config) -> dict:
 
     train_gib = (block_gib + conditioning_gib + activation_gib
                  + params * bytes_per_param / 2**30 + workspace_gib)
+    # A preview can move blocks for its own pass and put them back, so its
+    # resident weight term comes from its own count when it sets one.
+    preview_swap = int(getattr(config.preview, "blocks_to_swap", -1))
+    if preview_swap >= 0:
+        preview_resident = _resident_blocks(SimpleNamespace(blocks_to_swap=preview_swap))
+        preview_block_gib = BLOCK_WEIGHTS_BF16_GIB * block_factor * (preview_resident / TOTAL_BLOCKS)
+    else:
+        preview_block_gib = block_gib
     resident_gib = block_gib + conditioning_gib
     preview_gib, sampler_gib, vae_gib, accel_gib, preview_batch = _preview_gib(
-        config.preview, resident_gib)
+        config.preview, preview_block_gib + conditioning_gib)
 
     train = round(train_gib, 2)
     preview = round(preview_gib, 2)
@@ -292,8 +304,6 @@ def estimate_vram(config) -> dict:
         (f"{streamed} of {TOTAL_BLOCKS} blocks stream from host memory"
          if streamed else f"all {TOTAL_BLOCKS} blocks are resident"),
     ]
-    if _whole(getattr(vram, "blocks_to_swap", 0) or 0) < 0:
-        notes.append("blocks_to_swap is unresolved (preset auto): every block counts as resident")
     notes += [
         f"{quant_label}: {block_gib:.2f} GiB of block weights",
         f"conditioning: {conditioning_gib:.2f} GiB {conditioning_label}",

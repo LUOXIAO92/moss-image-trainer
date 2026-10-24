@@ -22,7 +22,7 @@
 
 - 系统与解释器：Linux 或 WSL2，Python 3.11+。
 - 硬件与驱动：支持 `bfloat16` 或 `float16` 的 NVIDIA GPU，CUDA 驱动匹配 PyTorch 2.9+。
-- 显存档位：24 GB 及以上不量化（`preset: 24|32`）；16 GB 与 12 GB 用 `preset: 16`、`preset: 12`（FFN 量化）；8 GB 与 6 GB 用 `preset: 8`、`preset: 6`，这两档量化全部块、把 42 块全部从主机内存流式载入、关掉 `torch.compile` 并启用 8-bit 优化器。`preset: auto` 按检测到的显卡自动选档。每一项都可单独改，训练中显存不够时训练器会自己调高 `blocks_to_swap`。
+- 显存设置，预设只是起点：显存的每一项都是运行配置里的普通值，训练器照着这些值跑。WebUI 里的预设下拉（`32`、`24`、`16`、`12`、`8`、`6`）和 CLI 的 `--preset` 只把某一档的值一次性填进来——梯度检查点、常驻层数、量化范围与格式、`torch.compile`、8-bit 优化器、预览 VAE 精度——填完就不再参与。新建运行从默认值开始，不套用任何档位，也不按显卡推导任何东西；只有单步真的显存不足时，训练器才会自己调高 `blocks_to_swap`。
 - 本地模型：MOSS-Image DiT、Qwen3.5-9B 文本编码器（HuggingFace 目录，或 ConvRot int8 量化的单文件 `.safetensors`）与 FLUX.2 VAE。
 
 要按具体显卡挑设置，看[显存指南](<docs/VRAM.md>)：写清了量化与块流式加载的实测开销、分配器设置，并按显卡档位给出预览尺寸。
@@ -103,7 +103,7 @@ CONFIG="$WS/runs/$RUN/config.yaml"
 
 `settings.yaml` 存放本机参数（已被 `.gitignore` 忽略），首次启动从 [settings.example.yaml](<settings.example.yaml>) 复制生成，管理工作区根目录 `paths.workspaces`、CUDA 分配器 `runtime`（`allocator: expandable|async|off` 与 `gc_threshold`）、界面语言 `ui.language` 及提示词生成服务 `caption`（`base_url`、环境变量名 `api_key`、模型名、并发数与模板）。设置页直接输入的明文密钥仅驻留当前进程内存，不写盘。
 
-每次运行的完整配置在 `workspaces/<WORKSPACE>/runs/<RUN>/config.yaml`，定义模型、数据集、缓存、LoRA 结构、训练超参、显存策略与预览提示词。相对路径（如 `cache.dir`、`output_dir`）相对于工作区目录解析，移动工作区目录不破坏引用。该运行训练期间这份配置只读，运行结束后可改。在 WebUI 里新建运行即可得到一份，也可以在运行对话框里从已有运行复制：
+每次运行的完整配置在 `workspaces/<WORKSPACE>/runs/<RUN>/config.yaml`，定义模型、数据集、缓存、LoRA 结构、训练超参、显存设置与预览提示词。相对路径（如 `cache.dir`、`output_dir`）相对于工作区目录解析，移动工作区目录不破坏引用。该运行训练期间这份配置只读，运行结束后可改。在 WebUI 里新建运行即可得到一份，也可以在运行对话框里从已有运行复制：
 
 ```yaml
 name: my-lora
@@ -129,7 +129,9 @@ train:
   save_every: 250
   sample_every: 250
 vram:
-  preset: auto
+  gradient_checkpointing: true
+  blocks_to_swap: 0
+  quantize_dit: none
   compile: true
 export:
   formats: [kohya]
@@ -253,7 +255,7 @@ moss-image-trainer/
 ├── settings.example.yaml     # 本机全局配置模板
 ├── moss_lora/
 │   ├── cli.py                # CLI 入口（cache / encode-text / train / export / web 等）
-│   ├── config.py             # 配置 dataclass、路径解析、校验与显存预设
+│   ├── config.py             # 配置 dataclass、路径解析、校验与显存预设包
 │   ├── model.py              # 官方 MOSS-Image DiT 架构适配（SDPA / FA2 与检查点）
 │   ├── weights.py / convrot.py        # DiT、VAE 权重映射与 ConvRot int8 反量化
 │   ├── data.py / cache.py    # 数据集扫描、逐图尺寸与图像潜变量缓存

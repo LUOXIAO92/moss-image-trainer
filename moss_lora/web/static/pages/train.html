@@ -42,26 +42,6 @@
     </div>
   </div>
 
-  <section class="panel run-browser" id="run-browser" aria-labelledby="run-browser-title">
-    <header class="panel-head">
-      <div>
-        <h2 id="run-browser-title"><span data-i18n="dash.run">运行记录</span><span class="run-browser-ws mono" id="run-browser-ws"></span></h2>
-        <p class="panel-desc"><span class="mono" id="run-browser-count"></span></p>
-      </div>
-      <button class="btn btn-ghost btn-sm" id="btn-runs-refresh" type="button" data-i18n="common.refresh">刷新</button>
-    </header>
-    <div class="run-browser-actions">
-      <label class="field-inline" for="train-run-select">
-        <span data-i18n="workspace.runsTitle">运行记录</span>
-        <select id="train-run-select" class="select-compact" aria-label="选择运行记录" data-i18n-aria="workspace.runsTitle"></select>
-      </label>
-      <button class="btn btn-ghost btn-sm" id="btn-run-config" type="button" data-i18n="runConfig.title">运行记录配置</button>
-      <button class="btn btn-ghost btn-sm" id="btn-run-log" type="button" data-i18n="job.viewLog">查看日志</button>
-    </div>
-    <p class="dash-config-line" id="train-run-meta">--</p>
-    <p class="panel-desc hidden" id="run-list-empty" data-i18n="train.noRuns">暂无 run</p>
-  </section>
-
   <section class="panel setup-panel hidden" id="setup-panel" aria-labelledby="setup-title">
     <header class="panel-head">
       <div>
@@ -172,8 +152,7 @@
             </label>
             <label class="field" for="cfg-lr">
               <span class="field-label" data-i18n="train.params.lr">学习率</span>
-              <input id="cfg-lr" type="text" inputmode="decimal" spellcheck="false" autocomplete="off" placeholder="5e-5" aria-describedby="cfg-lr-help">
-              <span class="field-help" id="cfg-lr-help" data-i18n="train.params.lrHelp">支持 5e-5 / 1e-2 / 0.00005；按输入原样保留，不做数值重排。</span>
+              <input id="cfg-lr" type="text" inputmode="decimal" spellcheck="false" autocomplete="off">
             </label>
             <label class="field" for="cfg-batch">
               <span class="field-label" data-i18n="train.params.batch">批大小</span>
@@ -193,8 +172,7 @@
             </label>
             <label class="field" for="cfg-seed-dit">
               <span class="field-label" data-i18n="train.params.seed">训练种子</span>
-              <input id="cfg-seed-dit" type="number" min="0" step="1" inputmode="numeric" aria-describedby="cfg-seed-dit-help">
-              <span class="field-help" id="cfg-seed-dit-help" data-i18n="train.params.seedHelp">固定种子可让同配置的训练结果可复现</span>
+              <input id="cfg-seed-dit" type="number" min="0" step="1" inputmode="numeric">
             </label>
             <label class="field" for="cfg-optimizer">
               <span class="field-label" data-i18n="train.params.optimizer">优化器</span>
@@ -206,22 +184,28 @@
             </label>
             <label class="field" for="cfg-lr-scheduler">
               <span class="field-label" data-i18n="train.params.scheduler">学习率调度</span>
-              <select id="cfg-lr-scheduler" aria-describedby="cfg-lr-scheduler-help">
+              <select id="cfg-lr-scheduler">
                 <option value="constant" data-i18n="train.params.schedulerConstant">constant（恒定）</option>
                 <option value="cosine" data-i18n="train.params.schedulerCosine">cosine（余弦衰减）</option>
               </select>
-              <span class="field-help" id="cfg-lr-scheduler-help" data-i18n="train.params.schedulerHelp">warmup 后按所选策略；当前生效值见下方。</span>
             </label>
             <label class="field" for="cfg-warmup">
               <span class="field-label">warmup</span>
-              <input id="cfg-warmup" type="text" inputmode="decimal" spellcheck="false" autocomplete="off" placeholder="50 或 0.05" data-i18n-placeholder="train.params.warmupPlaceholder" aria-describedby="cfg-warmup-help">
-              <span class="field-help" id="cfg-warmup-help" data-i18n="train.params.warmupHelp">整数 = 步数；0&lt;值&lt;1 = 占总步数比例（如 0.05 → 2000 步的 100 步）。</span>
+              <input id="cfg-warmup" type="text" inputmode="decimal" spellcheck="false" autocomplete="off" aria-describedby="cfg-warmup-help">
+              <span class="field-help" id="cfg-warmup-help" data-i18n="train.params.warmupHelp">整数 = 步数；0&lt;值&lt;1 = 占总步数比例。</span>
               <span class="field-help warmup-conversion mono" id="warmup-conversion" data-i18n="train.params.warmupExample">0.05 → 100 步 / 2000 步</span>
             </label>
+          </div>
+          <p class="field-help lr-effective" id="lr-effective" data-i18n="train.params.effectiveDefault">调度：constant · warmup 50 步 · 峰值学习率 5.00e-5</p>
+        </fieldset>
+
+        <fieldset class="form-section">
+          <legend data-i18n="train.vram.legend">显存</legend>
+          <div class="form-grid form-grid-3">
             <label class="field" for="cfg-vram-preset">
-              <span class="field-label" data-i18n="train.params.vramProfile">显存档位</span>
+              <span class="field-label" data-i18n="train.vram.preset">显存预设</span>
               <select id="cfg-vram-preset">
-                <option value="auto" data-i18n="common.auto">自动</option>
+                <option value="" selected data-i18n="train.vram.presetNone">不套用</option>
                 <option value="32">32 GB</option>
                 <option value="24">24 GB</option>
                 <option value="16">16 GB</option>
@@ -231,52 +215,59 @@
               </select>
             </label>
             <label class="field" for="cfg-resident-blocks">
-              <span class="field-label" data-i18n="train.params.residentBlocks">常驻层数</span>
-              <input id="cfg-resident-blocks" type="number" min="0" max="42" step="1" inputmode="numeric" placeholder="留空 = 自动（按预设）" aria-describedby="cfg-resident-blocks-help">
-              <span class="field-help" id="cfg-resident-blocks-help" data-i18n="train.params.residentHelp">调低常驻层数 = 用 PCIe 带宽换显存，每步约慢 15%；只在显卡装不下时才调低，训练遇到 OOM 时训练器会自己继续调低。</span>
+              <span class="field-label" data-i18n="train.vram.residentBlocks">常驻层数</span>
+              <input id="cfg-resident-blocks" type="number" min="0" max="42" step="1" inputmode="numeric" placeholder="42">
             </label>
-            <p class="field-help preset-summary span2" id="vram-preset-summary"></p>
             <label class="field" for="cfg-grad-ckpt">
-              <span class="field-label" data-i18n="train.params.checkpointing">梯度检查点</span>
-              <select id="cfg-grad-ckpt" aria-describedby="cfg-grad-ckpt-help">
-                <option value="auto" title="随显存档位自动决定" data-i18n-title="train.params.checkpointAutoTitle" data-i18n="common.auto">自动</option>
-                <option value="true" title="强制开启梯度检查点" data-i18n-title="train.params.checkpointOnTitle" data-i18n="common.on">开启</option>
-                <option value="false" title="关闭梯度检查点" data-i18n-title="train.params.checkpointOffTitle" data-i18n="common.off">关闭</option>
+              <span class="field-label" data-i18n="train.vram.checkpointing">梯度检查点</span>
+              <select id="cfg-grad-ckpt">
+                <option value="true" data-i18n="common.on">开启</option>
+                <option value="false" data-i18n="common.off">关闭</option>
               </select>
-              <span class="field-help" id="cfg-grad-ckpt-help" data-i18n="train.params.checkpointHelp">自动：随显存档位决定</span>
             </label>
             <label class="field" for="cfg-quantize-dit">
-              <span class="field-label" data-i18n="train.params.quantize">DiT 量化</span>
-              <select id="cfg-quantize-dit" aria-describedby="cfg-quantize-dit-help">
-                <option value="none" data-i18n="train.params.quantizeNone">不量化（bf16）</option>
-                <option value="ffn" data-i18n="train.params.quantizeFfn">只量化 FFN（省显存，速度略降）</option>
-                <option value="all" data-i18n="train.params.quantizeAll">全部量化（qkvo + FFN，最省显存）</option>
+              <span class="field-label" data-i18n="train.vram.quantize">DiT 量化</span>
+              <select id="cfg-quantize-dit">
+                <option value="none" data-i18n="train.vram.quantizeNone">不量化（bf16）</option>
+                <option value="ffn" data-i18n="train.vram.quantizeFfn">只量化 FFN</option>
+                <option value="all" data-i18n="train.vram.quantizeAll">全部量化（qkvo + FFN）</option>
               </select>
-              <span class="field-help" id="cfg-quantize-dit-help" data-i18n="train.params.quantizeHelp">量化只影响训练显存/速度，不改变导出的 LoRA 格式。</span>
             </label>
             <label class="field" for="cfg-quantize-dtype">
-              <span class="field-label" data-i18n="train.params.quantizeDtype">量化格式</span>
-              <select id="cfg-quantize-dtype" aria-describedby="cfg-quantize-dtype-help">
-                <option value="nf4" data-i18n="train.params.quantizeNf4">4bit nf4（最省显存）</option>
-                <option value="fp8" data-i18n="train.params.quantizeFp8">fp8 e4m3（更接近 bf16，显存翻倍）</option>
+              <span class="field-label" data-i18n="train.vram.quantizeDtype">量化格式</span>
+              <select id="cfg-quantize-dtype">
+                <option value="nf4" data-i18n="train.vram.quantizeNf4">4bit nf4</option>
+                <option value="fp8" data-i18n="train.vram.quantizeFp8">fp8 e4m3</option>
               </select>
-              <span class="field-help" id="cfg-quantize-dtype-help" data-i18n="train.params.quantizeDtypeHelp">只在上一项不是“不量化”时生效。nf4 更省，fp8 画质更稳。</span>
             </label>
             <label class="field" for="cfg-quantize-conditioning">
-              <span class="field-label" data-i18n="train.params.quantizeConditioning">conditioning 量化</span>
-              <select id="cfg-quantize-conditioning" aria-describedby="cfg-quantize-conditioning-help">
-                <option value="none" data-i18n="train.params.quantizeNone">不量化（bf16）</option>
-                <option value="fp8" data-i18n="train.params.quantizeConditioningFp8">fp8 e4m3（更稳，省约 0.3 GiB）</option>
-                <option value="nf4" data-i18n="train.params.quantizeConditioningNf4">4bit nf4（最省，省约 0.45 GiB）</option>
+              <span class="field-label" data-i18n="train.vram.quantizeConditioning">conditioning 量化</span>
+              <select id="cfg-quantize-conditioning">
+                <option value="none" data-i18n="train.vram.quantizeNone">不量化（bf16）</option>
+                <option value="fp8" data-i18n="train.vram.quantizeCondFp8">fp8 e4m3</option>
+                <option value="nf4" data-i18n="train.vram.quantizeCondNf4">4bit nf4</option>
               </select>
-              <span class="field-help" id="cfg-quantize-conditioning-help" data-i18n="train.params.quantizeConditioningHelp">conditioning 半边 = 文本投影、两个 modulation、时间嵌入和最终输出层，共 16 个 Linear、0.62 GiB 权重。默认不量化：per-block modulation 的误差会被每一层放大，省下的半 GiB 不值得冒这个画质风险。</span>
+            </label>
+            <label class="field" for="cfg-compile">
+              <span class="field-label mono">torch.compile</span>
+              <select id="cfg-compile">
+                <option value="true" data-i18n="common.on">开启</option>
+                <option value="false" data-i18n="common.off">关闭</option>
+              </select>
+            </label>
+            <label class="field" for="cfg-optimizer-8bit">
+              <span class="field-label" data-i18n="train.vram.optimizer8bit">8bit 优化器</span>
+              <select id="cfg-optimizer-8bit">
+                <option value="true" data-i18n="common.on">开启</option>
+                <option value="false" data-i18n="common.off">关闭</option>
+              </select>
             </label>
           </div>
-          <p class="field-help lr-effective" id="lr-effective" data-i18n="train.params.effectiveDefault">调度：constant · warmup 50 步 · 峰值学习率 5.00e-5</p>
+          <p class="field-help" data-i18n="train.vram.note">新建 run 使用全部默认值，不套用任何档位；选预设只会把该档位的值填进来，之后每项都可以自己改。</p>
         </fieldset>
 
         <details class="advanced-layers" id="advanced-defaults">
-          <summary><span data-i18n="train.defaults.title">更多参数（默认值即可）</span><span class="mono muted" data-i18n="train.defaults.hint">留空 = 使用默认值</span></summary>
+          <summary><span data-i18n="train.defaults.title">更多参数（默认值即可）</span></summary>
           <div class="advanced-body">
             <div class="form-grid form-grid-3">
               <label class="field" for="cfg-sigma-mode">
@@ -357,8 +348,8 @@
                 </label>
                 <label class="field" for="cfg-bin-tokens">
                   <span class="field-label" data-i18n="train.advanced.binSize">单步 token 预算</span>
-                  <input id="cfg-bin-tokens" type="number" min="0" step="1" inputmode="numeric" placeholder="留空 = 自动" data-i18n-placeholder="train.advanced.binPlaceholder" aria-describedby="cfg-bin-tokens-help">
-                  <span class="field-help" id="cfg-bin-tokens-help" data-i18n="train.advanced.binHelp">一次微批的 token 预算。留空按 max_area 自动算：1M 面积上限下为 5120（一张满尺寸图 + 1k 文本）。</span>
+                  <input id="cfg-bin-tokens" type="number" min="0" step="1" inputmode="numeric" placeholder="0" data-i18n-placeholder="train.advanced.binPlaceholder" aria-describedby="cfg-bin-tokens-help">
+                  <span class="field-help" id="cfg-bin-tokens-help" data-i18n="train.advanced.binHelp">0 = 按 max_area 自动算；1M 面积上限下为 5120。</span>
                 </label>
               </div>
             </div>
@@ -425,31 +416,33 @@
             <label class="field" for="cfg-preview-steps">
               <span class="field-label" data-i18n="train.preview.steps">采样步数</span>
               <input id="cfg-preview-steps" type="number" min="1" step="1" inputmode="numeric" placeholder="50" aria-describedby="cfg-preview-steps-help">
-              <span class="field-help" id="cfg-preview-steps-help" data-i18n="train.preview.stepsHelp">留空使用 50；官方推荐 ≥ 50。</span>
             </label>
             <label class="field" for="cfg-preview-guidance">
               <span class="field-label" data-i18n="train.preview.guidance">引导强度 guidance</span>
               <input id="cfg-preview-guidance" type="number" min="0" step="0.1" inputmode="decimal" placeholder="3.0" aria-describedby="cfg-preview-guidance-help">
-              <span class="field-help" id="cfg-preview-guidance-help" data-i18n="train.preview.guidanceHelp">留空使用 3.0；官方推荐 3.0–6.0。</span>
             </label>
             <label class="field" for="cfg-preview-shift">
               <span class="field-label">Shift</span>
               <input id="cfg-preview-shift" type="number" min="0" step="0.1" inputmode="decimal" placeholder="5.0" aria-describedby="cfg-preview-shift-help">
-              <span class="field-help" id="cfg-preview-shift-help" data-i18n="train.preview.shiftHelp">留空使用 5.0。</span>
             </label>
             <label class="field" for="cfg-preview-seed">
               <span class="field-label" data-i18n="train.preview.seed">采样种子</span>
               <input id="cfg-preview-seed" type="number" step="1" inputmode="numeric" placeholder="42" aria-describedby="cfg-preview-seed-help">
-              <span class="field-help" id="cfg-preview-seed-help" data-i18n="train.preview.seedHelp">留空使用 42；-1 = 每次任务随机，不影响训练种子。</span>
+              <span class="field-help" id="cfg-preview-seed-help" data-i18n="train.preview.seedHelp">-1 = 每次任务随机，不影响训练种子。</span>
             </label>
             <label class="field" for="cfg-preview-width">
               <span class="field-label" data-i18n="train.preview.width">样图宽度</span>
               <input id="cfg-preview-width" type="number" min="64" step="16" inputmode="numeric" placeholder="1024" aria-describedby="cfg-preview-size-help">
-              <span class="field-help" id="cfg-preview-size-help" data-i18n="train.preview.sizeHelp">留空使用 1024；宽高必须是 16 的倍数。</span>
+              <span class="field-help" id="cfg-preview-size-help" data-i18n="train.preview.sizeHelp">宽高必须是 16 的倍数。</span>
             </label>
             <label class="field" for="cfg-preview-height">
               <span class="field-label" data-i18n="train.preview.height">样图高度</span>
               <input id="cfg-preview-height" type="number" min="64" step="16" inputmode="numeric" placeholder="1024" aria-describedby="cfg-preview-size-help">
+            </label>
+            <label class="field" for="cfg-preview-resident">
+              <span class="field-label" data-i18n="train.preview.resident">预览常驻层数</span>
+              <input id="cfg-preview-resident" type="number" min="-1" max="42" step="1" inputmode="numeric" placeholder="-1" aria-describedby="cfg-preview-resident-help">
+              <span class="field-help" id="cfg-preview-resident-help" data-i18n="train.preview.residentHelp">-1 = 跟随训练</span>
             </label>
             <label class="field span2" for="cfg-preview-lora">
               <span class="field-label" data-i18n="train.preview.lora">加速 LoRA</span>
@@ -459,7 +452,6 @@
             <label class="field" for="cfg-preview-lora-scale">
               <span class="field-label" data-i18n="train.preview.loraScale">加速 LoRA 强度</span>
               <input id="cfg-preview-lora-scale" type="number" min="0" step="0.05" inputmode="decimal" placeholder="1.0" aria-describedby="cfg-preview-lora-scale-help">
-              <span class="field-help" id="cfg-preview-lora-scale-help" data-i18n="train.preview.loraScaleHelp">留空使用 1.0。</span>
             </label>
             <label class="field" for="cfg-preview-batch">
               <span class="field-label" data-i18n="train.preview.batch">每次采样几条</span>
@@ -485,7 +477,6 @@
             <label class="field span2" for="cfg-preview-uncond">
               <span class="field-label">Uncond skip layers</span>
               <input id="cfg-preview-uncond" type="text" spellcheck="false" autocomplete="off" placeholder="22" aria-describedby="cfg-preview-uncond-help">
-              <span class="field-help" id="cfg-preview-uncond-help" data-i18n="train.preview.uncondHelp">留空使用 [22]；官方推荐 22 / 24 / 26，多个层用逗号分隔。</span>
             </label>
             <label class="field span2" for="cfg-preview-negative">
               <span class="field-label" data-i18n="train.preview.negative">负面提示词</span>

@@ -94,27 +94,27 @@ Step count dominates preview time. The same preview at 50 steps without the LoRA
 
 ## 6. Choosing a tier
 
-`vram.preset` fills the settings for a card class: quantization, streaming, gradient checkpointing, `torch.compile`, and the optimizer; the 6 GB and 8 GB tiers also switch `preview.vae_dtype` to fp16 while you have not chosen one, and leave the preview size to you; `auto` picks the tier from the detected card. The training page shows each resolved value and whether it came from the preset or from you. Every tier below keeps `preview.batch: 1`.
+A preset is a starting point, not a decision. Picking one — the selector on the training page, or `--preset` on the CLI — writes that tier's values into the config: quantization scope and format, streaming, gradient checkpointing, `torch.compile`, the 8-bit optimizer, and the preview VAE dtype. Nothing reads the tier afterwards; the run reads the fields, and every field stays editable. A new run starts at the defaults with no preset applied, and nothing is derived from the installed card. Every tier below keeps `preview.batch: 1`.
 
 ### 24 GB and up
 
-`vram.preset: 24` (or `32`). bf16, every block resident, `compile: true`. A bf16 run peaks around 15 GB. Draw previews at 1024x1024 with fp32; fp16 leaves more room.
+Preset `24` (or `32`). bf16, every block resident, `compile: true`. A bf16 run peaks around 15 GB. Draw previews at 1024x1024 with fp32; fp16 leaves more room.
 
 ### 16 GB
 
-`vram.preset: 16`. `ffn` + nf4, every block resident, `compile: true`; a run peaks around 10 GB. Draw previews at 1024x1024 with `preview.vae_dtype: fp16`, or at 768x768 with fp32.
+Preset `16`. `ffn` + nf4, every block resident, `compile: true`; a run peaks around 10 GB. Draw previews at 1024x1024 with `preview.vae_dtype: fp16`, or at 768x768 with fp32.
 
 ### 12 GB
 
-`vram.preset: 12`. The same `ffn` + nf4 resident settings; a run peaks around 10 GB. Keep previews at 768x768 with fp16 to leave headroom. If you need 1024x1024, raise `vram.blocks_to_swap` until the preview fits; streaming applies during previews too, and the copies cost time.
+Preset `12`. The same `ffn` + nf4 resident settings; a run peaks around 10 GB. Keep previews at 768x768 with fp16 to leave headroom. If you need 1024x1024, raise `vram.blocks_to_swap` until the preview fits, or set `preview.blocks_to_swap` on its own; streaming applies during previews too, and the copies cost time.
 
 ### 8 GB
 
-`vram.preset: 8`. `all` + nf4, all 42 blocks streamed, the 8-bit optimizer, `compile: false`; a run peaks around 6 GB. Set the preview to 768x768, where the fp16 VAE the preset already chose measured about 6 GB. 1024x1024 at fp16 measured about 8 GB, which leaves too little room on an 8 GB card, and at fp32 about 9 GB. Streaming pins about 2 GB of host memory.
+Preset `8`. `all` + nf4, all 42 blocks streamed, the 8-bit optimizer, `compile: false`; a run peaks around 6 GB. Set the preview to 768x768, where the fp16 VAE the preset already chose measured about 6 GB. 1024x1024 at fp16 measured about 8 GB, which leaves too little room on an 8 GB card, and at fp32 about 9 GB. Streaming pins about 2 GB of host memory.
 
 ### 6 GB
 
-`vram.preset: 6`. The same settings as 8 GB, with a peak around 6 GB against a 6 GB card. Lower `dataset.max_area` to 589824 (768x768), which nearly halves the activation term. Rebuild the latent cache and close other GPU users first. Preview at 768x768 with fp16, or 640x640 if that still runs out.
+Preset `6`. The same settings as 8 GB, with a peak around 6 GB against a 6 GB card. Lower `dataset.max_area` to 589824 (768x768), which nearly halves the activation term. Rebuild the latent cache and close other GPU users first. Preview at 768x768 with fp16, or 640x640 if that still runs out.
 
 ## 7. What these numbers are worth
 

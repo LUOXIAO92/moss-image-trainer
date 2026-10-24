@@ -31,8 +31,7 @@ def _load(args) -> Config:
     if getattr(args, "output_dir", None):
         config.output_dir = _cli_path(args.output_dir)
     if getattr(args, "preset", None):
-        config.vram.preset = args.preset
-    apply_preset(config)
+        apply_preset(config, args.preset)
     return config.resolve_paths()
 
 

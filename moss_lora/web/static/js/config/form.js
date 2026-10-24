@@ -240,7 +240,16 @@ function syncResidentBlocksControl(config = state.config) {
   const input = $('#cfg-resident-blocks');
   if (!input) return;
   const resident = swapToResident(getPath(config, 'vram.blocks_to_swap'));
-  input.value = resident == null ? '' : String(resident);
+  input.value = String(resident == null ? LAYER_COUNT : resident);
+}
+
+// -1 stays -1: it is the value that means "the same residency as training".
+function syncPreviewResidentControl(config = state.config) {
+  const input = $('#cfg-preview-resident');
+  if (!input) return;
+  const swap = getPath(config, 'preview.blocks_to_swap');
+  const resident = swapToResident(swap);
+  input.value = String(resident == null ? -1 : resident);
 }
 
 // A value the select does not list (float32, a shifted sigma mode) stays
@@ -260,180 +269,81 @@ function syncSelectValue(select, value, fallback = '') {
   select.value = raw || fallback;
 }
 
-const PRESET_TIERS = ['32', '24', '16', '12', '8', '6'];
-
-// The preset line is built in JS, so it cannot carry inline data-i18n text.
-// These Chinese strings are its fallback until the language packs have the
-// keys; the translations win as soon as they exist.
-const PRESET_FALLBACK = {
-  'train.preset.fromPreset': '预设',
-  'train.preset.overridden': '你改过',
-  'train.preset.on': '开',
-  'train.preset.off': '关',
-  'train.preset.quantize': '量化 {value}（{source}）',
-  'train.preset.conditioning': 'conditioning {value}（{source}）',
-  'train.preset.resident': '常驻 {count} 层（{source}）',
-  'train.preset.checkpointing': '梯度检查点 {state}（{source}）',
-  'train.preset.compile': 'compile {state}（{source}）',
-  'train.preset.optimizer8bit': '8bit 优化器 {state}（{source}）',
-  'train.preset.autoLine': '按显卡自动选：{tier}G · {summary}',
-  'train.preset.explicit': '预设 {tier}G 生效：{summary}',
-};
-
-function presetT(key, vars = {}) {
-  const entry = state.i18n.entries?.[key];
-  const template = typeof entry === 'string' ? entry : PRESET_FALLBACK[key];
-  if (typeof template !== 'string') return key;
-  return template.replace(/\{(\w+)\}/g, (match, name) => (
-    Object.prototype.hasOwnProperty.call(vars, name) ? String(vars[name]) : match
-  ));
-}
-
-// Mirrors moss_lora/config.py::apply_preset: the first tier that is at most
-// card_gb + 1 wins, and cards below 6 GB fall back to the 6 GB tier.
-function presetTierForCard(totalGb) {
-  const card = Number(totalGb);
-  if (!Number.isFinite(card) || card <= 0) return '';
-  for (const tier of PRESET_TIERS) {
-    if (card >= Number(tier) - 1) return tier;
+// A preset is a bundle of values, applied once. Nothing downstream reads it
+// back: the fields it filled are the config, and editing one afterwards is the
+// same as typing it yourself.
+export function applyPresetToForm(tier) {
+  const bundle = state.presets ? state.presets[tier] : null;
+  const select = $('#cfg-vram-preset');
+  if (select) select.value = '';
+  if (!bundle) return false;
+  const vram = {
+    'cfg-resident-blocks': bundle.blocks_to_swap,
+    'cfg-grad-ckpt': bundle.gradient_checkpointing,
+    'cfg-compile': bundle.compile,
+    'cfg-optimizer-8bit': bundle.optimizer_in_8bit,
+    'cfg-quantize-dit': bundle.quantize_dit,
+    'cfg-quantize-dtype': bundle.quantize_dtype,
+    'cfg-quantize-conditioning': bundle.quantize_conditioning,
+  };
+  for (const [id, value] of Object.entries(vram)) {
+    const element = document.getElementById(id);
+    if (!element) continue;
+    if (id === 'cfg-resident-blocks') element.value = String(LAYER_COUNT - (Number(value) || 0));
+    else if (typeof value === 'boolean') element.value = value ? 'true' : 'false';
+    else element.value = String(value);
   }
-  return '6';
+  const preview = bundle.preview || {};
+  const vaeDtype = $('#cfg-preview-vae-dtype');
+  if (vaeDtype && preview.vae_dtype) vaeDtype.value = String(preview.vae_dtype);
+  const previewResident = $('#cfg-preview-resident');
+  if (previewResident && preview.blocks_to_swap != null) {
+    const swap = Number(preview.blocks_to_swap);
+    previewResident.value = String(swap < 0 ? -1 : LAYER_COUNT - swap);
+  }
+  readFormIntoConfig();
+  markDirty();
+  return true;
 }
 
-function presetSource(fromPreset) {
-  return fromPreset ? presetT('train.preset.fromPreset') : presetT('train.preset.overridden');
-}
-
-function presetOnOff(value) {
-  return value ? presetT('train.preset.on') : presetT('train.preset.off');
-}
-
-function residentValue(value) {
-  return Math.max(0, Math.min(LAYER_COUNT, Math.round(Number(value) || 0)));
-}
-
-function presetBool(value) {
-  return value === true || String(value).toLowerCase() === 'true';
-}
-
-// What is in effect and where each value came from: a knob is 预设 when the
-// config sits at its "follow the preset" sentinel/default (auto checkpointing,
-// -1/blank blocks, false optimizer, none quantization) or already equals the
-// preset, and 你改过 when the config carries a different deliberate value. The
-// token always shows the value that will run, so a run that quantizes does not
-// read as "quantize off" above the word "you changed it".
-export function updatePresetSummary() {
-  const line = $('#vram-preset-summary');
-  if (!line) return;
-  const config = state.config && typeof state.config === 'object' ? state.config : {};
-  const vram = config.vram || {};
-  const selected = String($('#cfg-vram-preset')?.value || vram.preset || 'auto').trim();
-  const automatic = selected === '' || selected === 'auto';
-  const tier = automatic ? presetTierForCard(state.system?.gpu?.total_gb) : selected.replace(/GB$/i, '');
-  const preset = tier && state.presets ? state.presets[tier] : null;
-  if (!preset) {
-    line.textContent = '';
+function setFieldValue(element, field, raw) {
+  if (field.type === 'intlist') {
+    element.value = (Array.isArray(raw) ? raw : [raw]).join(', ');
     return;
   }
-
-  const presetResident = LAYER_COUNT - residentValue(preset.blocks_to_swap);
-  const residentRaw = String($('#cfg-resident-blocks')?.value ?? '').trim();
-  const residentCount = residentRaw === '' ? null : swapToResident(residentToSwap(residentRaw));
-  const residentFromPreset = residentCount == null || residentCount === presetResident;
-
-  const checkpointRaw = String($('#cfg-grad-ckpt')?.value || vram.gradient_checkpointing || 'auto');
-  const presetCheckpoint = presetBool(preset.gradient_checkpointing);
-  const checkpointValue = checkpointRaw === 'true' ? true : checkpointRaw === 'false' ? false : null;
-  const checkpointFromPreset = checkpointRaw === 'auto' || checkpointValue === presetCheckpoint;
-
-  // "none" and a blank field both mean "take the quantization from the preset",
-  // so the effective value is what the run would use, which is the preset's when
-  // the field is unset (or literally "none").
-  const quantizeRaw = String($('#cfg-quantize-dit')?.value || vram.quantize_dit || 'none');
-  const presetQuantize = String(preset.quantize_dit || 'none');
-  const quantizeEffective = quantizeRaw === 'none' ? presetQuantize : quantizeRaw;
-  const quantizeFromPreset = quantizeRaw === 'none' || quantizeRaw === presetQuantize;
-  const quantizeDtype = String($('#cfg-quantize-dtype')?.value || vram.quantize_dtype || 'nf4');
-  const quantizeText = quantizeEffective === 'none'
-    ? presetT('train.preset.off')
-    : `${quantizeDtype}·${quantizeEffective}`;
-  const quantizeSourceFromPreset = quantizeFromPreset
-    && (quantizeEffective === 'none' || quantizeDtype === 'nf4');
-
-  const optimizerRaw = Boolean(vram.optimizer_in_8bit);
-  const presetOptimizer = presetBool(preset.optimizer_in_8bit);
-  // false is the "unset" value here, so the preset decides until the user turns
-  // the 8-bit optimizer on.
-  const optimizerFromPreset = !optimizerRaw || optimizerRaw === presetOptimizer;
-
-  const compileRaw = vram.compile;
-  const compileValue = compileRaw == null
-    ? true
-    : !(compileRaw === false || String(compileRaw).toLowerCase() === 'false');
-  const presetCompile = presetBool(preset.compile);
-  // compile has no "follow the preset" sentinel: true is the backend default and
-  // a preset can only turn it off, which the streaming tiers need.
-  const compileEffective = compileValue && presetCompile;
-  const compileFromPreset = compileValue || !presetCompile;
-
-  const conditioning = String($('#cfg-quantize-conditioning')?.value || vram.quantize_conditioning || 'none');
-  const parts = [
-    presetT('train.preset.quantize', { value: quantizeText, source: presetSource(quantizeSourceFromPreset) }),
-  ];
-  if (conditioning !== 'none') {
-    parts.push(presetT('train.preset.conditioning', { value: conditioning, source: presetSource(false) }));
+  if (field.type === 'bool') {
+    element.value = raw === true || String(raw).toLowerCase() === 'true' ? 'true' : 'false';
+    return;
   }
-  parts.push(presetT('train.preset.resident', {
-    count: residentCount == null ? presetResident : residentCount,
-    source: presetSource(residentFromPreset),
-  }));
-  parts.push(presetT('train.preset.checkpointing', {
-    state: presetOnOff(checkpointValue == null ? presetCheckpoint : checkpointValue),
-    source: presetSource(checkpointFromPreset),
-  }));
-  parts.push(presetT('train.preset.compile', {
-    state: presetOnOff(compileEffective),
-    source: presetSource(compileFromPreset),
-  }));
-  parts.push(presetT('train.preset.optimizer8bit', {
-    state: presetOnOff(optimizerRaw || presetOptimizer),
-    source: presetSource(optimizerFromPreset),
-  }));
-
-  const summary = parts.join(' · ');
-  line.textContent = automatic
-    ? presetT('train.preset.autoLine', { tier, summary })
-    : presetT('train.preset.explicit', { tier, summary });
+  element.value = String(raw);
 }
 
+// Every field carries a value. A config that predates a field, or a newer one
+// that omits it, shows the documented default instead of a blank the run would
+// silently fill in.
 export function syncFormFromConfig(config) {
   for (const field of FIELD_DEFS) {
-    if (field.type === 'resident') continue;
+    if (field.type === 'resident' || field.type === 'previewResident') continue;
     const element = document.getElementById(field.id);
     if (!element) continue;
     const raw = getPath(config, field.path);
-    if (raw === undefined || raw === null || raw === '') {
-      element.value = field.blankDefault ? '' : String(field.default ?? '');
-    } else if (field.type === 'intlist') {
-      element.value = (Array.isArray(raw) ? raw : [raw]).join(', ');
-    } else {
-      element.value = String(raw);
-    }
+    const value = raw === undefined || raw === null || raw === '' ? field.default : raw;
+    setFieldValue(element, field, value == null ? '' : value);
   }
+
+  // Retired keys must not come back on the next save: configs written before
+  // presets became manual still carry `vram.preset`, and nothing reads it now.
+  deletePath(config, 'vram.preset');
 
   syncCachePathControl(config);
   syncAttentionControls();
   syncQuantizeControls();
   syncResidentBlocksControl(config);
+  syncPreviewResidentControl(config);
   syncSelectValue($('#cfg-dtype'), getPath(config, 'model.dtype'), 'bfloat16');
   syncSelectValue($('#cfg-sigma-mode'), getPath(config, 'train.sigma.mode'), '');
-  const checkpoint = getPath(config, 'vram.gradient_checkpointing');
-  const checkpointField = $('#cfg-grad-ckpt');
-  if (checkpointField) {
-    checkpointField.value = checkpoint === true || checkpoint === 'true'
-      ? 'true'
-      : checkpoint === false || checkpoint === 'false' ? 'false' : 'auto';
-  }
+  const select = $('#cfg-vram-preset');
+  if (select) select.value = '';
 
   const prompts = $('#cfg-prompts');
   if (prompts) prompts.value = arrayFromPrompts(getPath(config, 'preview.prompts')).join('\n');
@@ -454,19 +364,23 @@ export function syncFormFromConfig(config) {
   updateLrEffective();
   resetModelProbes();
   updateOutputPreview();
-  updatePresetSummary();
 }
 
 export function readFormIntoConfig() {
   if (!state.config || typeof state.config !== 'object') state.config = {};
   for (const field of FIELD_DEFS) {
-    if (field.type === 'resident') continue;
+    if (field.type === 'resident' || field.type === 'previewResident') continue;
     const element = document.getElementById(field.id);
     if (!element) continue;
     const raw = String(element.value || '').trim();
+    if (field.type === 'bool') {
+      setPath(state.config, field.path, raw === 'true');
+      continue;
+    }
     if (raw === '') {
-      if (field.blankDefault) deletePath(state.config, field.path);
-      else if (field.required) setPath(state.config, field.path, '');
+      if (field.required) setPath(state.config, field.path, '');
+      else setPath(state.config, field.path, field.type === 'number' || field.type === 'float'
+        ? field.default : '');
       continue;
     }
     let value;
@@ -485,20 +399,18 @@ export function readFormIntoConfig() {
   const residentElement = $('#cfg-resident-blocks');
   if (residentElement) {
     const raw = String(residentElement.value || '').trim();
-    const swap = raw === '' ? null : residentToSwap(raw);
-    if (swap == null) deletePath(state.config, 'vram.blocks_to_swap');
-    else setPath(state.config, 'vram.blocks_to_swap', swap);
+    setPath(state.config, 'vram.blocks_to_swap', residentToSwap(raw === '' ? LAYER_COUNT : raw));
+  }
+  const previewResident = $('#cfg-preview-resident');
+  if (previewResident) {
+    const raw = Number(String(previewResident.value || '').trim());
+    if (!Number.isFinite(raw) || raw < 0) setPath(state.config, 'preview.blocks_to_swap', -1);
+    else setPath(state.config, 'preview.blocks_to_swap', residentToSwap(raw));
   }
   const promptsElement = $('#cfg-prompts');
   if (promptsElement) {
     setPath(state.config, 'preview.prompts',
       promptsElement.value.split('\n').map((line) => line.trim()).filter(Boolean));
-  }
-  const checkpointField = $('#cfg-grad-ckpt');
-  if (checkpointField) {
-    const value = checkpointField.value;
-    setPath(state.config, 'vram.gradient_checkpointing',
-      value === 'true' ? true : value === 'false' ? false : 'auto');
   }
   const saveState = $('#cfg-save-state');
   if (saveState) {
@@ -514,7 +426,6 @@ export function readFormIntoConfig() {
   readLayerControlsIntoConfig();
   updateLrEffective();
   updateOutputPreview();
-  updatePresetSummary();
   return state.config;
 }
 

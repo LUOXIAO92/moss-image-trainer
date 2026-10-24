@@ -1220,6 +1220,51 @@ class Trainer:
         finally:
             model.forward = previous
 
+    def _layers(self):
+        model = getattr(getattr(self.model, "base_model", self.model), "model", self.model)
+        return getattr(model, "layers", ()) or ()
+
+    @contextlib.contextmanager
+    def _preview_residency(self):
+        """Sample with the preview's own residency, then put the model back.
+
+        ``preview.blocks_to_swap`` is -1 by default, which means "whatever
+        training uses". Any other value moves the difference before sampling and
+        moves it back afterwards, so a run can train fully resident and still
+        sample on a card that cannot hold the whole stack at once.
+        """
+        wanted = int(getattr(self.config.preview, "blocks_to_swap", -1))
+        current = int(getattr(self.config.vram, "blocks_to_swap", 0) or 0)
+        total = len(self._layers())
+        target = current if wanted < 0 else max(0, min(total, wanted))
+        swap = getattr(self, "_swap", None)
+        if target == current:
+            yield
+            return
+        model = getattr(getattr(self.model, "base_model", self.model), "model", self.model)
+        made = None
+        if swap is None:
+            # A training run with nothing offloaded has no swap object, so the
+            # preview builds one. This constructor can fail before anything is
+            # installed; nothing to undo in that case.
+            from .offload import BlockSwap
+
+            made = BlockSwap(model.layers, target, device=self.device)
+            model.block_swap = made
+            self._swap = made
+        else:
+            swap.set_count(target)
+        self.log(f"preview residency: {target} blocks stream (training: {current})")
+        try:
+            yield
+        finally:
+            if made is not None:
+                made.set_count(0)
+                model.block_swap = None
+                self._swap = None
+            else:
+                swap.set_count(current)
+
     def preview(self, step: int):
         """Sample and save one image per cached prompt.
 
@@ -1243,7 +1288,7 @@ class Trainer:
         prompts = len(preview.prompts or []) or 1
         chunk = min(max(1, batch), prompts) if batch else prompts
         try:
-            with self._preview_forward():
+            with self._preview_residency(), self._preview_forward():
                 try:
                     images = self._sample_preview(self._preview_codec(), chunk)
                 except torch.cuda.OutOfMemoryError as original:

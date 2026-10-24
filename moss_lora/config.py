@@ -156,9 +156,11 @@ class TrainConfig:
 
 @dataclass
 class VramConfig:
-    preset: str = "auto"        # auto | 32 | 24 | 16 | 12 | 8 | 6
-    gradient_checkpointing: str = "auto"
-    blocks_to_swap: int = -1    # -1 = from preset
+    # Every field below carries the value the run uses. A preset is a bundle of
+    # these values that the UI or `--preset` writes in, once; the trainer never
+    # resolves a preset, so what the config says is what runs.
+    gradient_checkpointing: bool = True
+    blocks_to_swap: int = 0
     optimizer_in_8bit: bool = False
     # weight-only quantization of the frozen DiT: none (bf16) | ffn | all
     quantize_dit: str = "none"
@@ -195,6 +197,10 @@ class PreviewConfig:
     # Where the fp32 VAE decodes: gpu keeps the preview fast, cpu keeps it small.
     vae_device: str = "gpu"     # gpu | cpu
     vae_dtype: str = "fp32"     # fp32 | fp16 — fp16 halves decode memory, not bit-exact
+    # Residency while sampling. -1 follows the training value; anything else
+    # moves blocks for the preview and moves them back afterwards, so a run can
+    # train with the whole stack resident and still sample on a smaller card.
+    blocks_to_swap: int = -1    # -1 = same as vram.blocks_to_swap; 0..42
 
 
 @dataclass
@@ -217,7 +223,7 @@ class Config:
 
     @classmethod
     def from_dict(cls, data: dict) -> "Config":
-        return _build(cls, data or {})
+        return _build(cls, data or {}).normalize()
 
     @classmethod
     def load(cls, path: str) -> "Config":
@@ -273,6 +279,25 @@ class Config:
 
     def copy(self) -> "Config":
         return copy.deepcopy(self)
+
+    def normalize(self) -> "Config":
+        """Fold retired "ask the preset" sentinels into concrete values.
+
+        Older configs wrote ``gradient_checkpointing: auto`` and
+        ``blocks_to_swap: -1`` to mean "whatever the preset says". A preset no
+        longer answers at run time, so those resolve to the documented defaults
+        here, once, instead of inside the trainer.
+        """
+        checkpoint = self.vram.gradient_checkpointing
+        if isinstance(checkpoint, str):
+            self.vram.gradient_checkpointing = checkpoint.strip().lower() not in (
+                "0", "false", "off", "no")
+        try:
+            swap = int(self.vram.blocks_to_swap)
+        except (TypeError, ValueError):
+            swap = 0
+        self.vram.blocks_to_swap = 0 if swap < 0 else min(TRANSFORMER_BLOCKS, swap)
+        return self
 
     def validate(self) -> list["Problem"]:
         """Path/parameter problems. An empty ``text_encoder`` means the text
@@ -343,6 +368,12 @@ class Config:
         if str(self.vram.quantize_conditioning).lower() not in ("none", "fp8", "nf4"):
             problems.append(problem("err.config.quantize_conditioning",
                                     value=self.vram.quantize_conditioning))
+        if not 0 <= int(self.vram.blocks_to_swap or 0) <= TRANSFORMER_BLOCKS:
+            problems.append(problem("err.config.blocks_to_swap", value=self.vram.blocks_to_swap))
+        preview_blocks = getattr(self.preview, "blocks_to_swap", -1)
+        if isinstance(preview_blocks, bool) or not isinstance(preview_blocks, int) \
+                or not -1 <= preview_blocks <= TRANSFORMER_BLOCKS:
+            problems.append(problem("err.config.preview_blocks_to_swap", value=preview_blocks))
         if str(self.lora.init).lower() not in ("kaiming", "zero"):
             problems.append(problem("err.config.lora_init", value=self.lora.init))
         preview = self.preview
@@ -407,87 +438,70 @@ def _build(cls, data: dict):
 
 
 # ---------------------------------------------------------------------------
-# VRAM presets: index is the card size in GB
+# VRAM presets: starting points measured on a card class, not decisions
 # ---------------------------------------------------------------------------
+# A preset is a bundle of concrete values. Applying one writes those values into
+# the config, once. Nothing reads the bundle afterwards, so a field you change
+# after applying a preset behaves exactly like a field you typed yourself.
 VRAM_PRESETS: dict[str, dict[str, Any]] = {
     "32": {"gradient_checkpointing": True, "blocks_to_swap": 0, "optimizer_in_8bit": False,
-           "quantize_dit": "none", "compile": True},
+           "quantize_dit": "none", "quantize_dtype": "nf4", "quantize_conditioning": "none",
+           "compile": True},
     "24": {"gradient_checkpointing": True, "blocks_to_swap": 0, "optimizer_in_8bit": False,
-           "quantize_dit": "none", "compile": True},
+           "quantize_dit": "none", "quantize_dtype": "nf4", "quantize_conditioning": "none",
+           "compile": True},
     "16": {"gradient_checkpointing": True, "blocks_to_swap": 0, "optimizer_in_8bit": False,
-           "quantize_dit": "ffn", "compile": True},
+           "quantize_dit": "ffn", "quantize_dtype": "nf4", "quantize_conditioning": "none",
+           "compile": True},
     "12": {"gradient_checkpointing": True, "blocks_to_swap": 0, "optimizer_in_8bit": False,
-           "quantize_dit": "ffn", "compile": True},
+           "quantize_dit": "ffn", "quantize_dtype": "nf4", "quantize_conditioning": "none",
+           "compile": True},
     # 8 GB and below: the base weights leave bf16, the compiled block loop goes
     # away, and every block streams from host memory. A run at nf4 without
     # streaming still needs about 8.4 GiB of card once the CUDA context is
     # counted, which is more than these cards have.
     "8": {"gradient_checkpointing": True, "blocks_to_swap": 42, "optimizer_in_8bit": True,
-          "quantize_dit": "all", "compile": False},
+          "quantize_dit": "all", "quantize_dtype": "nf4", "quantize_conditioning": "none",
+          "compile": False},
     "6": {"gradient_checkpointing": True, "blocks_to_swap": 42, "optimizer_in_8bit": True,
-          "quantize_dit": "all", "compile": False},
+          "quantize_dit": "all", "quantize_dtype": "nf4", "quantize_conditioning": "none",
+          "compile": False},
 }
 
+PRESET_TIERS: tuple[str, ...] = ("32", "24", "16", "12", "8", "6")
 
-def apply_preset(config: Config, vram_gb: float | None = None, *, detect: bool = True) -> Config:
-    """Fill the ``vram`` fields that still say "take it from the preset".
+# Blocks in the MOSS-Image DiT, numbered 0..41. Every count in the config is a
+# count of blocks, so it ranges 0..42: 42 means all of them, not block 42.
+TRANSFORMER_BLOCKS = 42
 
-    A field the user set explicitly keeps its value: the preset is a starting
-    point, not an override, so picking a tier never discards a deliberate
-    ``quantize_dtype`` or a hand-tuned ``blocks_to_swap``. The exception is
-    ``compile``, which has no unset value to test against; a preset can only turn
-    it off, and the streaming tiers do -- a compiled block loop that copies
-    weights between host and card re-traces on every shape it has not seen.
 
-    ``detect=False`` keeps the call out of ``torch.cuda``: the WebUI resolves the
-    capacity from nvidia-smi and passes it in, and falls back to the dataclass
-    defaults when the driver cannot answer. A CUDA context in the web process
-    would hold VRAM that the run being predicted for needs.
+def preset_bundle(tier: str) -> dict[str, Any]:
+    """One preset as the exact values it writes, preview fields included.
 
-    The 6 GB and 8 GB tiers also drop ``preview.vae_dtype`` to fp16 while it is
-    still the fp32 default. The preview peak, not the training step, is what runs
-    a small card out of memory first: an fp32 decode at 1024x1024 takes the
-    streamed run past the card even though its training step fits. Resolution is
-    left alone, and a dtype the user chose is kept.
+    The 6 GB and 8 GB tiers sample with an fp16 VAE because an fp32 decode at
+    1024x1024 runs those cards out of memory, not the training step. Every tier
+    pins the preview dtype, so loading a preset shows that preset's value rather
+    than whatever the last config happened to carry.
     """
-    preset: dict[str, Any] | None = None
-    tier: str | None = None
-    if config.vram.preset != "auto":
-        tier = str(config.vram.preset).replace("GB", "")
-        preset = VRAM_PRESETS.get(tier)
-    else:
-        if vram_gb is None and detect:
-            vram_gb = detect_vram_gb()
-        if vram_gb is not None:
-            for size in ("32", "24", "16", "12", "8", "6"):
-                if vram_gb >= int(size) - 1:
-                    preset = VRAM_PRESETS[size]
-                    tier = size
-                    break
-            else:
-                preset = VRAM_PRESETS["6"]
-                tier = "6"
-    if preset is None:
-        return config
-    if config.vram.gradient_checkpointing == "auto":
-        config.vram.gradient_checkpointing = preset["gradient_checkpointing"]
-    else:
-        config.vram.gradient_checkpointing = str(config.vram.gradient_checkpointing).lower() in ("1", "true", "yes")
-    if config.vram.blocks_to_swap < 0:
-        config.vram.blocks_to_swap = preset["blocks_to_swap"]
-    if not config.vram.optimizer_in_8bit:
-        config.vram.optimizer_in_8bit = preset["optimizer_in_8bit"]
-    if config.vram.quantize_dit == "none":
-        config.vram.quantize_dit = preset["quantize_dit"]
-    if preset["compile"] is False:
-        config.vram.compile = False
-    # fp32 is the default, so it is also the "let the preset decide" sentinel: a
-    # user who wrote fp16 (or fp8, which validate rejects) keeps that choice. Only
-    # the dtype moves -- resolution stays whatever the config says, because 1024 is
-    # both the default and a common explicit choice, and the preset cannot tell
-    # them apart.
-    if tier in ("6", "8") and str(config.preview.vae_dtype).lower() == "fp32":
-        config.preview.vae_dtype = "fp16"
+    key = str(tier).replace("GB", "").strip()
+    if key not in VRAM_PRESETS:
+        raise ValueError(f"unknown vram preset: {tier}")
+    bundle = dict(VRAM_PRESETS[key])
+    bundle["preview"] = {
+        "vae_dtype": "fp16" if key in ("6", "8") else "fp32",
+        "blocks_to_swap": -1,
+    }
+    return bundle
+
+
+def apply_preset(config: Config, tier: str) -> Config:
+    """Write one preset's values into the config. Called when a human picks one."""
+    bundle = preset_bundle(tier)
+    preview = bundle.pop("preview", {})
+    for key, value in bundle.items():
+        setattr(config.vram, key, value)
+    for key, value in preview.items():
+        setattr(config.preview, key, value)
     return config
 
 

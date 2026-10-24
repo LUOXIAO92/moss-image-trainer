@@ -18,7 +18,6 @@ from fastapi.responses import Response, StreamingResponse
 
 from ... import runtime
 from ... import settings as runtime_settings
-from ...config import apply_preset
 from ..deps import _rel, _safe_name, _settings_snapshot, _write_text
 from ..jobs import JOBS, Job, _terminate
 from ..services.cache_cmd import _cache_parts, _cache_summary
@@ -73,7 +72,6 @@ async def api_start(request: Request):
 
     settings, resolved = _settings_snapshot()
     config = _config_from_data(workspace, data)
-    apply_preset(config)
     problems = config.validate()
     if kind == "caption":
         # 只勾了正则集时，训练集路径空着也没关系

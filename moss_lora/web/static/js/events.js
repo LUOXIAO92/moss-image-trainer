@@ -6,7 +6,7 @@
 import { applySmoothWindow, drawChart } from './components/chart.js'; import { startJob, stopJob } from './components/jobsse.js';
 import { clearLog, copyLog, isLogNearBottom } from './components/logview.js'; import { drawMetricCards, positionWidgets, toggleMetricCard } from './components/metriccards.js';
 import { runPreflight } from './components/preflight.js'; import { closeConfigDialog, deleteCurrentRun, openNewRunDialog, saveConfig, submitConfigDialog, switchRun } from './config/file.js';
-import { addLayerRow, clearYamlError, focusYamlLine, markDirty, readLayerControlsIntoConfig, scheduleFormSync, setMode, showYamlError, syncAttentionControls, syncFormFromConfig, syncQuantizeControls, syncSaveStateControls, syncYamlScroll, updateCacheEffective, updateLrEffective, updateOutputPreview, updatePresetSummary, updateRegCacheEffective, updateRegCachePlaceholder, updateYamlLineCount } from './config/form.js'; import { selectDashboardConfig, startDashboardTraining } from './config/list.js';
+import { addLayerRow, clearYamlError, focusYamlLine, markDirty, readLayerControlsIntoConfig, scheduleFormSync, setMode, showYamlError, syncAttentionControls, syncFormFromConfig, syncQuantizeControls, syncSaveStateControls, syncYamlScroll, updateCacheEffective, updateLrEffective, updateOutputPreview, applyPresetToForm, updateRegCacheEffective, updateRegCachePlaceholder, updateYamlLineCount } from './config/form.js'; import { selectDashboardConfig, startDashboardTraining } from './config/list.js';
 import { FIELD_DEFS, LAYER_COUNT } from './config/model.js'; import { closeProfileDialog, openProfileDialog, submitProfileDialog, switchProfile } from './config/profiles.js';
 import { setFieldError, validateField } from './config/validate.js'; import { dumpYaml, parseYaml } from './config/yaml.js';
 import { copyText } from './core/clipboard.js'; import { $, $$, setHidden, setText } from './core/dom.js';
@@ -17,7 +17,7 @@ import { loadCache, saveCaptionSource, startCacheJob, updateCacheStartState } fr
 import { closeSampleCompare, loadActiveTraining, loadDashboard, loadDashboardCompare, openCompareMenu, openSampleCompare, renderCompareLegend, toggleSampleCollapsed, toggleSampleCompareRun } from './pages/dashboard.js'; import { loadCaptionDatasetInfo, readCaptionSelection, scanDataset, scanRegDataset, updateCaptionStartState } from './pages/dataset.js';
 import { applyExportRange, choosePathFromBrowser, closeExportDirectory, closePathBrowser, defaultExportDirectory, downloadSingleStep, exportSelected, loadExportDirectory, loadPathBrowser, onExportRunChange, renderExportStepRows, setExportDestination, updateExportSelectionUi } from './pages/export.js'; import { loadSamples, renderSamples } from './pages/samples.js';
 import { MODEL_FIELD_KINDS, clearSettingsErrors, closeOnboarding, deleteI18nLanguage, focusField, importI18nPack, loadSettings, markSettingsDirty, probeModel, readI18nImportFile, runSetupCheck, saveSettings, setModelStatus, syncAllocatorControls } from './pages/settings.js'; import { refreshTrainSamples } from './pages/train.js';
-import { applyRunConfig, closeRunConfig, closeWorkspaceConfirm, loadWorkspacePage, loadWorkspaceRuns, openRunConfig, openRunLog, openWorkspaceConfirm, performWorkspaceDelete, renderRunList } from './pages/workspace.js';
+import { closeWorkspaceConfirm, loadWorkspacePage, openWorkspaceConfirm, performWorkspaceDelete } from './pages/workspace.js';
 import { describeError } from './core/api.js';
 
 export function bindEvents() {
@@ -39,9 +39,6 @@ export function bindEvents() {
   $('#activity-open')?.addEventListener('click', focusLogPanel);
   $('#btn-read-log')?.addEventListener('click', readJobLogFile);
   $('#activity-stop')?.addEventListener('click', () => stopJob());
-  // The card total arrives with /api/system; the auto tier in the preset line
-  // depends on it, so re-render once that number is known.
-  document.addEventListener('moss:gpu-total-changed', updatePresetSummary);
 
   for (const selector of ['#ui-language-select', '#i18n-current-select']) {
     $(selector)?.addEventListener('change', (event) => setUiLanguage(event.target.value));
@@ -130,19 +127,6 @@ export function bindEvents() {
     location.hash = '#train';
     setTimeout(() => focusField('cfg-model-dit'), 120);
   });
-  $('#btn-runs-refresh')?.addEventListener('click', () => loadWorkspaceRuns());
-  $('#train-run-select')?.addEventListener('change', (event) => {
-    state.activeRunName = event.target.value || '';
-    renderRunList();
-  });
-  $('#btn-run-config')?.addEventListener('click', () => state.activeRunName && openRunConfig(state.activeRunName));
-  $('#btn-run-log')?.addEventListener('click', () => state.activeRunName && openRunLog(state.activeRunName));
-
-  $('#run-config-close')?.addEventListener('click', closeRunConfig);
-  $('#run-config-cancel')?.addEventListener('click', closeRunConfig);
-  $('#run-config-load')?.addEventListener('click', () => applyRunConfig(false));
-  $('#run-config-start')?.addEventListener('click', () => applyRunConfig(true));
-
   $('#btn-setup-refresh')?.addEventListener('click', () => runSetupCheck());
   $('#btn-start')?.addEventListener('click', () => startDashboardTraining().catch((error) => showError(t('common.msg63'), describeError(error))));
   $('#btn-stop')?.addEventListener('click', () => stopJob());
@@ -239,6 +223,13 @@ export function bindEvents() {
       updateOutputPreview();
     });
   }
+  $('#cfg-vram-preset')?.addEventListener('change', (event) => {
+    if (state.mode !== 'form') return;
+    if (!event.target.value) return;
+    applyPresetToForm(event.target.value);
+    scheduleFormSync();
+    updateOutputPreview();
+  });
   for (const id of ['cfg-quantize-dtype', 'cfg-quantize-conditioning']) {
     document.getElementById(id)?.addEventListener('change', syncQuantizeControls);
   }
@@ -290,11 +281,6 @@ export function bindEvents() {
   $('#btn-add-layer-row')?.addEventListener('click', addLayerRow);
 
   $('#cfg-prompts')?.addEventListener('input', () => {
-    if (state.mode !== 'form') return;
-    markDirty();
-    scheduleFormSync();
-  });
-  $('#cfg-grad-ckpt')?.addEventListener('change', () => {
     if (state.mode !== 'form') return;
     markDirty();
     scheduleFormSync();

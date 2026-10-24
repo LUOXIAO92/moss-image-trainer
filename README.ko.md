@@ -11,7 +11,7 @@
 ## 주요 기능
 
 - **2단계 캐싱**: FLUX.2 VAE로 이미지 latent를, 로컬 Qwen3.5-9B로 텍스트 임베딩을 인코딩하여 디스크에 저장합니다. 텍스트 배치는 우측 인과적(causal) 패딩을 사용하며, 학습 순전파 시 어텐션 마스크에 따라 각 시퀀스의 유효 길이를 슬라이싱하므로 패딩 토큰이 유효한 텍스트 특징을 오염시키지 않습니다.
-- **Flow Matching 학습 및 VRAM 프리셋**: 절단된 logit-normal $\sigma$ 샘플링과 토큰 단위로 정규화된 속도장 MSE 손실로 학습합니다. 내장된 `auto|32|24|16|12|8|6` VRAM 프리셋은 그래디언트 체크포인팅, 가중치 전용 양자화(`quantize_dit: none|ffn|all`을 `nf4` 또는 `fp8`로, 선택적 conditioning 절반 포함), 호스트 메모리에서의 블록 스트리밍, `torch.compile`, `fp16` 누적을 `packed`(FlashAttention-2 varlen)와 `padded`(토큰 차원 패딩) 배치 모드 양쪽에 걸쳐 조합하며, `auto`가 그중 하나를 고릅니다. 대시보드는 실행 전과 실행 중에 측정된 VRAM 피크 옆에 예상 VRAM 피크를 함께 표시합니다.
+- **Flow Matching 학습 및 VRAM 프리셋**: 절단된 logit-normal $\sigma$ 샘플링과 토큰 단위로 정규화된 속도장 MSE 손실로 학습합니다. 여섯 가지 프리셋(`32`, `24`, `16`, `12`, `8`, `6` GB)은 그래디언트 체크포인팅, 가중치 전용 양자화(`quantize_dit: none|ffn|all`을 `nf4` 또는 `fp8`로, 선택적 conditioning 절반 포함), 호스트 메모리에서의 블록 스트리밍, `torch.compile`, `fp16` 누적을 `packed`(FlashAttention-2 varlen)와 `padded`(토큰 차원 패딩) 배치 모드 양쪽에 걸쳐 조합합니다. 프리셋은 설정에 값을 써 넣을 뿐이고, 실행은 그 값을 읽습니다. 대시보드는 실행 전과 실행 중에 측정된 VRAM 피크 옆에 예상 VRAM 피크를 함께 표시합니다.
 - **정규화 세트 및 홀드아웃 검증**: `dataset.reg_path`를 통해 정규화 이미지를 로드하여 개념 드리프트를 억제하고, `train.eval_holdout`으로 결정론적 검증 세트를 분리하여 주기적으로 검증 손실을 계산합니다.
 - **이중 스타일 캡션 생성**: OpenAI 호환 비전 모델 엔드포인트를 호출하여 기존 태그를 유지하고 장면 문장을 추가하는 `tag_caption`과 3단계(long / medium / short) 설명을 생성하는 `official` 스타일을 지원하며, 동일한 이름의 sidecar JSON에 저장합니다.
 - **무빌드 WebUI**: 9개 탭(대시보드, 학습 설정, 데이터셋, 캐시, 샘플 이미지, 내보내기, 작업 공간, 설정, 캡션 생성)에서 네이티브 ES module을 직접 실행합니다. 소스 수정 사항은 브라우저 새로고침만으로 즉시 반영됩니다.
@@ -22,7 +22,7 @@
 
 - **OS 및 Python**: Linux 또는 WSL2, Python 3.11 이상.
 - **GPU 및 드라이버**: `bfloat16` 또는 `float16`을 지원하는 NVIDIA GPU 및 PyTorch 2.9 이상에 맞는 CUDA 드라이버.
-- **VRAM 등급**: 24 GB 이상은 비양자화(`preset: 24|32`)로 동작합니다. 16 GB와 12 GB는 `preset: 16`과 `preset: 12`(FFN 양자화)를 사용합니다. 8 GB와 6 GB는 `preset: 8`과 `preset: 6`을 사용하며, 모든 블록을 양자화하고 42개 블록 전부를 호스트 메모리에서 스트리밍하며 `torch.compile`을 끄고 8-bit 옵티마이저를 켭니다. `preset: auto`는 감지된 카드에서 등급을 도출합니다. 이 값들은 항목별로 재정의할 수 있고, 한 스텝이 메모리에서 모자라면 학습기가 `blocks_to_swap`을 스스로 올립니다.
+- **VRAM 설정, 프리셋은 출발점일 뿐**: VRAM의 각 항목은 실행 설정에 적힌 평범한 값이며, 학습기는 그 값을 그대로 사용합니다. WebUI의 프리셋 선택(`32`, `24`, `16`, `12`, `8`, `6`)과 CLI의 `--preset`은 해당 티어의 값——그래디언트 체크포인팅, 상주 레이어 수, 양자화 범위와 형식, `torch.compile`, 8bit 옵티마이저, 프리뷰 VAE 정밀도——을 한 번 채워 넣고 그 뒤로는 관여하지 않습니다. 새 run은 기본값으로 시작하며 어떤 티어도 적용하지 않고, 카드에서 무엇도 도출하지 않습니다. 한 스텝이 정말로 메모리에 모자랄 때만 학습기가 `blocks_to_swap`을 스스로 올립니다.
 - **로컬 가중치**: MOSS-Image DiT, Qwen3.5-9B 텍스트 인코더(HuggingFace 디렉터리 또는 ConvRot int8 양자화 단일 파일 `.safetensors`), FLUX.2 VAE.
 
 특정 그래픽 카드에 맞는 설정을 고르려면 [VRAM 가이드](<docs/VRAM.md>)를 읽으십시오. 양자화와 블록 스트리밍의 실측 비용, 할당자 설정 설명, 등급별 미리보기 크기를 담고 있습니다.
@@ -103,7 +103,7 @@ CONFIG="$WS/runs/$RUN/config.yaml"
 
 `settings.yaml`은 로컬 머신 설정을 저장하며(`.gitignore`에서 제외되며 첫 실행 시 [settings.example.yaml](<settings.example.yaml>)에서 복사됨), 작업 공간 루트 `paths.workspaces`, CUDA 할당자 설정 `runtime`(`allocator: expandable|async|off` 및 `gc_threshold`), UI 언어 `ui.language`, 캡션 생성 서비스 `caption`(`base_url`, 환경 변수 이름 `api_key`, 모델 이름, 동시성 수, 프롬프트 템플릿)을 관리합니다. 설정 탭에서 직접 입력한 평문 API 키는 프로세스 메모리에만 상주하며 디스크에는 기록되지 않습니다.
 
-각 실행의 전체 설정은 `workspaces/<WORKSPACE>/runs/<RUN>/config.yaml`에 있으며 모델, 데이터셋, 캐시, LoRA rank 및 alpha, 학습 하이퍼파라미터, VRAM 프리셋, 프리뷰 프롬프트를 정의합니다. 상대 경로(`cache.dir`, `output_dir` 등)는 작업 공간 디렉터리를 기준으로 해석되므로 작업 공간 디렉터리를 이동해도 경로가 유효하게 유지됩니다. 이 파일은 실행 중에는 읽기 전용이며 끝난 뒤에는 수정할 수 있습니다. WebUI에서 실행을 만들면 한 부가 생기고, 실행 대화상자에서 기존 실행을 복사할 수도 있습니다:
+각 실행의 전체 설정은 `workspaces/<WORKSPACE>/runs/<RUN>/config.yaml`에 있으며 모델, 데이터셋, 캐시, LoRA rank 및 alpha, 학습 하이퍼파라미터, VRAM 설정, 프리뷰 프롬프트를 정의합니다. 상대 경로(`cache.dir`, `output_dir` 등)는 작업 공간 디렉터리를 기준으로 해석되므로 작업 공간 디렉터리를 이동해도 경로가 유효하게 유지됩니다. 이 파일은 실행 중에는 읽기 전용이며 끝난 뒤에는 수정할 수 있습니다. WebUI에서 실행을 만들면 한 부가 생기고, 실행 대화상자에서 기존 실행을 복사할 수도 있습니다:
 
 ```yaml
 name: my-lora
@@ -129,7 +129,9 @@ train:
   save_every: 250
   sample_every: 250
 vram:
-  preset: auto
+  gradient_checkpointing: true
+  blocks_to_swap: 0
+  quantize_dit: none
   compile: true
 export:
   formats: [kohya]
@@ -253,7 +255,7 @@ moss-image-trainer/
 ├── settings.example.yaml     # 머신 수준 구성 템플릿
 ├── moss_lora/
 │   ├── cli.py                # CLI 진입점 (cache / encode-text / train / export / web 등)
-│   ├── config.py             # 구성 dataclass, 경로 해석, 검증 및 VRAM 프리셋
+│   ├── config.py             # 구성 dataclass, 경로 해석, 검증 및 VRAM 프리셋 번들
 │   ├── model.py              # 공식 MOSS-Image DiT 아키텍처 적용 (SDPA / FA2 및 그래디언트 체크포인팅)
 │   ├── weights.py / convrot.py        # DiT/VAE 키 매핑 및 ConvRot int8 역양자화
 │   ├── data.py / cache.py    # 데이터셋 스캔, 버킷팅 및 이미지 latent 캐싱

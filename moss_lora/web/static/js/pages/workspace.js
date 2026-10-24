@@ -25,110 +25,17 @@ function configSourceLabel(source) {
 }
 
 
-function runDate(timestamp) {
-  if (!timestamp) return '--';
-  const date = new Date(Number(timestamp) * 1000);
-  return date.toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-}
-
-export function renderRunList() {
-  const select = $('#train-run-select');
-  const empty = $('#run-list-empty');
-  if (!select) return;
-  setText('#run-browser-ws', state.profileName || '');
-  setText('#run-browser-count', t('train.runCount', { count: (state.runs || []).length }));
-  const runs = [...(state.runs || [])];
-  const previous = select.value || state.activeRunName;
-  select.innerHTML = runs.length
-    ? runs.map((run) => `<option value="${escapeHtml(run.name)}">${escapeHtml(run.name)} · ${fmtInt(run.step)}/${fmtInt(run.total)} · ${runDate(run.mtime)}</option>`).join('')
-    : `<option value="">${escapeHtml(t('train.noRuns'))}</option>`;
-  const chosen = runs.find((run) => run.name === previous) ? previous : (runs[0]?.name || '');
-  select.value = chosen;
-  state.activeRunName = chosen;
-  select.disabled = !runs.length;
-  if (empty) empty.classList.toggle('hidden', runs.length > 0);
-  const selected = runs.find((run) => run.name === chosen);
-  setText('#train-run-meta', selected ? t('train.runMeta', { step: fmtInt(selected.step), total: fmtInt(selected.total), samples: fmtInt(selected.samples), source: configSourceLabel(selected.config_source) }) : '--');
-  for (const id of ['#btn-run-config', '#btn-run-log']) {
-    const button = $(id);
-    if (button) button.disabled = !selected || (id === '#btn-run-log' && !selected.log_path);
-  }
-}
-
 export async function loadWorkspaceRuns() {
   if (!state.profileName) {
     state.runs = [];
-    renderRunList();
     return;
   }
   try {
     const data = await api('/api/workspaces/' + encodeURIComponent(state.profileName) + '/runs');
     state.runs = Array.isArray(data.runs) ? data.runs : [];
-    renderRunList();
   } catch (error) {
     state.runs = [];
-    renderRunList();
     showAlert({ type: 'warn', title: t('workspace.msg1'), text: describeError(error), timeout: 5000 });
-  }
-}
-
-export function openRunConfig(name) {
-  const run = (state.runs || []).find((item) => item.name === name);
-  const dialog = $('#run-config-dialog');
-  if (!run || !dialog) return;
-  state.activeRunConfig = run;
-  setText('#run-config-title', t('runConfig.titleWithRun', { name: run.name }));
-  setText('#run-config-meta', t('runConfig.meta', { label: run.label, step: fmtInt(run.step), total: fmtInt(run.total), source: configSourceLabel(run.config_source), path: run.config_path ? ` · ${run.config_path}` : '' }));
-  const pre = $('#run-config-yaml');
-  if (pre) pre.textContent = run.config_yaml || t('train.msg9');
-  const error = $('#run-config-error');
-  if (error) error.classList.add('hidden');
-  if (typeof dialog.showModal === 'function') { if (!dialog.open) dialog.showModal(); }
-  else dialog.setAttribute('open', '');
-}
-
-export function closeRunConfig() {
-  const dialog = $('#run-config-dialog');
-  if (dialog) {
-    if (typeof dialog.close === 'function' && dialog.open) dialog.close();
-    else dialog.removeAttribute('open');
-  }
-}
-
-export async function applyRunConfig(start = false) {
-  const run = state.activeRunConfig;
-  if (!run || !run.config_yaml) {
-    showAlert({ type: 'warn', title: t('train.msg10'), text: t('train.msg11'), timeout: 4000 });
-    return;
-  }
-  // The run's config is the run: selecting it loads that exact file for editing.
-  closeRunConfig();
-  await switchRun(run.name);
-  if (start) {
-    setTimeout(() => startJob('train'), 120);
-  } else {
-    showSuccess(t('train.msg12'), t('train.msg13'), [], 'run-config-loaded');
-  }
-}
-
-export async function openRunLog(name) {
-  const run = (state.runs || []).find((item) => item.name === name);
-  if (!run?.log_path) return;
-  try {
-    const text = await api('/api/files?path=' + encodeURIComponent(run.log_path));
-    if (currentTab() !== 'dashboard') {
-      location.hash = '#dashboard';
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-    state.logs = [];
-    clearLog();
-    for (const line of String(text || '').split('\n')) {
-      if (line) pushLog(line, line.startsWith('$ ') ? 'sys' : '');
-    }
-    focusLogPanel();
-    showAlert({ type: 'info', title: t('train.logRead', { name: run.name }), text: run.log_path, timeout: 4000 });
-  } catch (error) {
-    showError(t('job.msg1'), describeError(error));
   }
 }
 

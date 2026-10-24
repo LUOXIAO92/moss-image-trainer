@@ -9,7 +9,7 @@ import yaml
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from ...config import VRAM_PRESETS
+from ...config import PRESET_TIERS, preset_bundle
 from ..deps import _rel, _safe_name, _write_text
 from ..services.cache_cmd import _cache_job, _cache_stop, _cache_summary
 from ..services.workspace import (_config_from_data, _resolve_workspace, _run_config_default,
@@ -23,7 +23,8 @@ router = APIRouter()
 
 @router.get("/api/presets")
 def api_presets():
-    return {"presets": VRAM_PRESETS}
+    """The exact values each preset writes, so the form can fill itself in."""
+    return {"presets": {tier: preset_bundle(tier) for tier in PRESET_TIERS}}
 
 
 def _yaml_error(exc: yaml.YAMLError) -> JSONResponse:

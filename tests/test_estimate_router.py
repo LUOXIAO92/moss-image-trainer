@@ -2,13 +2,14 @@
 
     .venv/bin/python tests/test_estimate_router.py
 
-Two things are checked. A valid YAML comes back as training and preview peaks
-whose total is the larger of the two plus the context allowance. And the handler
-resolves `vram.preset: auto` from the nvidia-smi probe rather than from
-`detect_vram_gb()`, because that one calls `torch.cuda.is_available()` and would
-pin a CUDA context in the web process -- VRAM the run being predicted for needs.
-The second check patches `detect_vram_gb` to explode, so a regression fails here
-instead of quietly costing half a gigabyte of the card.
+Three things are checked. A valid YAML comes back as training and preview peaks
+whose total is the larger of the two plus the context allowance. The handler
+reads the five VRAM fields the YAML carries instead of resolving a preset from
+the card, so the number it prints is the one the run would produce. And the
+handler never asks the driver anything: `detect_vram_gb()` calls
+`torch.cuda.is_available()` and would pin a CUDA context in the web process --
+VRAM the run being predicted for needs. The probe is patched to explode so a
+regression fails here instead of quietly costing half a gigabyte of the card.
 """
 
 from __future__ import annotations
@@ -20,7 +21,6 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import moss_lora.config as config_module  # noqa: E402
-import moss_lora.web.routers.estimate as estimate_module  # noqa: E402
 from moss_lora.web.routers.estimate import api_estimate  # noqa: E402
 
 
@@ -40,46 +40,50 @@ dataset:
 cache:
   dir: /nope/cache
 vram:
-  preset: auto
+  blocks_to_swap: 12
+  quantize_dit: ffn
 preview:
   prompts: []
+"""
+
+# A config written before presets became manual still loads: "auto" and -1 fold
+# into the documented defaults instead of asking the card.
+LEGACY = """name: legacy
+model:
+  dit: /nope/dit.safetensors
+vram:
+  preset: auto
+  gradient_checkpointing: auto
+  blocks_to_swap: -1
 """
 
 
 def main() -> int:
     def explode() -> float | None:
-        raise AssertionError("the estimate route called detect_vram_gb(), which creates a CUDA context")
+        raise AssertionError("the estimate route asked the driver, which creates a CUDA context")
 
     real_detect = config_module.detect_vram_gb
-    real_total = estimate_module.gpu_total_gb
     config_module.detect_vram_gb = explode
-    estimate_module.gpu_total_gb = lambda: 15.0
     try:
         payload = asyncio.run(api_estimate(FakeRequest({"yaml": GOOD, "workspace": ""})))
+        blind = asyncio.run(api_estimate(FakeRequest({"yaml": LEGACY, "workspace": ""})))
     finally:
         config_module.detect_vram_gb = real_detect
-        estimate_module.gpu_total_gb = real_total
 
     for key in ("train", "preview", "context", "total", "resident_blocks", "streamed_blocks"):
         assert key in payload, f"{key} missing from {sorted(payload)}"
     assert payload["train"] > 0 and payload["preview"] >= 0, payload
     assert abs(payload["total"] - (max(payload["train"], payload["preview"]) + payload["context"])) < 0.02, payload
-    # A 15 GB card resolves to the 16 GB tier, which quantizes nothing and keeps
-    # every block resident.
-    assert payload["streamed_blocks"] == 0, payload.get("notes")
-    assert payload["resident_blocks"] == 42, payload.get("notes")
+    # The YAML says 12 of 42 blocks stream. The three-block lookahead and pool
+    # stay resident, so the estimator counts 33 resident and 9 streamed.
+    assert payload["resident_blocks"] == 33, payload.get("notes")
+    assert payload["streamed_blocks"] == 9, payload.get("notes")
 
-    # No driver answer: the preset stays unresolved, and the route still must not
-    # reach for detect_vram_gb().
-    estimate_module.gpu_total_gb = lambda: None
-    try:
-        blind = asyncio.run(api_estimate(FakeRequest({"yaml": GOOD, "workspace": ""})))
-    finally:
-        estimate_module.gpu_total_gb = real_total
+    # The retired sentinels resolve to defaults: everything resident, nothing
+    # quantized, and no driver call in the path.
+    assert blind["resident_blocks"] == 42, blind.get("notes")
+    assert blind["streamed_blocks"] == 0, blind.get("notes")
     assert blind["total"] > 0, blind
-
-    # nvidia-smi reports total memory in MiB; 32607 MiB must become the 32 tier.
-    assert round(32607 / 1024, 1) == 31.8
     print("estimate router checks passed")
     return 0
 
