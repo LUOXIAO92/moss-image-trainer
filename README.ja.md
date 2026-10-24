@@ -103,7 +103,7 @@ CONFIG="$WS/runs/$RUN/config.yaml"
 
 `settings.yaml` はローカルマシンの設定を保持します（`.gitignore` で除外されており、初回起動時に [settings.example.yaml](<settings.example.yaml>) からコピーされます）。ワークスペースのルート `paths.workspaces`、CUDA アロケーター設定 `runtime`（`allocator: expandable|async|off` と `gc_threshold`）、表示言語 `ui.language`、およびキャプション生成サービス `caption`（`base_url`、環境変数名 `api_key`、モデル名、並列数、プロンプトテンプレート）を管理します。設定画面で直接入力した平文の API キーはプロセスメモリ内にのみ保持され、ディスクには書き込まれません。
 
-各実行の完全な設定は `workspaces/<WORKSPACE>/runs/<RUN>/config.yaml` にあり、モデル、データセット、キャッシュ、LoRA の rank と alpha、学習ハイパーパラメーター、VRAM プリセット、プレビュー用プロンプトを定義します。相対パス（`cache.dir` や `output_dir` など）はワークスペースディレクトリ基準で解決されるため、ワークスペースディレクトリごと移動しても参照は維持されます。このファイルは実行中は読み取り専用で、終了後は編集できます。WebUI で実行を作成すると 1 份でき、実行ダイアログから既存の実行を複製することもできます。
+各実行の完全な設定は `workspaces/<WORKSPACE>/runs/<RUN>/config.yaml` にあり、モデル、データセット、キャッシュ、LoRA の rank と alpha、学習ハイパーパラメーター、VRAM プリセット、プレビュー用プロンプトを定義します。相対パス（`cache.dir` や `output_dir` など）はワークスペースディレクトリ基準で解決されるため、ワークスペースディレクトリごと移動しても参照は維持されます。このファイルは実行中は読み取り専用で、終了後は編集できます。WebUI で実行を作成すると 1 つの設定ができ、実行ダイアログから既存の実行を複製することもできます。
 
 ```yaml
 name: my-lora
