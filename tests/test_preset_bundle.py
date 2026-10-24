@@ -41,9 +41,8 @@ def check_bundle_shape() -> None:
             # streams must not claim it: the form would show a setting the
             # trainer silently ignores.
             assert bundle["compile"] is False, f"{tier}: streaming cannot compile"
-    # The small tiers stream every block and sample in fp16; the 16 GB tier
-    # stays resident and compiled; the 12 GB tier streams and drops compile.
-    # These are the differences the tiers exist for.
+    # 16 GB and 12 GB stream a slice of the tail and sample in fp16; the small
+    # tiers stream everything. These are the differences the tiers exist for.
     assert preset_bundle("8")["blocks_to_swap"] == TRANSFORMER_BLOCKS
     assert preset_bundle("8")["preview"]["vae_dtype"] == "fp16"
     assert preset_bundle("8")["compile"] is False
@@ -52,10 +51,11 @@ def check_bundle_shape() -> None:
     assert preset_bundle("32")["compile"] is True
     # 16 GB and 12 GB keep the DiT in bf16 instead of quantizing it.
     assert preset_bundle("16")["quantize_dit"] == "none"
-    assert preset_bundle("16")["blocks_to_swap"] == 0
+    assert preset_bundle("16")["blocks_to_swap"] == 6
     assert preset_bundle("16")["gradient_checkpointing"] is True
     assert preset_bundle("16")["optimizer_in_8bit"] is False
-    assert preset_bundle("16")["compile"] is True
+    assert preset_bundle("16")["compile"] is False
+    assert preset_bundle("16")["preview"]["vae_dtype"] == "fp16"
     assert preset_bundle("16")["preview"]["vae_dtype"] == "fp16"
     assert preset_bundle("12")["quantize_dit"] == "none"
     assert preset_bundle("12")["blocks_to_swap"] == 22

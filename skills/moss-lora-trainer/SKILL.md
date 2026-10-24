@@ -366,7 +366,7 @@ mkdir -p "workspaces/$WORKSPACE"/{train_cache,reg_cache,runs,logs,exports}
 | Preset | `quantize_dit` | `blocks_to_swap` | `optimizer_in_8bit` | `compile` | `preview.vae_dtype` | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **`32` / `24`** | `none` | `0` | `false` | `true` | `fp32` | Full-precision frozen backbone; highest throughput and best detail fidelity |
-| **`16`** | `none` | `0` | `false` | `true` | `fp16` | bf16 backbone, fully resident; the stack fits with margin, so compile stays on |
+| **`16`** | `none` | `6` | `false` | `false` | `fp16` | bf16 backbone with 6 trailing blocks streamed; weights stay unquantized, compile is off because streaming cannot trace the copies |
 | **`12`** | `none` | `22` | `false` | `false` | `fp16` | bf16 backbone with 22 trailing blocks streamed; compile is off because streaming cannot trace the copies |
 | **`8` / `6`** | `all` | `42` | `true` | `false` | `fp16` | Every frozen Linear quantized, every block streamed, fp16 preview decode |
 

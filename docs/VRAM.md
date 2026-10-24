@@ -104,7 +104,7 @@ Preset `24` (or `32`). bf16, every block resident, `compile: true`. A bf16 run p
 
 ### 16 GB
 
-Preset `16`. bf16 base weights, every block resident, `compile: true`, gradient checkpointing on. The whole stack fits with enough room that quantizing would only cost quality, so this tier keeps the weights in bf16. Draw previews at 1024x1024 with the fp16 VAE the preset pins; an fp32 decode leaves almost no margin. If you prefer fp32, lower the preview resolution.
+Preset `16`. bf16 base weights with `blocks_to_swap: 6`: 36 blocks stay resident and the trailing 6 stream from host memory. `compile: false`, because a streamed run cannot use torch.compile. Gradient checkpointing stays on. Quantizing would only cost quality here, so the weights stay in bf16 and the copies buy the margin instead. Draw previews at 1024x1024 with the fp16 VAE the preset pins; an fp32 decode leaves almost no margin.
 
 ### 12 GB
 

@@ -452,12 +452,12 @@ VRAM_PRESETS: dict[str, dict[str, Any]] = {
            "compile": True},
     # 16 GB and 12 GB: keep the base weights in bf16 and stream the tail instead
     # of quantizing. The owners of these cards have host memory to spare and
-    # rank quality above step time, so bf16 beats nf4 here. The 16 GB card holds
-    # the whole stack with the required margin; the 12 GB card streams 22 of the
-    # 42 blocks and drops torch.compile, which cannot trace the streaming copies.
-    "16": {"gradient_checkpointing": True, "blocks_to_swap": 0, "optimizer_in_8bit": False,
+    # rank quality above step time, so bf16 beats nf4 here. The 16 GB card
+    # streams 6 of the 42 blocks, the 12 GB card 22. Both drop torch.compile,
+    # which cannot trace the streaming copies.
+    "16": {"gradient_checkpointing": True, "blocks_to_swap": 6, "optimizer_in_8bit": False,
            "quantize_dit": "none", "quantize_dtype": "nf4", "quantize_conditioning": "none",
-           "compile": True},
+           "compile": False},
     "12": {"gradient_checkpointing": True, "blocks_to_swap": 22, "optimizer_in_8bit": False,
            "quantize_dit": "none", "quantize_dtype": "nf4", "quantize_conditioning": "none",
            "compile": False},
