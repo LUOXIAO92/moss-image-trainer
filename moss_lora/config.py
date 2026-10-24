@@ -447,8 +447,8 @@ def apply_preset(config: Config, vram_gb: float | None = None, *, detect: bool =
     The 6 GB and 8 GB tiers also drop ``preview.vae_dtype`` to fp16 while it is
     still the fp32 default. The preview peak, not the training step, is what runs
     a small card out of memory first: an fp32 decode at 1024x1024 takes the
-    streamed run past the card even though its training step fits. Preview
-    resolution stays untouched, and a dtype the user chose is kept.
+    streamed run past the card even though its training step fits. Resolution is
+    left alone, and a dtype the user chose is kept.
     """
     preset: dict[str, Any] | None = None
     tier: str | None = None
@@ -481,8 +481,11 @@ def apply_preset(config: Config, vram_gb: float | None = None, *, detect: bool =
         config.vram.quantize_dit = preset["quantize_dit"]
     if preset["compile"] is False:
         config.vram.compile = False
-    # fp32 is the default, so it is also the "let the preset decide" sentinel:
-    # a user who wrote fp16 (or fp8, which validate rejects) keeps that choice.
+    # fp32 is the default, so it is also the "let the preset decide" sentinel: a
+    # user who wrote fp16 (or fp8, which validate rejects) keeps that choice. Only
+    # the dtype moves -- resolution stays whatever the config says, because 1024 is
+    # both the default and a common explicit choice, and the preset cannot tell
+    # them apart.
     if tier in ("6", "8") and str(config.preview.vae_dtype).lower() == "fp32":
         config.preview.vae_dtype = "fp16"
     return config

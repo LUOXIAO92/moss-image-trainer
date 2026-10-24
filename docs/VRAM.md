@@ -88,13 +88,13 @@ Measured with `all` + nf4 fully streamed, an 8-step distilled (DMD) LoRA, one im
 
 Two settings move the peak. `preview.vae_dtype: fp16` halves the decode's memory and produces a visually identical image: the largest per-pixel difference measured was 1/255, the rounding of one 8-bit channel step. Smaller `preview.width` and `preview.height` cut both the sampler and the decode. At 1024, fp16 also cut the time per image by about a third; at 768 it saved memory but not time.
 
-`preview.batch: 1` is the default in this guide: one image per pass. Batching several prompts multiplies the sampler peak.
+`preview.batch` defaults to 1: one image per pass. Batching several prompts multiplies the sampler peak.
 
 Step count dominates preview time. The same preview at 50 steps without the LoRA took about eight times as long as eight steps with it.
 
 ## 6. Choosing a tier
 
-`vram.preset` fills the settings for a card class: quantization, streaming, gradient checkpointing, `torch.compile`, and the optimizer; `auto` picks the tier from the detected card. The training page shows each resolved value and whether it came from the preset or from you. Every tier below keeps `preview.batch: 1`.
+`vram.preset` fills the settings for a card class: quantization, streaming, gradient checkpointing, `torch.compile`, and the optimizer; the 6 GB and 8 GB tiers also switch `preview.vae_dtype` to fp16 while you have not chosen one, and leave the preview size to you; `auto` picks the tier from the detected card. The training page shows each resolved value and whether it came from the preset or from you. Every tier below keeps `preview.batch: 1`.
 
 ### 24 GB and up
 
@@ -110,7 +110,7 @@ Step count dominates preview time. The same preview at 50 steps without the LoRA
 
 ### 8 GB
 
-`vram.preset: 8`. `all` + nf4, all 42 blocks streamed, the 8-bit optimizer, `compile: false`; a run peaks around 6 GB. Preview at 768x768 with fp16, which measured about 6 GB. 1024x1024 at fp16 measured about 8 GB, which leaves too little room on an 8 GB card. Streaming pins about 2 GB of host memory.
+`vram.preset: 8`. `all` + nf4, all 42 blocks streamed, the 8-bit optimizer, `compile: false`; a run peaks around 6 GB. Set the preview to 768x768, where the fp16 VAE the preset already chose measured about 6 GB. 1024x1024 at fp16 measured about 8 GB, which leaves too little room on an 8 GB card, and at fp32 about 9 GB. Streaming pins about 2 GB of host memory.
 
 ### 6 GB
 

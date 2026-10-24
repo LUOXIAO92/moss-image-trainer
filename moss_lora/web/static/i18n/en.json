@@ -1202,7 +1202,7 @@
  "train.preset.quantize": "quantize {value} ({source})",
  "train.preset.resident": "resident {count} blocks ({source})",
  "train.preview.batch": "Prompts per sampling call",
- "train.preview.batchHelp": "0 = run every prompt in one go; when VRAM is tight use 1 to sample one at a time for the flattest peak.",
+ "train.preview.batchHelp": "Default 1 = sample one prompt at a time, the flattest peak; 0 = run every prompt in one go.",
  "train.preview.eachLine": "One per line",
  "train.preview.guidance": "Guidance scale",
  "train.preview.guidanceHelp": "Leave blank for 3.0; recommended 3.0–6.0",

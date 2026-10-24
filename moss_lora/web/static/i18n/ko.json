@@ -1202,7 +1202,7 @@
  "train.preset.quantize": "양자화 {value}({source})",
  "train.preset.resident": "상주 {count} 레이어({source})",
  "train.preview.batch": "샘플링할 때 한 번에 몇 개",
- "train.preview.batchHelp": "0 = 모든 prompt를 한 번에 처리합니다. VRAM이 빠듯하면 1로 두고 하나씩 샘플링하면 피크가 가장 낮습니다.",
+ "train.preview.batchHelp": "기본값 1 = 프롬프트를 하나씩 샘플링하여 피크가 가장 평탄합니다. 0 = 모든 프롬프트를 한 번에 처리합니다.",
  "train.preview.eachLine": "한 줄에 하나씩 입력",
  "train.preview.guidance": "guidance 강도",
  "train.preview.guidanceHelp": "비워두면 3.0 사용. 공식 권장 3.0–6.0.",

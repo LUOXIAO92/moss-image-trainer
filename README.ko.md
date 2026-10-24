@@ -25,6 +25,8 @@
 - **VRAM 등급**: 24 GB 이상은 비양자화(`preset: 24|32`)로 동작합니다. 16 GB와 12 GB는 `preset: 16`과 `preset: 12`(FFN 양자화)를 사용합니다. 8 GB와 6 GB는 `preset: 8`과 `preset: 6`을 사용하며, 모든 블록을 양자화하고 42개 블록 전부를 호스트 메모리에서 스트리밍하며 `torch.compile`을 끄고 8-bit 옵티마이저를 켭니다. `preset: auto`는 감지된 카드에서 등급을 도출합니다. 이 값들은 항목별로 재정의할 수 있고, 한 스텝이 메모리에서 모자라면 학습기가 `blocks_to_swap`을 스스로 올립니다.
 - **로컬 가중치**: MOSS-Image DiT, Qwen3.5-9B 텍스트 인코더(HuggingFace 디렉터리 또는 ConvRot int8 양자화 단일 파일 `.safetensors`), FLUX.2 VAE.
 
+특정 그래픽 카드에 맞는 설정을 고르려면 [VRAM 가이드](<docs/VRAM.md>)를 읽으십시오. 양자화와 블록 스트리밍의 실측 비용, 할당자 설정 설명, 등급별 미리보기 크기를 담고 있습니다.
+
 ## 설치
 
 이 저장소는 프로젝트 루트의 `.venv`에 의존성을 격리합니다. CLI와 WebUI 백그라운드 워커 모두 외부 conda나 ComfyUI 환경에 의존하지 않고 `.venv/bin/python`을 직접 호출합니다.

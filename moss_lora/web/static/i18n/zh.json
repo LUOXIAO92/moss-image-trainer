@@ -1202,7 +1202,7 @@
  "train.preset.quantize": "量化 {value}（{source}）",
  "train.preset.resident": "常驻 {count} 层（{source}）",
  "train.preview.batch": "每次采样几条",
- "train.preview.batchHelp": "0 = 全部提示词一次跑完；显存紧张填 1，逐条采样，峰值最平。",
+ "train.preview.batchHelp": "默认 1 = 逐条提示词采样，峰值最平；0 = 全部提示词一次跑完。",
  "train.preview.eachLine": "每行一条",
  "train.preview.guidance": "引导强度 guidance",
  "train.preview.guidanceHelp": "留空默认 3.0；官方推荐 3.0–6.0。",

@@ -25,6 +25,8 @@
 - 显存档位：24 GB 及以上不量化（`preset: 24|32`）；16 GB 与 12 GB 用 `preset: 16`、`preset: 12`（FFN 量化）；8 GB 与 6 GB 用 `preset: 8`、`preset: 6`，这两档量化全部块、把 42 块全部从主机内存流式载入、关掉 `torch.compile` 并启用 8-bit 优化器。`preset: auto` 按检测到的显卡自动选档。每一项都可单独改，训练中显存不够时训练器会自己调高 `blocks_to_swap`。
 - 本地模型：MOSS-Image DiT、Qwen3.5-9B 文本编码器（HuggingFace 目录，或 ConvRot int8 量化的单文件 `.safetensors`）与 FLUX.2 VAE。
 
+要按具体显卡挑设置，看[显存指南](<docs/VRAM.md>)：写清了量化与块流式加载的实测开销、分配器设置，并按显卡档位给出预览尺寸。
+
 ## 安装
 
 仓库通过根目录 `.venv` 隔离依赖，CLI 与 WebUI 后台任务均调用 `.venv/bin/python`，不依赖外部 conda 或 ComfyUI 环境。

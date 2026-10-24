@@ -1202,7 +1202,7 @@
  "train.preset.quantize": "量子化 {value}（{source}）",
  "train.preset.resident": "常駐 {count} 層（{source}）",
  "train.preview.batch": "1 回のサンプリングで何件処理するか",
- "train.preview.batchHelp": "0 = すべてのプロンプトを一度に処理します。メモリが厳しいときは 1 を入れて 1 件ずつサンプリングすると、ピークが最も平らになります。",
+ "train.preview.batchHelp": "既定は 1 = プロンプトを 1 件ずつサンプリングし、ピークが最も平らになります。0 = すべてのプロンプトを一度に処理します。",
  "train.preview.eachLine": "1行に1件",
  "train.preview.guidance": "ガイダンス強度 guidance",
  "train.preview.guidanceHelp": "空欄の場合は 3.0 を使用します。公式推奨は 3.0–6.0 です。",
