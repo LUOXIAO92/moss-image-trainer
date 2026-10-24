@@ -5,7 +5,7 @@
 
 import { renderRunStrip, updateJobUi } from '../components/jobs.js';
 import { updateLogCount } from '../components/logview.js';
-import { updateCacheEffective, updateCachePlaceholder, updateRegCacheEffective, updateRegCachePlaceholder, updateYamlLineCount } from '../config/form.js';
+import { syncQuantizeControls, updateCacheEffective, updateCachePlaceholder, updateRegCacheEffective, updateRegCachePlaceholder, updateYamlLineCount } from '../config/form.js';
 import { renderConfigList } from '../config/list.js';
 import { renderProfileOptions } from '../config/profiles.js';
 import { api, describeError } from './api.js';
@@ -173,6 +173,9 @@ export async function refreshLocalizedUi() {
   updateRegCacheEffective();
   updateLogCount();
   updateYamlLineCount();
+  // Row visibility follows the field values, and a language swap rewrites the
+  // labels around it, so apply the rule again rather than assume it survived.
+  syncQuantizeControls();
   renderProfileOptions();
   renderConfigList();
   updateJobUi();
