@@ -605,23 +605,29 @@ def cmd_sample(args):
     return 0
 
 
-# reference measurements at 1024^2 / 4096 image tokens, batch 1, rank 32;
-# interpolated rows are marked and get replaced by `plan --measure`.
+# Reference measurements at 1024^2 / 4096 image tokens, batch 1. Peaks are
+# allocator peaks for training alone; s/step is the per-step wall time. Rows were
+# recorded in separate campaigns, so read the speed column as a ranking rather
+# than a stopwatch -- the machine drifts by tens of percent between sessions.
+# Interpolated rows are marked and get replaced by `plan --measure`.
+#
+# fp16 accumulation (`model.dtype: float16` + `vram.fp16_accumulate: true`) was
+# measured and came out no faster than bfloat16 on the reference card, so it has
+# no row: it stays available as a compatibility setting for cards without bf16
+# tensor-core support, not as a speed preset.
+#
 # (precision, quantize scope, quantize dtype, swap, peak GiB, s/step, measured)
 MEMORY_TABLE = [
-    ("fp16acc", "none", "nf4", 0, 12.7, 0.79, True),
-    ("fp16acc", "ffn", "nf4", 0, 8.4, 0.82, True),
-    ("fp16acc", "all", "nf4", 0, 6.2, 0.84, True),
     ("bf16", "none", "nf4", 0, 12.2, 1.32, True),
     ("bf16", "none", "nf4", 30, 6.5, 1.76, True),
-    ("bf16", "none", "nf4", 40, 4.4, 1.90, True),  # estimated from the eager 2.10
+    ("bf16", "none", "nf4", 40, 4.4, 1.90, False),  # interpolated from the eager row
     # fp8 keeps far more of the weight precision than nf4 at twice the storage,
     # and needs no bitsandbytes kernel.
     ("bf16", "all", "fp8", 0, 9.0, 1.37, True),
     ("bf16", "all", "nf4", 0, 6.9, 1.35, True),
     # every block streamed from host memory: the smallest footprint this trainer
     # reaches without touching resolution or sequence length.
-    ("bf16", "all", "nf4", 42, 3.9, 1.56, True),
+    ("bf16", "all", "nf4", 42, 3.94, 1.51, True),
 ]
 
 def cmd_plan(args):
@@ -646,11 +652,11 @@ def cmd_plan(args):
     for prec, quant, qdtype, swap, peak, speed, is_measured in MEMORY_TABLE:
         mark = "  <- chosen" if (choice[0], choice[1], choice[2], choice[3]) == (prec, quant, qdtype, swap) else ""
         timing = f"{speed:6.2f}s" if is_measured else "    est"
-        print(f"{prec:>9} {quant:>9} {qdtype:>6} {swap:5d} {peak:6.1f}G {timing}{mark}")
+        print(f"{prec:>9} {quant:>9} {qdtype:>6} {swap:5d} {peak:6.2f}G {timing}{mark}")
     print(f"\nrecommended: dtype={'float16' if choice[0] == 'fp16acc' else 'bfloat16'}, "
           f"fp16_accumulate={choice[0] == 'fp16acc'}, quantize_dit={choice[1]}, "
           f"quantize_dtype={choice[2]}, blocks_to_swap={choice[3]}  "
-          f"(peak ~{choice[4]} GiB, ~{choice[5]} s/step)")
+          f"(peak ~{choice[4]:.2f} GiB, ~{choice[5]:.2f} s/step)")
     if args.write:
         from .config import Config
 
