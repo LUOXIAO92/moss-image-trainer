@@ -25,6 +25,8 @@ The trainer splits the workflow into offline caching and online training so the 
 - **VRAM tiers**: 24 GB and up runs unquantized (`preset: 24|32`); 16 GB and 12 GB use `preset: 16` and `preset: 12` (FFN quantization); 8 GB and 6 GB use `preset: 8` and `preset: 6`, which quantize every block, stream all 42 of them from host memory, drop `torch.compile`, and enable the 8-bit optimizer. `preset: auto` derives the tier from the detected card. Any of these values can be overridden per field, and the trainer raises `blocks_to_swap` by itself when a step runs out of memory.
 - **Local weights**: MOSS-Image DiT, Qwen3.5-9B text encoder (HuggingFace directory, or a ConvRot int8-quantized single-file `.safetensors`), and FLUX.2 VAE.
 
+To choose settings for a specific card, read the [VRAM guide](<docs/VRAM.md>). It gives the measured cost of quantization and block streaming, explains the allocator setting, and lists a preview size for each card class.
+
 ## Installation
 
 The repository isolates dependencies in `.venv` at the project root. Both the CLI and WebUI background workers invoke `.venv/bin/python` directly, without relying on external conda or ComfyUI environments.
