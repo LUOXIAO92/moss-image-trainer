@@ -368,6 +368,16 @@ class Trainer:
         # segments out of the run's footprint.
         torch.cuda.empty_cache()
         self.log(f"block swap: {count} blocks on CPU ({freed/2**30:.1f} GiB offloaded)")
+        # cudaMallocAsync pools per stream and keeps the whole-block segments this
+        # offload just freed, so a streamed run's *allocated* bytes drop while its
+        # card footprint does not. expandable_segments returns them; measured on a
+        # 32 GB card, nf4 with all 42 blocks streamed sat at 8.1 GiB under
+        # cudaMallocAsync and 6.1 GiB under expandable_segments, same step time.
+        conf = os.environ.get("PYTORCH_CUDA_ALLOC_CONF", "")
+        if "cudaMallocAsync" in conf:
+            self.log("block swap: this allocator keeps the freed blocks reserved, so the "
+                     "card footprint will stay near a resident run's; set "
+                     "runtime.allocator: expandable in settings.yaml to get the memory back")
 
     def _attach_lora(self):
         from peft import LoraConfig, get_peft_model

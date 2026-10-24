@@ -11,6 +11,8 @@ runtime:
   #   expandable        —— expandable_segments + 按阈值回收（默认，推荐）
   #   async             —— backend:cudaMallocAsync，交给 CUDA 流式分配器
   #   off               —— 不设置，沿用 PyTorch 默认分配器
+  # 用 vram.blocks_to_swap 做块流式加载时，只有 expandable 会把释放掉的
+  # 整块显存还给驱动；async 会留着复用，显存峰值降不下来（训练器启动时会提示）。
   # 文本编码（encode-text）不受这里影响，固定用默认分配器。
   allocator: expandable
   # 仅 expandable 模式使用：显存占用超过该比例时触发回收（0~0.99）
