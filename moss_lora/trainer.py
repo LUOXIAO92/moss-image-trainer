@@ -34,6 +34,12 @@ class TrainState:
     evals: list = field(default_factory=list)
     lr: float = 0.0
     peak_gib: float = 0.0
+    # Tokens fed to the model by the last step. MOSS-Image is a single-stream DiT,
+    # so the sequence is image tokens plus text tokens and activation memory
+    # follows that sum, not the image count.
+    tokens: int = 0
+    img_tokens: int = 0
+    txt_tokens: int = 0
 
 
 class Trainer:
@@ -182,6 +188,15 @@ class Trainer:
 
     def _maybe_compile(self):
         if not bool(getattr(self.config.vram, "compile", False)):
+            return
+        if int(getattr(self.config.vram, "blocks_to_swap", 0) or 0) > 0:
+            # Streaming re-enters the model 84 times per step and records a CUDA
+            # event on each copy. torch.compile cannot trace an event record (it
+            # aborts the first time the eval or preview path is traced), and a
+            # streamed run gains nothing from it anyway, so refuse the pair
+            # instead of failing a hundred steps in.
+            self.log("compile: skipped, torch.compile cannot trace the block-streaming "
+                     "copy events (vram.blocks_to_swap > 0)")
             return
         model = getattr(getattr(self.model, "base_model", self.model), "model", self.model)
         try:
@@ -348,6 +363,10 @@ class Trainer:
         self._swap = BlockSwap(model.layers, count, device=self.device)
         model.block_swap = self._swap
         freed = sum(p.numel() * p.element_size() for i in self._swap.params for p in self._swap.params[i])
+        # Hand back the storage the offloaded blocks used to occupy before the loop
+        # starts. It is one call, and it keeps the load/quantize phase's cached
+        # segments out of the run's footprint.
+        torch.cuda.empty_cache()
         self.log(f"block swap: {count} blocks on CPU ({freed/2**30:.1f} GiB offloaded)")
 
     def _attach_lora(self):
@@ -499,9 +518,18 @@ class Trainer:
         cfg = self.config.train
         self.optimizer.zero_grad(set_to_none=True)
         step_loss = 0.0
+        img_tokens = 0
+        txt_tokens = 0
         for _ in range(cfg.grad_accum):
             entries = self._sample_by_tokens(rng, self._bin_budget())
             latents, contexts = self._load_packed(entries)
+            # Single-stream self-attention: the captions ride in the same sequence
+            # as the image tokens, so the length that drives activation memory and
+            # attention cost is image tokens *plus* text tokens. Text is small
+            # (tens of tokens) but it is not free, and for a cropped image it is
+            # a larger share.
+            img_tokens += sum(int(latent.shape[-2]) * int(latent.shape[-1]) for latent in latents)
+            txt_tokens += sum(int(context.shape[-2]) for context in contexts)
             # One timestep per micro-batch: packing shares one modulation.
             sigma = self.sigma.sample(1, self.device).reshape(1)
             noise = [torch.randn_like(latent, dtype=torch.float32) for latent in latents]
@@ -541,6 +569,9 @@ class Trainer:
         self.state.step = step + 1
         self.state.lr = lr
         self.state.losses.append(step_loss)
+        self.state.img_tokens = img_tokens
+        self.state.txt_tokens = txt_tokens
+        self.state.tokens = img_tokens + txt_tokens
         return step_loss
 
     def _degrade_memory(self) -> bool:
@@ -666,11 +697,16 @@ class Trainer:
                 elapsed = time.perf_counter() - started
                 self.log(
                     f"step {step + 1}/{cfg.steps}  loss {step_loss:.4f}  avg {running / cfg.log_every:.4f}  "
-                    f"lr {self.state.lr:.2e}  {elapsed:.2f}s  peak {peak:.1f} GiB"
+                    f"lr {self.state.lr:.2e}  {elapsed:.2f}s  "
+                    f"tok {self.state.tokens} (img {self.state.img_tokens} + txt {self.state.txt_tokens})  "
+                    f"peak {peak:.1f} GiB"
                     f" (reserved {memory['reserved']:.1f}, device {memory['device']:.1f})"
                 )
                 self._append_metrics({
                     "step": step + 1, "total": cfg.steps, "train": step_loss,
+                    "tokens": self.state.tokens,
+                    "img_tokens": self.state.img_tokens,
+                    "txt_tokens": self.state.txt_tokens,
                     "avg": running / cfg.log_every, "lr": self.state.lr,
                     "sec": round(elapsed, 3), "peak": round(peak, 2),
                     "reserved": round(memory["reserved"], 2),

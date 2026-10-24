@@ -59,7 +59,11 @@ class FP8Linear(nn.Module):
         self.compute_dtype = compute_dtype
         weight = linear.weight.detach().float()
         scale = weight.abs().amax(dim=1, keepdim=True).clamp_min(1e-8) / FP8_MAX
-        self.register_buffer("weight", (weight / scale).to(torch.float8_e4m3fn), persistent=False)
+        # A Parameter, not a buffer, although it never receives a gradient: block
+        # streaming walks ``module.parameters()`` to decide what can leave the card,
+        # and a buffer would silently stay resident, making blocks_to_swap a no-op
+        # for fp8 runs.
+        self.weight = nn.Parameter((weight / scale).to(torch.float8_e4m3fn), requires_grad=False)
         self.register_buffer("scale", scale.to(torch.bfloat16), persistent=False)
         self.bias = linear.bias
         if self.bias is not None:

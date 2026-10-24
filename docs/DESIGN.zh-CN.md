@@ -235,11 +235,11 @@ Sidecar 文件固定采用 `schema: 2` 结构，容纳两个互不干扰的风�
 
 各项机制的底层行为如下：
 - 精度与累加器：`model.dtype` 默认 `bfloat16`；设为 `float16` 时自动启用 `GradScaler`，若同时开启 `vram.fp16_accumulate: true`，则设置 `torch.backends.cuda.matmul.allow_fp16_accumulation = True` 以换取消费级显卡更高的半精度 Tensor Core 吞吐。
-- DiT 权重量化：`vram.quantize_dit` 选范围——`ffn` 只替换两个 FFN 投影，`all` 替换每块的 QKVO 与 FFN——`vram.quantize_dtype` 选存储格式。`nf4` 把模块换成 `bitsandbytes.nn.Linear4bit`（`quant_type="nf4"`, `compress_statistics=True`）；`fp8` 换成 [FP8Linear](<../moss_lora/quant.py>)，权重以 `float8_e4m3fn` 存储、每行输出一个缩放因子，计算前再展宽到计算精度。两者都让适配器保持 `bfloat16` 并把梯度透传到输入；只有冻结模块（不含 `lora_` 子模块的那些）会被替换，可训练权重绝不会被取整。模型先在主机内存里构建并量化、再一次性上传，因为模型已在显卡上后再替换模块会切碎分配器。
+- DiT 权重量化：`vram.quantize_dit` 选范围——`ffn` 只替换两个 FFN 投影，`all` 替换每块的 QKVO 与 FFN——`vram.quantize_dtype` 选存储格式。`nf4` 把模块换成 `bitsandbytes.nn.Linear4bit`（`quant_type="nf4"`, `compress_statistics=True`）；`fp8` 换成 [FP8Linear](<../moss_lora/quant.py>)，权重以 `float8_e4m3fn` 存储、每行输出一个缩放因子，计算前再展宽到计算精度。这份权重是冻结的 `Parameter` 而不是 buffer，因为块流式加载靠遍历 `parameters()` 决定什么可以离开显卡：存成 buffer 它会一直常驻，让 fp8 运行的 `blocks_to_swap` 变成一个静默的空操作。两者都让适配器保持 `bfloat16` 并把梯度透传到输入；只有冻结模块（不含 `lora_` 子模块的那些）会被替换，可训练权重绝不会被取整。模型先在主机内存里构建并量化、再一次性上传，因为模型已在显卡上后再替换模块会切碎分配器。
 - conditioning 半边：`vram.quantize_conditioning` 把同一种格式扩展到 `layers.*` 之外的 16 个冻结 Linear——文本投影及其两个块、两个调制、时间嵌入和最终投影。默认 `none`，且只在 `quantize_dit` 不为 `none` 时生效，因为 per-block 调制会被每一个块乘进去，取整误差会逐层放大而不是相互抵消。
 - 块流式加载：`vram.blocks_to_swap = N` 让前 `42 - N` 块常驻、尾部 `N` 块从主机内存流式载入，`42` 表示整栈流式；`-1` 表示跟随预设。WebUI 呈现的是补集——常驻层数——因为那才是用户思考的量，存储键保持不变。流式加载要求开启 `gradient_checkpointing`。被流式块的冻结基座权重放在锁页主机内存里，其 LoRA 权重常驻显卡；`_SwapCheckpoint` 在该块前向与反向重算之前拷入基座权重、算完立即释放，因此同一时刻显卡上只有一块的基座权重。一个块大小的预取窗口让下一块的拷贝与当前块的计算重叠，拷贝走独立流并配合 `record_stream`，避免分配器在拷贝仍排队时回收目标缓冲区。释放的 GPU 缓冲区进池复用而不是还给分配器：每个块形状完全相同，所以一组缓冲区可以直接交给下一次上传。若在每次载入时分配、每次释放时归还——每步 84 次瞬时分配——分配器永远无法合并这些碎片，reserved 会一步步往上爬直到把显卡占满，等于把流式加载省下来的显存又赔回去。
 - OOM 动态降级：训练循环捕获 `torch.cuda.OutOfMemoryError` 后调用 `_degrade_memory`，把 `blocks_to_swap` 增加 8 层，直到模型实际的块数上限，清空 CUDA 缓存后立即重试当前步。也就是说缺显存时训练会朝流式加载退化而不是直接死掉，一开始余量给少了也能自己跑下去。
-- 编译加速：`vram.compile: true` 时对 `model.forward` 施加 `torch.compile(..., dynamic=True, fullgraph=False)`，编译失败则自动回退至 eager 模式。
+- 编译加速：`vram.compile: true` 时对 `model.forward` 施加 `torch.compile(..., dynamic=True, fullgraph=False)`，编译失败则自动回退至 eager 模式。只要有块在流式加载，这项就整体跳过：换入路径每次拷贝都会记录一个 CUDA event，Dynamo 无法追踪，而且这个错误不会在启动时报出来，要等到第一次验证才炸。流式运行本来也拿不到编译的收益。
 - 遥测与预估：`_memory_stats` 把已分配、已保留显存和显卡名称写进每条 metrics 记录与日志行，`metrics.jsonl` 因此留下了每次运行真正达到的峰值。`memory.estimate_vram` 回答的是运行之前的同一个问题：它遍历配置，累加选定量化下的冻结权重、开了检查点的激活、LoRA 与优化器状态、样图路径，再加一笔固定的 CUDA 上下文余量，分别给出训练峰值与样图峰值以及合计。`POST /api/estimate` 把它暴露给仪表盘，于是预测峰值与实测峰值并排显示，两者之间的偏差是看得见的，而不是悄悄发生。
 
 ### 6.4 验证、采样、检查点与断点续训
