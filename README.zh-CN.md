@@ -11,7 +11,7 @@
 ## 主要特性
 
 - 分阶段缓存：FLUX.2 VAE 编码潜变量，本地 Qwen3.5-9B 编码文本特征并落盘。文本批处理采用右侧因果 padding，训练前向按掩码切取有效长度，避免 padding 污染文本特征。
-- 流匹配训练与显存分档：采用截断 logit-normal $\sigma$ 采样与按 token 归一化的速度场 MSE 损失。内置 `auto|32|24|16|12|8|6` 显存档位，组合激活检查点、权重量化（`quantize_dit: none|ffn|all`，格式 `nf4` 或 `fp8`，conditioning 半边可选）、从主机内存流式加载块、`torch.compile` 与 `fp16` 累加，`auto` 在 `packed`（FlashAttention-2 varlen）与 `padded`（token 维补齐）之间自动选择。仪表盘在运行前后并排显示预测显存峰值与实测峰值。
+- 流匹配训练与显存分档：采用截断 logit-normal $\sigma$ 采样与按 token 归一化的速度场 MSE 损失。六档显存预设（`32`、`24`、`16`、`12`、`8`、`6` GB）组合激活检查点、权重量化（`quantize_dit: none|ffn|all`，格式 `nf4` 或 `fp8`，conditioning 半边可选）、从主机内存流式加载块、`torch.compile` 与 `fp16` 累加，训练支持 `packed`（FlashAttention-2 varlen）与 `padded`（token 维补齐）两种批处理模式。仪表盘在运行前后并排显示预测显存峰值与实测峰值。
 - 正则集与留出验证：通过 `dataset.reg_path` 引入正则集抑制概念漂移，按 `train.eval_holdout` 切分留出集定期计算验证损失。
 - 双风格提示词生成：调用 OpenAI 兼容视觉模型接口，支持保留原 tag 并补写场景句的 `tag_caption` 与长中短三档描述的 `official` 风格，写入同名 sidecar JSON。
 - 免构建 WebUI：前端运行原生 ES module（含中控台、训练配置、数据集、缓存、采样对比、导出、工作区、设置、提示词生成九个标签页），修改代码后刷新直接生效。
