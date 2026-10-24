@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -163,6 +164,11 @@ async def check_frozen_while_running(http: httpx.AsyncClient) -> None:
                                                  "run": "demo-run", "parts": ["latent"]})
     assert blocked.status_code == 409, blocked.text
 
+    blocked_train = await http.post("/api/jobs", json={"kind": "train", "workspace": WORKSPACE,
+                                                      "run": "demo-run"})
+    assert blocked_train.status_code == 409, blocked_train.text
+    assert blocked_train.json()["detail"]["code"] == "err.run.frozen", blocked_train.text
+
     # 跑完之后不再拦：谁改谁负责
     heartbeat("done")
     allowed = await http.put(url, json={"yaml": yaml.safe_dump(config_dict(888))})
@@ -193,6 +199,80 @@ async def check_jobs_read_the_run_file(http: httpx.AsyncClient) -> None:
         assert spawned and spawned[0] == snapshot, spawned
     finally:
         jobs_router._run = original_run
+        job_registry.JOBS.items.clear()
+
+
+def run_dirs() -> list[str]:
+    base = os.path.join(workspace_dir(), "runs")
+    return sorted(name for name in os.listdir(base)
+                  if os.path.isdir(os.path.join(base, name)))
+
+
+async def wait_for_job(spawned: list) -> None:
+    deadline = time.time() + 2
+    while not spawned and time.time() < deadline:
+        await asyncio.sleep(0.01)
+    assert spawned, "the train job never reached the launcher"
+
+
+async def check_train_targets_the_named_run(http: httpx.AsyncClient) -> None:
+    """Train the selected run; only a bare YAML allocates a new run id.
+
+    The endpoint is exercised with the launcher stubbed in the router module,
+    so no trainer process starts and no GPU is touched.
+    """
+    runs_dir = os.path.join(workspace_dir(), "runs")
+    before = run_dirs()
+
+    spawned: list = []
+    original_run = jobs_router._run
+    original_summary = jobs_router._cache_summary
+    try:
+        jobs_router._run = lambda job: spawned.append(job)
+        jobs_router._cache_summary = lambda config: {
+            "index_ready": True, "items": 1, "missing_text": 0,
+        }
+
+        response = await http.post("/api/jobs", json={"kind": "train", "workspace": WORKSPACE,
+                                                     "run": "demo-run"})
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["run_id"] == "demo-run", body
+        assert body["name"] == "demo-run", body
+        assert body["output_dir"] == os.path.relpath(os.path.join(runs_dir, "demo-run"), ROOT), body
+        assert run_dirs() == before, (before, run_dirs())
+
+        await wait_for_job(spawned)
+        job = spawned[-1]
+        assert job.run_name == "demo-run", job
+        assert job.output_dir == os.path.relpath(os.path.join(runs_dir, "demo-run"), ROOT), job
+        assert job.log_path == os.path.join(workspace_dir(), "logs", "demo-run.log"), job
+        with open(job.config_path, encoding="utf-8") as handle:
+            snapshot = yaml.safe_load(handle)
+        assert snapshot["name"] == "demo-run", snapshot
+        assert os.path.realpath(snapshot["output_dir"]) == os.path.realpath(runs_dir), snapshot
+
+        # Without a run name the endpoint still allocates a timestamped target,
+        # and allocation alone must not create the directory.
+        job_registry.JOBS.items.clear()
+        spawned.clear()
+        posted = yaml.safe_dump(config_dict(123), allow_unicode=True, sort_keys=False)
+        response = await http.post("/api/jobs", json={"kind": "train", "workspace": WORKSPACE,
+                                                     "yaml": posted})
+        assert response.status_code == 200, response.text
+        body = response.json()
+        run_id = body["run_id"]
+        assert run_id and run_id != "demo-run", body
+        assert re.fullmatch(r"\d{8}-\d{6}(?:-\d+)?", run_id), run_id
+        assert body["name"] == run_id, body
+        assert body["output_dir"] == os.path.relpath(os.path.join(runs_dir, run_id), ROOT), body
+        assert run_id not in os.listdir(runs_dir), body
+        assert run_dirs() == before, (before, run_dirs())
+        await wait_for_job(spawned)
+        assert spawned[-1].run_name == run_id, spawned[-1]
+    finally:
+        jobs_router._run = original_run
+        jobs_router._cache_summary = original_summary
         job_registry.JOBS.items.clear()
 
 
@@ -227,6 +307,7 @@ async def main() -> None:
             await check_run_config_read_write(http)
             await check_frozen_while_running(http)
             await check_jobs_read_the_run_file(http)
+            await check_train_targets_the_named_run(http)
         await check_no_configs_directory_in_code()
     finally:
         shutil.rmtree(workspace_dir(), ignore_errors=True)

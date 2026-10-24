@@ -407,9 +407,15 @@ def _next_run_id(parent: str) -> str:
     return run_id
 
 
-def _workspace_target_run(workspace: str) -> tuple[str, str, str]:
+def _workspace_target_run(workspace: str, run: str = "") -> tuple[str, str, str]:
+    """The run a job trains or previews: the named one, or a fresh timestamp.
+
+    A caller that names an existing run trains it in place; only a caller with
+    no run allocates a new id. Allocation never creates the directory -- the
+    trainer does that when it writes the run's own config and checkpoints.
+    """
     runs = _workspace_runs_dir(workspace)
-    run_id = _next_run_id(runs)
+    run_id = run or _next_run_id(runs)
     return workspace, run_id, os.path.join(runs, run_id)
 
 def _dir_usage(path: str) -> dict:
