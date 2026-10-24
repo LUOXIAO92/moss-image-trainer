@@ -82,12 +82,21 @@ def _to_linear4bit(linear: nn.Linear, dtype: torch.dtype = torch.bfloat16,
                    device: torch.device | str | None = None) -> nn.Module:
     """Pack one Linear to nf4.
 
-    ``device`` moves the packing itself. bnb packs on the CPU by default, which
-    runs at about 0.2 GiB/s: packing a 5B model that way costs 45 seconds, while
-    the same bytes packed by a CUDA kernel take 0.2. The streamed loader passes
-    the card here and then decides whether the packed weight stays or leaves.
+    ``device`` selects the kernel that does the packing: the CUDA kernel runs at
+    about 40 GiB/s and the CPU kernel at 0.2, so a 5B model takes 0.2 seconds
+    one way and 45 the other. The two kernels agree on every code and disagree
+    on the scale of about 0.1% of the blocks by one step, so CPU packing is what
+    reproduces the pre-streaming bytes exactly.
+
+    The packed weight then moves to wherever the module lives. Passing the pack
+    device to ``from_prequantized`` matters: bnb packs a plain ``Params4bit``
+    lazily inside ``.to(device)``, and that pack runs on the destination device,
+    so a CPU pack that ends with a move to the card would silently pack on the
+    card instead.
     """
     import bitsandbytes as bnb
+
+    pack_device = torch.device(device) if device is not None else torch.device("cpu")
 
     # Build on the meta device: nn.Linear's constructor initialises a full
     # in_features x out_features matrix that this function immediately replaces,
@@ -101,28 +110,21 @@ def _to_linear4bit(linear: nn.Linear, dtype: torch.dtype = torch.bfloat16,
         quant_type="nf4",
         device="meta",
     )
-    if device is not None and torch.device(device).type == "cuda":
-        weight = linear.weight.data.detach().to(device=device, dtype=dtype)
-        packed, state = bnb.functional.quantize_4bit(
-            weight, quant_type="nf4", compress_statistics=True, blocksize=64)
-        quantized.weight = bnb.nn.Params4bit.from_prequantized(
-            packed, state.as_dict(), requires_grad=False, device=weight.device, module=quantized)
-        if linear.bias is not None:
-            quantized.bias = nn.Parameter(
-                linear.bias.data.to(device=weight.device, dtype=dtype), requires_grad=False)
-        del weight
-        return quantized
-    quantized.weight = bnb.nn.Params4bit(
-        linear.weight.data.detach().to("cpu", dtype),
-        requires_grad=False,
-        quant_type="nf4",
-        compress_statistics=True,
-    )
-    # The bias has to be real before the move: the module was built on meta, and
-    # ``to`` cannot read a meta tensor. Packing then happens on the way out.
+    weight = linear.weight.data.detach().to(device=pack_device, dtype=dtype)
+    packed, state = bnb.functional.quantize_4bit(
+        weight, quant_type="nf4", compress_statistics=True, blocksize=64)
+    quantized.weight = bnb.nn.Params4bit.from_prequantized(
+        packed, state.as_dict(), requires_grad=False, device=pack_device, module=quantized)
     if linear.bias is not None:
-        quantized.bias = nn.Parameter(linear.bias.data.detach().to(dtype), requires_grad=False)
-    quantized = quantized.to(linear.weight.device or "cpu")
+        quantized.bias = nn.Parameter(
+            linear.bias.data.detach().to(device=pack_device, dtype=dtype), requires_grad=False)
+    del weight
+
+    target = linear.weight.device or torch.device("cpu")
+    same_device = target.type == pack_device.type and (
+        pack_device.index is None or target.index == pack_device.index)
+    if not same_device:
+        quantized = quantized.to(target)
     return quantized
 
 
