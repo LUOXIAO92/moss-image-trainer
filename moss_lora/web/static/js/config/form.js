@@ -216,6 +216,10 @@ export function syncSaveStateControls() {
     : t('train.state.disabledTitle');
 }
 
+// The format and conditioning selects only decide anything while the DiT is
+// quantized, so their whole label rows follow the scope select. Hiding the rows
+// beats disabling them: an inert dropdown that stays on screen reads as a live
+// control.
 export function syncQuantizeControls() {
   const dit = $('#cfg-quantize-dit');
   const dtype = $('#cfg-quantize-dtype');
@@ -224,13 +228,7 @@ export function syncQuantizeControls() {
   const enabled = String(dit.value || 'none').toLowerCase() !== 'none';
   for (const select of [dtype, conditioning]) {
     select.disabled = !enabled;
-    if (enabled) {
-      select.removeAttribute('title');
-      select.removeAttribute('aria-disabled');
-    } else {
-      select.title = t('train.params.quantizeDisabledTitle');
-      select.setAttribute('aria-disabled', 'true');
-    }
+    select.closest('label.field')?.classList.toggle('hidden', !enabled);
   }
 }
 
@@ -293,6 +291,9 @@ export function applyPresetToForm(tier) {
     else if (typeof value === 'boolean') element.value = value ? 'true' : 'false';
     else element.value = String(value);
   }
+  // The preset writes the scope select directly, so the dependent rows need
+  // the same pass a manual change gets.
+  syncQuantizeControls();
   const preview = bundle.preview || {};
   const vaeDtype = $('#cfg-preview-vae-dtype');
   if (vaeDtype && preview.vae_dtype) vaeDtype.value = String(preview.vae_dtype);

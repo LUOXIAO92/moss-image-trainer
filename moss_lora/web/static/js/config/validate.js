@@ -33,7 +33,10 @@ export function setFieldError(field, message) {
       error.textContent = '';
       error.classList.add('hidden');
     }
-    const described = input.dataset.originalDescribedby || '';
+    // Nothing to restore when the field never carried an error: the markup's
+    // own aria-describedby is still in place.
+    const described = input.dataset.originalDescribedby;
+    if (described === undefined) return;
     if (described) input.setAttribute('aria-describedby', described);
     else input.removeAttribute('aria-describedby');
     return;

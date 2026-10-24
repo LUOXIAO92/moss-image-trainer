@@ -216,7 +216,8 @@
             </label>
             <label class="field" for="cfg-resident-blocks">
               <span class="field-label" data-i18n="train.vram.residentBlocks">常驻层数</span>
-              <input id="cfg-resident-blocks" type="number" min="0" max="42" step="1" inputmode="numeric" placeholder="42">
+              <input id="cfg-resident-blocks" type="number" min="0" max="42" step="1" inputmode="numeric" placeholder="42" aria-describedby="cfg-resident-help">
+              <span class="field-help" id="cfg-resident-help" data-i18n="train.vram.residentHelp">卸载到主机内存的块会占用系统内存，常驻层数越少，占用的主机内存越多。</span>
             </label>
             <label class="field" for="cfg-grad-ckpt">
               <span class="field-label" data-i18n="train.vram.checkpointing">梯度检查点</span>
