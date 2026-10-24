@@ -78,9 +78,20 @@ class FP8Linear(nn.Module):
         return torch.nn.functional.linear(x.to(dtype), weight, bias)
 
 
-def _to_linear4bit(linear: nn.Linear, dtype: torch.dtype = torch.bfloat16) -> nn.Module:
+def _to_linear4bit(linear: nn.Linear, dtype: torch.dtype = torch.bfloat16,
+                   device: torch.device | str | None = None) -> nn.Module:
+    """Pack one Linear to nf4.
+
+    ``device`` moves the packing itself. bnb packs on the CPU by default, which
+    runs at about 0.2 GiB/s: packing a 5B model that way costs 45 seconds, while
+    the same bytes packed by a CUDA kernel take 0.2. The streamed loader passes
+    the card here and then decides whether the packed weight stays or leaves.
+    """
     import bitsandbytes as bnb
 
+    # Build on the meta device: nn.Linear's constructor initialises a full
+    # in_features x out_features matrix that this function immediately replaces,
+    # and for the 5B model that random init is the bulk of the packing time.
     quantized = bnb.nn.Linear4bit(
         linear.in_features,
         linear.out_features,
@@ -88,16 +99,30 @@ def _to_linear4bit(linear: nn.Linear, dtype: torch.dtype = torch.bfloat16) -> nn
         compute_dtype=dtype,
         compress_statistics=True,
         quant_type="nf4",
+        device="meta",
     )
+    if device is not None and torch.device(device).type == "cuda":
+        weight = linear.weight.data.detach().to(device=device, dtype=dtype)
+        packed, state = bnb.functional.quantize_4bit(
+            weight, quant_type="nf4", compress_statistics=True, blocksize=64)
+        quantized.weight = bnb.nn.Params4bit.from_prequantized(
+            packed, state.as_dict(), requires_grad=False, device=weight.device, module=quantized)
+        if linear.bias is not None:
+            quantized.bias = nn.Parameter(
+                linear.bias.data.to(device=weight.device, dtype=dtype), requires_grad=False)
+        del weight
+        return quantized
     quantized.weight = bnb.nn.Params4bit(
         linear.weight.data.detach().to("cpu", dtype),
         requires_grad=False,
         quant_type="nf4",
         compress_statistics=True,
     )
-    quantized = quantized.to(linear.weight.device)
+    # The bias has to be real before the move: the module was built on meta, and
+    # ``to`` cannot read a meta tensor. Packing then happens on the way out.
     if linear.bias is not None:
-        quantized.bias = nn.Parameter(linear.bias.data.to(dtype), requires_grad=False)
+        quantized.bias = nn.Parameter(linear.bias.data.detach().to(dtype), requires_grad=False)
+    quantized = quantized.to(linear.weight.device or "cpu")
     return quantized
 
 
@@ -106,8 +131,15 @@ def _frozen_linears(
     scope: str,
     skip: tuple[str, ...],
     only: tuple[str, ...] | None,
+    prefix: str = "layers.",
 ) -> list[tuple[str, nn.Linear]]:
-    """The Linears this scope may replace, in module order."""
+    """The Linears this scope may replace, in module order.
+
+    ``prefix`` names the part of the model the scope applies to. The whole model
+    uses ``"layers."`` so the conditioning half stays accurate; a single block
+    passed in on its own (the streamed loader quantizes one block at a time)
+    passes ``""`` and every Linear inside it is in scope.
+    """
     targets = []
     for name, module in model.named_modules():
         if not isinstance(module, nn.Linear) or any(token in name for token in skip):
@@ -115,7 +147,7 @@ def _frozen_linears(
         module.weight.requires_grad = False  # base weights are frozen either way
         if only is not None and not any(marker in name for marker in only):
             continue
-        if only is None and not name.startswith("layers."):
+        if only is None and prefix and not name.startswith(prefix):
             continue  # the conditioning half of the model stays accurate
         if scope == "ffn" and not any(marker in name for marker in FFN_MARKERS):
             continue
@@ -137,12 +169,14 @@ def quantize_nf4(
     dtype: torch.dtype = torch.bfloat16,
     skip: tuple[str, ...] = ("lora_",),
     only: tuple[str, ...] | None = None,
+    prefix: str = "layers.",
+    device: torch.device | str | None = None,
 ) -> int:
     """Replace frozen Linears with nf4 ones. Returns how many were replaced."""
     if scope not in ("ffn", "all"):
         return 0
-    targets = _frozen_linears(model, scope, skip, only)
-    return _replace(model, targets, lambda module: _to_linear4bit(module, dtype))
+    targets = _frozen_linears(model, scope, skip, only, prefix)
+    return _replace(model, targets, lambda module: _to_linear4bit(module, dtype, device))
 
 
 def quantize_fp8(
@@ -151,11 +185,12 @@ def quantize_fp8(
     dtype: torch.dtype = torch.bfloat16,
     skip: tuple[str, ...] = ("lora_",),
     only: tuple[str, ...] | None = None,
+    prefix: str = "layers.",
 ) -> int:
     """Replace frozen Linears with fp8 e4m3 storage. Returns how many."""
     if scope not in ("ffn", "all"):
         return 0
-    targets = _frozen_linears(model, scope, skip, only)
+    targets = _frozen_linears(model, scope, skip, only, prefix)
     return _replace(model, targets, lambda module: FP8Linear(module, compute_dtype=dtype))
 
 

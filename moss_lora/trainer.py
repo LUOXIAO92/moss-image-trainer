@@ -144,23 +144,27 @@ class Trainer:
 
     def load(self):
         self._configure_precision()
-        scope = str(getattr(self.config.vram, "quantize_dit", "none") or "none").lower()
-        # Building the model on the card costs the full bf16 footprint for as long
-        # as it takes to quantize it, and a card that needs nf4 cannot afford that
-        # instant. The quantized path therefore assembles the model in host memory
-        # and moves the packed result up afterwards.
-        on_host = scope != "none"
+        vram = self.config.vram
+        scope = str(getattr(vram, "quantize_dit", "none") or "none").lower()
         self.log(f"loading transformer {self.config.model.dit}"
-                 + (" (host memory, quantize before upload)" if on_host else ""))
+                 + (f" ({scope}, block by block)" if scope != "none" else " (block by block)"))
         self.model = load_transformer(
-            self.config.model.dit, dtype=self.dtype, device="cpu" if on_host else self.device)
+            self.config.model.dit, dtype=self.dtype, device=self.device,
+            quantize_scope=scope,
+            quantize_dtype=str(getattr(vram, "quantize_dtype", "nf4") or "nf4"),
+            blocks_to_swap=int(getattr(vram, "blocks_to_swap", 0) or 0),
+            quantize_conditioning=str(getattr(vram, "quantize_conditioning", "none") or "none"),
+            log=self.log,
+        )
         self.model.train()
         self._attach_lora()
-        self._maybe_quantize()
-        if on_host:
-            self.model.to(self.device)
-            torch.cuda.empty_cache()
-            self.log(f"uploaded quantized transformer: {self._memory_stats()['device']:.1f} GiB on the card")
+        # The adapter is the only thing that never leaves the card: a streamed
+        # tail block sits in host memory when the adapter is attached to it, so
+        # its LoRA weights are created there and have to be moved up.
+        for parameter in self.model.parameters():
+            if parameter.requires_grad:
+                parameter.data = parameter.data.to(self.device)
+        self.log(f"transformer ready: {self._memory_stats()['device']:.1f} GiB on the card")
         self._set_checkpointing(bool(self.config.vram.gradient_checkpointing))
         self._setup_block_swap()
         self._maybe_compile()

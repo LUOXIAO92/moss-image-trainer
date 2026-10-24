@@ -56,7 +56,9 @@ Streaming moves weights; it does not reduce the work. The offloaded blocks end u
 | all + fp8 | 4.4 GB |
 | all + nf4 | 2.2 GB |
 
-Host memory peaks higher than the steady pinned copy: a quantized run builds the model on the host before it uploads. On a machine with 16 GB of system memory, host memory is the binding constraint on a streamed run, not the card: bf16 pins 8.9 GB, and a quantized run needs 10-11 GB just to load.
+Host memory peaks higher than the steady pinned copy only while loading, and the loader keeps that peak small. The model is built block by block: each block is read, packed to its storage format, and then either kept on the card or moved to host memory. The bf16 weights of the whole model are never resident at once, so the load peak is the packed tail plus one block in flight, not a full bf16 copy.
+
+An unquantized run is the exception, because its blocks are bf16 wherever they live: on a card that cannot hold all 42, the streamed tail is 8.9 GB of host memory, and loading is the only moment the card sees the whole model.
 
 The copies cost time in proportion to the bytes moved. bf16 fully streamed was about 20% slower per step than bf16 resident. `all` + nf4 fully streamed was within 2% of resident, because it moves a quarter of the bytes. The lookahead overlaps each copy with the block's compute, so the penalty depends on bytes and PCIe width, not on the number of blocks.
 

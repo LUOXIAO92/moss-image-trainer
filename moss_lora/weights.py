@@ -12,6 +12,7 @@ import json
 import os
 
 import torch
+from safetensors import safe_open
 from safetensors.torch import load_file
 
 from .model import MOSSImageTransformer
@@ -40,20 +41,166 @@ def split_fused_qkv(state: dict) -> dict:
     return out
 
 
-def load_transformer(path: str, dtype=torch.bfloat16, device: str | torch.device = "cpu") -> MOSSImageTransformer:
+# Which loader ``load_transformer`` uses. "streamed" builds the model block by
+# block and never holds the whole checkpoint as bf16 parameters; "full" is the
+# old read-everything-then-fill-it path, kept only so the two can be compared.
+LOAD_MODE = "streamed"
+
+# Where nf4 packing runs: "auto" uses the card when there is one, "cpu" packs in
+# host memory. Packing a 5B model takes 45 seconds on the CPU and 0.2 on the
+# card, and a block's bf16 copy on the card is 0.23 GiB, so "auto" means the card.
+QUANTIZE_DEVICE = "auto"
+
+TRANSFORMER_BLOCKS = 42
+
+
+def load_transformer(
+    path: str,
+    dtype=torch.bfloat16,
+    device: str | torch.device = "cpu",
+    *,
+    quantize_scope: str = "none",
+    quantize_dtype: str = "nf4",
+    blocks_to_swap: int = 0,
+    quantize_conditioning: str = "none",
+    log=None,
+) -> MOSSImageTransformer:
+    """Load the DiT, quantizing on the way in when a format is set.
+
+    The streamed loader is the default: it builds the model on the meta device
+    and fills it one block at a time, so the bf16 checkpoint never exists as a
+    second copy in host memory and the random initialisation never runs. With
+    ``quantize`` set, each block is packed before the next one is read, which is
+    what makes a streamed nf4 run fit on a 16 GB host.
+    """
+    if LOAD_MODE == "full" or os.path.isdir(path):
+        return _load_transformer_full(path, dtype=dtype, device=device,
+                                      quantize_scope=quantize_scope, quantize_dtype=quantize_dtype,
+                                      blocks_to_swap=blocks_to_swap,
+                                      quantize_conditioning=quantize_conditioning, log=log)
+    return _load_transformer_streamed(path, dtype=dtype, device=device,
+                                      quantize_scope=quantize_scope, quantize_dtype=quantize_dtype,
+                                      blocks_to_swap=blocks_to_swap,
+                                      quantize_conditioning=quantize_conditioning, log=log)
+
+
+def _note(log, message: str) -> None:
+    if log is not None:
+        log(message)
+
+
+def _place_block(block, device, offloaded: bool, quantized: bool) -> None:
+    """Put one block where it belongs.
+
+    A tail block that was never quantized is already in host memory, so it stays
+    there and the swap picks it up at the first step. A quantized one makes the
+    trip up and back for a reason: packing happens on the host, and the swap
+    moves only ``param.data``, so the scales have to reach the card now or they
+    would still be on the host when the packed weight comes up.
+    """
+    if not offloaded:
+        block.to(device)
+        return
+    if not quantized:
+        return
+    block.to(device)
+    for parameter in block.parameters():
+        parameter.data = parameter.data.to("cpu")
+
+
+def _load_transformer_streamed(path: str, *, dtype, device, quantize_scope: str, quantize_dtype: str,
+                               blocks_to_swap: int, quantize_conditioning: str, log) -> MOSSImageTransformer:
+    from .quant import quantize_conditioning as quantize_conditioning_half
+    from .quant import quantize_fp8, quantize_nf4
+
+    scope = str(quantize_scope or "none").lower()
+    fmt = str(quantize_dtype or "nf4").lower()
+    pack = quantize_fp8 if fmt == "fp8" else quantize_nf4
+
+    with torch.device("meta"):
+        model = MOSSImageTransformer(dtype=dtype)
+    model.to_empty(device="cpu")
+    model.eval()
+    blocks = len(model.layers)
+    swap = max(0, min(blocks, int(blocks_to_swap or 0)))
+
+    with safe_open(path, framework="pt") as handle:
+        keys = list(handle.keys())
+        block_keys = {index: [k for k in keys if k.startswith(f"layers.{index}.")]
+                      for index in range(blocks)}
+        head = {k: handle.get_tensor(k) for k in keys if not k.startswith("layers.")}
+        head.pop("rope.bands", None)  # constant rebuilt by _RoPE
+        model.load_state_dict(head, strict=False)
+        del head
+        if str(quantize_conditioning or "none").lower() != "none":
+            replaced = quantize_conditioning_half(model, quantize_conditioning, compute_dtype=dtype)
+            _note(log, f"conditioning: {replaced} Linears -> {quantize_conditioning}")
+        # Only the conditioning half goes up now; the blocks follow one at a time
+        # and the streamed tail never touches the card.
+        for name, module in model.named_children():
+            if name != "layers":
+                module.to(device)
+
+        on_card = str(QUANTIZE_DEVICE).lower() != "cpu" and torch.cuda.is_available()
+        for index in range(blocks):
+            state = split_fused_qkv({k: handle.get_tensor(k) for k in block_keys[index]})
+            model.load_state_dict(state, strict=False)
+            del state
+            block = model.layers[index]
+            offloaded = index >= blocks - swap
+            if scope == "none":
+                _place_block(block, device, offloaded=offloaded, quantized=False)
+                continue
+            if on_card:
+                # bf16 up, packed in place, and only a tail block's packed weight
+                # comes back. Its scales stay on the card, which is where the
+                # swap expects them.
+                block.to(device)
+                kwargs = {"device": device} if fmt == "nf4" else {}
+                replaced = pack(block, scope, dtype=dtype, prefix="", **kwargs)
+                if offloaded:
+                    for parameter in block.parameters():
+                        parameter.data = parameter.data.to("cpu")
+            else:
+                replaced = pack(block, scope, dtype=dtype, prefix="")
+                _place_block(block, device, offloaded=offloaded, quantized=True)
+            if index == 0:
+                _note(log, f"quantize: {replaced} frozen Linears per block -> {fmt} ({scope})")
+    return model.eval()
+
+
+def _load_transformer_full(path: str, *, dtype, device, quantize_scope: str, quantize_dtype: str,
+                           blocks_to_swap: int, quantize_conditioning: str, log) -> MOSSImageTransformer:
+    """The pre-streaming loader: read the file, build the model, fill it."""
+    from .quant import quantize_conditioning as quantize_conditioning_half
+    from .quant import quantize_fp8, quantize_nf4
+
+    scope = str(quantize_scope or "none").lower()
+    fmt = str(quantize_dtype or "nf4").lower()
+    pack = quantize_fp8 if fmt == "fp8" else quantize_nf4
+    on_host = scope != "none"
+
     if os.path.isdir(path):
         state = _load_dir_state(path, "diffusion_pytorch_model")
     else:
         state = load_file(path)
     state = split_fused_qkv(state)
-    state.pop("rope.bands", None)  # constant rebuilt by _RoPE
-    model = MOSSImageTransformer(device=device, dtype=dtype)
+    state.pop("rope.bands", None)
+    with torch.device("meta"):
+        model = MOSSImageTransformer(dtype=dtype)
+    model.to_empty(device="cpu" if on_host else device)
     missing, unexpected = model.load_state_dict(state, strict=False)
-    # ``rope.bands`` is a derived constant; the model recomputes it every forward.
     missing = [k for k in missing if k != "rope.bands"]
     if unexpected or missing:
         raise RuntimeError(f"DiT key mismatch: missing={missing[:4]} unexpected={unexpected[:4]}")
     del state
+    if scope != "none":
+        replaced = pack(model, scope, dtype=dtype)
+        _note(log, f"quantize: {replaced} frozen Linears -> {fmt} ({scope})")
+        if str(quantize_conditioning or "none").lower() != "none":
+            replaced = quantize_conditioning_half(model, quantize_conditioning, compute_dtype=dtype)
+            _note(log, f"conditioning: {replaced} Linears -> {quantize_conditioning}")
+        model.to(device)
     return model.eval()
 
 
