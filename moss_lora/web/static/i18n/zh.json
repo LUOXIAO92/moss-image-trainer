@@ -560,6 +560,8 @@
  "err.cache.missing_text": "{dir} 里的缓存缺了 {missing} 条文本编码（一共 {items} 条），去“缓存”页勾上“文本编码”补一遍",
  "err.cache.not_built": "{dir} 还没有生成缓存，先去“缓存”页生成一遍",
  "err.cache.parts_required": "至少要选一项：latent 缓存或文本编码",
+ "err.cache.preview_missing": "预览提示词还没编码：先跑一次 encode-text --preview-only，再开始训练",
+ "err.cache.preview_stale": "缓存里的预览提示词和当前配置不一致：重跑 encode-text --preview-only",
  "err.cache.sizing": "{dir} 里的缓存是按另一个面积上限生成的，跟现在的设置对不上，去“缓存”页重新生成 latent 缓存",
  "err.cache.stop_dead": "那个缓存进程已经不在了",
  "err.cache.stop_denied": "没有权限停止这个进程",

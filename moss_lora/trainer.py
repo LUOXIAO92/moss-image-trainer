@@ -20,6 +20,7 @@ from safetensors.torch import load_file, save_file
 from torch.nn import functional as F
 
 from . import runtime
+from .cache import preview_cache_state
 from .config import Config
 from .sigma import SigmaSampler
 from .weights import LatentCodec, load_transformer, load_vae
@@ -1273,12 +1274,19 @@ class Trainer:
         prompt in one pass. A pass that runs out of memory climbs the fallback
         ladder in ``_preview_after_oom`` rather than failing the run.
         """
-        path = os.path.join(self.cache_dir, "preview.safetensors")
-        if not os.path.exists(path):
+        preview = self.config.preview
+        state = preview_cache_state(self.cache_dir, preview.prompts, preview.negative_prompt)
+        if state != "ok":
+            # Sampling the vectors of a different prompt list would draw images
+            # nobody asked for. Say so once and keep training: the cache step is
+            # the only place the 9B encoder exists.
+            if not getattr(self, "_preview_skip_logged", False):
+                self._preview_skip_logged = True
+                self.log(f"preview skipped: {state} preview cache for the current prompts, "
+                         f"run encode-text --preview-only to rebuild it")
             return None
         from PIL import Image
 
-        preview = self.config.preview
         was_training = self.model.training
         started = time.perf_counter()
         self.model.eval()

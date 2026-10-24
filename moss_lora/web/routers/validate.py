@@ -87,6 +87,15 @@ async def api_validate(request: Request):
     if not config.train.sample_every:
         warnings.append(problem("err.warning.samples_off"))
 
+    # 预览向量的门禁：只有缓存本身健康时才报，否则先修缓存。
+    if prompts and config.train.sample_every and (cache or {}).get("index_ready") \
+            and not (cache or {}).get("legacy_index") and not (cache or {}).get("missing_text"):
+        preview_state = (cache or {}).get("preview_state")
+        if preview_state == "missing":
+            problems.append(problem("err.cache.preview_missing"))
+        elif preview_state == "stale":
+            problems.append(problem("err.cache.preview_stale"))
+
     # 缓存的问题单独说清楚，否则预检只是「不通过」而没有理由
     cache_problem = None
     if config.cache.dir and cache:

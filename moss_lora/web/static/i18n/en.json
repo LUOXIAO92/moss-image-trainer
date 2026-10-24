@@ -560,6 +560,8 @@
  "err.cache.missing_text": "The cache in {dir} is missing {missing} text embeddings out of {items} items. Turn on Text encoding on the Cache tab and run it again",
  "err.cache.not_built": "{dir} has no cache yet. Build it from the Cache tab first",
  "err.cache.parts_required": "Pick at least one: latent cache or text encoding",
+ "err.cache.preview_missing": "Preview prompts have not been encoded yet: run encode-text --preview-only before training",
+ "err.cache.preview_stale": "The cached preview prompts differ from the current config: rerun encode-text --preview-only",
  "err.cache.sizing": "The cache in {dir} was built for a different maximum image area than the current dataset settings. Rebuild the latent cache from the Cache tab",
  "err.cache.stop_dead": "That cache process is already gone",
  "err.cache.stop_denied": "No permission to stop this process",

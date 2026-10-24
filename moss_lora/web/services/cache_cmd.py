@@ -118,7 +118,7 @@ def _cache_summary(config: Config) -> dict:
     preview_path = os.path.join(cache_dir, "preview.safetensors")
     index_ready = os.path.isfile(index_path)
     preview_ready = os.path.isfile(preview_path)
-    from ...cache import reg_cache_dir
+    from ...cache import preview_cache_state, reg_cache_dir
 
     reg_dir = reg_cache_dir(config)
     info = {
@@ -129,8 +129,11 @@ def _cache_summary(config: Config) -> dict:
         "reg_dir": reg_dir,
         "reg_dir_rel": _rel(reg_dir),
         "index_ready": index_ready,
-        # preview.safetensors 只用于预览图，缺了不影响训练，前端不要当成阻塞项
+        # preview.safetensors 只用于预览图，缺了不影响训练，前端不要当成阻塞项；
+        # 但向量过期时预览会画成别的提示词，所以状态单独报给预检。
         "preview_ready": preview_ready,
+        "preview_state": preview_cache_state(cache_dir, config.preview.prompts,
+                                             config.preview.negative_prompt),
         "index_mtime": os.path.getmtime(index_path) if index_ready else None,
     }
     if not index_ready:

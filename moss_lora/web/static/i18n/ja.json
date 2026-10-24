@@ -560,6 +560,8 @@
  "err.cache.missing_text": "{dir} のキャッシュには {items} 件のうち {missing} 件のテキスト埋め込みが足りません。「キャッシュ」ページで「テキストエンコード」を選んで追加してください",
  "err.cache.not_built": "{dir} にはまだキャッシュがありません。先に「キャッシュ」ページで生成してください",
  "err.cache.parts_required": "latent キャッシュかテキストエンコードのどちらかを選んでください",
+ "err.cache.preview_missing": "プレビュー用プロンプトがまだエンコードされていません。学習前に encode-text --preview-only を実行してください",
+ "err.cache.preview_stale": "キャッシュ内のプレビュー用プロンプトが現在の設定と一致しません。encode-text --preview-only を再実行してください",
  "err.cache.sizing": "{dir} のキャッシュは別の面積上限で作られているため、現在の設定と合いません。「キャッシュ」ページで latent キャッシュを作り直してください",
  "err.cache.stop_dead": "そのキャッシュのプロセスはすでに終了しています",
  "err.cache.stop_denied": "このプロセスを停止する権限がありません",

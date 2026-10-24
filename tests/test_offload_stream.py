@@ -141,6 +141,10 @@ def check_streaming(model, latent, context):
         check_pool(swap)
         print("buffer pool                 : ok  a walk reuses one released set of GPU buffers")
     finally:
+        # Hand the weights back before dropping the swap: a released block's
+        # param.data still points at pinned host memory, and the next check
+        # runs the model without a swap.
+        swap.set_count(0)
         model.block_swap = None
 
 

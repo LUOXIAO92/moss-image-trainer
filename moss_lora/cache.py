@@ -165,6 +165,55 @@ def _text_len(path: str) -> int:
     return 0
 
 
+PREVIEW_NAME = "preview.safetensors"
+PREVIEW_VERSION = "1"
+
+
+def preview_path(cache_dir: str) -> str:
+    return os.path.join(cache_dir, PREVIEW_NAME)
+
+
+def preview_metadata(prompts, negative: str) -> dict[str, str]:
+    """The prompt list a preview bundle was encoded from, stored beside it.
+
+    safetensors metadata is a str -> str map, so the prompts travel as JSON. A
+    preview samples whatever vectors are in the bundle, so a bundle encoded from
+    other text would draw the old prompts without saying so.
+    """
+    return {
+        "version": PREVIEW_VERSION,
+        "prompts": json.dumps([str(p) for p in (prompts or [])], ensure_ascii=False),
+        "negative": str(negative or ""),
+    }
+
+
+def preview_cache_state(cache_dir: str, prompts, negative: str) -> str:
+    """``missing``, ``stale`` (encoded from other text) or ``ok``."""
+    from safetensors import safe_open
+
+    path = preview_path(cache_dir)
+    if not os.path.isfile(path):
+        return "missing"
+    try:
+        with safe_open(path, framework="pt") as handle:
+            metadata = handle.metadata() or {}
+    except Exception:
+        return "stale"
+    if metadata.get("version") != PREVIEW_VERSION:
+        return "stale"
+    try:
+        stored = json.loads(metadata.get("prompts", "null"))
+    except ValueError:
+        return "stale"
+    if not isinstance(stored, list):
+        return "stale"
+    if [str(item) for item in stored] != [str(item) for item in (prompts or [])]:
+        return "stale"
+    if str(metadata.get("negative", "")) != str(negative or ""):
+        return "stale"
+    return "ok"
+
+
 def reg_cache_dir(config) -> str:
     """正则集缓存目录：默认与训练集缓存并排在工作区里（``reg_cache``）。
 

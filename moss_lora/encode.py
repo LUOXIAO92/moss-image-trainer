@@ -17,6 +17,7 @@ import time
 import torch
 from safetensors.torch import load_file, save_file
 
+from .cache import preview_metadata, preview_path
 from .config import Config, expand
 
 
@@ -141,11 +142,15 @@ def run_encode_text(
 
     if config.preview.prompts:
         prompts = list(config.preview.prompts)
+        negative_text = config.preview.negative_prompt or ""
         embeds, mask = encode(prompts)
-        negative, negative_mask = encode([config.preview.negative_prompt or ""])
+        negative, negative_mask = encode([negative_text])
+        # The prompts ride along in the metadata so a training run can tell
+        # whether these vectors still describe the prompts in its config.
         save_file(
             {"embeds": embeds, "mask": mask, "negative_embeds": negative, "negative_mask": negative_mask},
-            os.path.join(cache_dir, "preview.safetensors"),
+            preview_path(cache_dir),
+            metadata=preview_metadata(prompts, negative_text),
         )
         log(f"preview prompts: {len(prompts)} cached")
     builder.write_index()

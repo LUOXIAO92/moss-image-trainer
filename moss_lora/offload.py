@@ -76,7 +76,8 @@ class BlockSwap:
         the copies are synchronous and run on the compute stream instead of the
         lookahead machinery the inner loop uses.
 
-        Returns the number of blocks that changed sides.
+        ``count`` is how many tail blocks are offloaded, so a larger count moves
+        ``start`` earlier. Returns the number of blocks that changed sides.
         """
         target = max(0, min(len(self.blocks), int(count)))
         start = len(self.blocks) - target
@@ -85,9 +86,31 @@ class BlockSwap:
         torch.cuda.synchronize(self._device)
         moved = 0
         if start > self.start:
-            # More blocks stream: copy the ones that just left the card into
-            # pinned host memory and let the pool reuse their VRAM.
+            # Fewer blocks stream: everything in [self.start, start) comes back
+            # for good and the pinned copy is dropped, which is the host memory
+            # the caller wanted back.
             for index in range(self.start, start):
+                params = self.params.pop(index, None)
+                if params is None:
+                    continue
+                # A block that never streamed has no pinned staging yet: its
+                # param.data is the CPU copy made at construction. Take the
+                # bytes from wherever they are, never assume the staging dict.
+                tensors = [torch.empty_like(param.data, device=self._device) for param in params]
+                with torch.no_grad():
+                    for param, tensor in zip(params, tensors):
+                        tensor.copy_(param.data)
+                for param, tensor in zip(params, tensors):
+                    param.data = tensor
+                self.host.pop(index, None)
+                self.resident.pop(index, None)
+                self.upload_done.pop(index, None)
+                self.download_done.pop(index, None)
+                moved += 1
+        else:
+            # More blocks stream: [start, self.start) leaves the card for pinned
+            # host memory and its VRAM goes back to the pool.
+            for index in range(start, self.start):
                 params = [p for p in self.blocks[index].parameters() if p.requires_grad is False]
                 if not params:
                     continue
@@ -96,27 +119,6 @@ class BlockSwap:
                 tensors = self.resident.pop(index, None)
                 if tensors is not None:
                     self._give_back(host, tensors)
-                self.upload_done.pop(index, None)
-                self.download_done.pop(index, None)
-                moved += 1
-        else:
-            # Fewer blocks stream: bring the tail back for good and drop the
-            # pinned copies, which is the host memory the caller wanted back.
-            for index in range(start, self.start):
-                params = self.params.pop(index, None)
-                host = self.host.pop(index, None)
-                if params is None or host is None:
-                    self.resident.pop(index, None)
-                    continue
-                tensors = self._borrow(host)
-                if tensors is None:
-                    tensors = [torch.empty_like(buffer, device=self._device) for buffer in host]
-                with torch.no_grad():
-                    for buffer, tensor in zip(host, tensors):
-                        tensor.copy_(buffer)
-                for param, tensor in zip(params, tensors):
-                    param.data = tensor
-                self.resident.pop(index, None)
                 self.upload_done.pop(index, None)
                 self.download_done.pop(index, None)
                 moved += 1

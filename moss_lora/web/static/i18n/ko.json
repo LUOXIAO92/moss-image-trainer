@@ -560,6 +560,8 @@
  "err.cache.missing_text": "{dir}의 캐시에 텍스트 인코딩이 {missing}개 빠져 있습니다(전체 {items}개). 캐시 탭에서 텍스트 인코딩을 선택해 다시 채워 주세요",
  "err.cache.not_built": "{dir}에 아직 캐시가 없습니다. 캐시 탭에서 먼저 생성해 주세요",
  "err.cache.parts_required": "최소 하나는 선택해야 합니다: latent 캐시 또는 텍스트 인코딩",
+ "err.cache.preview_missing": "프리뷰 프롬프트가 아직 인코딩되지 않았습니다. 학습 전에 encode-text --preview-only를 실행하세요",
+ "err.cache.preview_stale": "캐시의 프리뷰 프롬프트가 현재 설정과 다릅니다. encode-text --preview-only를 다시 실행하세요",
  "err.cache.sizing": "{dir}의 캐시는 다른 최대 면적 기준으로 만들어져 지금 설정과 맞지 않습니다. 캐시 탭에서 latent 캐시를 다시 생성해 주세요",
  "err.cache.stop_dead": "해당 캐시 프로세스가 이미 종료되었습니다",
  "err.cache.stop_denied": "이 프로세스를 중지할 권한이 없습니다",

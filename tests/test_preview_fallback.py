@@ -24,6 +24,7 @@ import torch  # noqa: E402
 import moss_lora.config as config_module  # noqa: E402
 import moss_lora.memory as memory_module  # noqa: E402
 from moss_lora.config import Config  # noqa: E402
+from moss_lora.cache import preview_metadata  # noqa: E402
 from moss_lora.trainer import Trainer  # noqa: E402
 
 
@@ -52,8 +53,18 @@ def make_trainer(root: str, *, batch: int, vae_dtype: str = "fp32",
     trainer._codec = None
     trainer.messages: list[str] = []
     trainer.log = trainer.messages.append
-    with open(os.path.join(root, "preview.safetensors"), "wb"):
-        pass
+    # A bundle the gate accepts: vectors plus the prompts they were encoded from.
+    from safetensors.torch import save_file
+
+    torch.manual_seed(0)
+    save_file(
+        {"embeds": torch.randn(4, 1, 8, dtype=torch.bfloat16),
+         "mask": torch.ones(4, 8, dtype=torch.long),
+         "negative_embeds": torch.randn(1, 1, 8, dtype=torch.bfloat16),
+         "negative_mask": torch.ones(1, 8, dtype=torch.long)},
+        os.path.join(root, "preview.safetensors"),
+        metadata=preview_metadata(trainer.config.preview.prompts, ""),
+    )
     return trainer
 
 
