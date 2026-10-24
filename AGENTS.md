@@ -44,7 +44,7 @@ Keep all version control operations strictly local so unapproved code or private
   - `moss_lora/`: trainer package, CLI, and WebUI backend and frontend
   - `tests/`: Python unit tests and frontend regression fixtures
   - `docs/` and `skills/`: public architecture documentation, usage guides, and agent skill definitions
-  - `README.md`, `settings.example.yaml`, `requirements.txt`, `setup.sh`, `setup_fa2.py`, `run.sh`, `run.ps1`, `.gitignore`
+  - `README.md`, `settings.example.yaml`, `requirements.txt`, `setup.sh`, `setup.ps1`, `setup_fa2.py`, `run.sh`, `run.ps1`, `.gitignore`
 - Ignore all local, private, and generated paths via `.gitignore`, and never bypass ignore rules with `git add -f`:
   - `experiments/`: local benchmark records, profiling logs, and comparison charts
   - `workspaces/`, `output/`, `runs/`, `logs/`: local workspace configs, caches, checkpoints, and runtime logs

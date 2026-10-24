@@ -20,7 +20,7 @@
 
 ## 시스템 요구 사항
 
-- **OS 및 Python**: Linux 또는 WSL2, Python 3.11 이상.
+- **OS 및 Python**: Linux, WSL2 또는 Windows 10/11(PowerShell 5.1 이상), Python 3.11 이상.
 - **GPU 및 드라이버**: `bfloat16` 또는 `float16`을 지원하는 NVIDIA GPU 및 PyTorch 2.9 이상에 맞는 CUDA 드라이버.
 - **VRAM 설정, 프리셋은 출발점일 뿐**: VRAM의 각 항목은 실행 설정에 적힌 평범한 값이며, 학습기는 그 값을 그대로 사용합니다. WebUI의 프리셋 선택(`32`, `24`, `16`, `12`, `8`, `6`)과 CLI의 `--preset`은 해당 티어의 값——그래디언트 체크포인팅, 상주 레이어 수, 양자화 범위와 형식, `torch.compile`, 8bit 옵티마이저, 프리뷰 VAE 정밀도——을 한 번 채워 넣고 그 뒤로는 관여하지 않습니다. 새 run은 기본값으로 시작하며 어떤 티어도 적용하지 않고, 카드에서 무엇도 도출하지 않습니다. 한 스텝이 정말로 메모리에 모자랄 때만 학습기가 `blocks_to_swap`을 스스로 올립니다.
 - **로컬 가중치**: MOSS-Image DiT, Qwen3.5-9B 텍스트 인코더(HuggingFace 디렉터리 또는 ConvRot int8 양자화 단일 파일 `.safetensors`), FLUX.2 VAE.
@@ -29,9 +29,11 @@
 
 ## 설치
 
-이 저장소는 프로젝트 루트의 `.venv`에 의존성을 격리합니다. CLI와 WebUI 백그라운드 워커 모두 외부 conda나 ComfyUI 환경에 의존하지 않고 `.venv/bin/python`을 직접 호출합니다.
+이 저장소는 프로젝트 루트의 `.venv`에 의존성을 격리합니다. CLI와 WebUI 백그라운드 워커 모두 외부 conda나 ComfyUI 환경에 의존하지 않고 venv 인터프리터(Linux는 `.venv/bin/python`, Windows는 `.venv\Scripts\python.exe`)를 직접 호출합니다.
 
 [setup.sh](<setup.sh>)는 `python3.14`부터 `python3.11`까지 인터프리터를 탐색하여 `.venv`를 생성하고 [requirements.txt](<requirements.txt>)를 설치한 뒤, [setup_fa2.py](<setup_fa2.py>)를 실행하여 현재 Python, PyTorch, CUDA, GPU 아키텍처에 맞는 사전 빌드된 FlashAttention-2 휠을 설치합니다(일치하는 휠이 없으면 경고를 출력하고 SDPA로 대체합니다). [run.sh](<run.sh>)는 대상 포트 사용 여부를 확인하고 `.venv`가 없으면 `./setup.sh`를 먼저 실행한 후 WebUI를 시작합니다(기본값 `127.0.0.1:7861`).
+
+네이티브 Windows에서는 [setup.ps1](<setup.ps1>)이 같은 작업을 맡습니다. `py` 런처로 인터프리터를 찾아 `.venv`를 만들고, 설치된 NVIDIA 드라이버에 맞는 인덱스에서 CUDA 버전 PyTorch를 설치한 뒤(드라이버 527 이상은 `cu126`, 570 이상은 `cu128`, 580 이상은 `cu130`), [requirements.txt](<requirements.txt>)를 설치합니다. `.venv`가 없으면 [run.ps1](<run.ps1>)이 이를 먼저 호출합니다. FlashAttention-2 사전 빌드 휠은 Linux용만 배포되므로, Windows에서는 `-WithFlashAttention`으로 휠을 찾지 못하는 한 `padded` 배치와 SDPA로 학습합니다.
 
 ```bash
 # .venv 생성 및 의존성 설치 (PYTHON 또는 TORCH_INDEX_URL로 지정 가능)
@@ -42,6 +44,18 @@
 ./run.sh --port 7869
 ./run.sh --port 7869 --stop
 ```
+
+```powershell
+# Windows: 같은 설치. CUDA 인덱스는 드라이버에서 자동 선택
+.\setup.ps1
+.\setup.ps1 -Force -TorchIndex cu130
+.\setup.ps1 -DryRun
+
+# WebUI 시작 (첫 실행 시 .venv 생성)
+.\run.ps1 --port 7869
+```
+
+Windows에서 로컬 스크립트 실행이 차단되면 `powershell -ExecutionPolicy Bypass -File .\setup.ps1`을 사용하세요.
 
 ## 빠른 시작
 
@@ -250,8 +264,8 @@ node tests/ui/smoke.mjs --base http://127.0.0.1:7891 --cdp http://127.0.0.1:9401
 
 ```text
 moss-image-trainer/
-├── setup.sh / setup_fa2.py   # .venv 생성, 의존성 설치 및 FlashAttention-2 휠 매칭
-├── run.sh                    # 환경 점검 및 WebUI 실행
+├── setup.sh / setup.ps1 / setup_fa2.py   # .venv 생성, 의존성 설치 및 FlashAttention-2 휠 매칭
+├── run.sh / run.ps1          # 환경 점검 및 WebUI 실행
 ├── settings.example.yaml     # 머신 수준 구성 템플릿
 ├── moss_lora/
 │   ├── cli.py                # CLI 진입점 (cache / encode-text / train / export / web 등)

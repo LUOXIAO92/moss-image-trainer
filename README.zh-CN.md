@@ -20,7 +20,7 @@
 
 ## 环境要求
 
-- 系统与解释器：Linux 或 WSL2，Python 3.11+。
+- 系统与解释器：Linux、WSL2 或 Windows 10/11（PowerShell 5.1+），Python 3.11+。
 - 硬件与驱动：支持 `bfloat16` 或 `float16` 的 NVIDIA GPU，CUDA 驱动匹配 PyTorch 2.9+。
 - 显存设置，预设只是起点：显存的每一项都是运行配置里的普通值，训练器照着这些值跑。WebUI 里的预设下拉（`32`、`24`、`16`、`12`、`8`、`6`）和 CLI 的 `--preset` 只把某一档的值一次性填进来——梯度检查点、常驻层数、量化范围与格式、`torch.compile`、8-bit 优化器、预览 VAE 精度——填完就不再参与。新建运行从默认值开始，不套用任何档位，也不按显卡推导任何东西；只有单步真的显存不足时，训练器才会自己调高 `blocks_to_swap`。
 - 本地模型：MOSS-Image DiT、Qwen3.5-9B 文本编码器（HuggingFace 目录，或 ConvRot int8 量化的单文件 `.safetensors`）与 FLUX.2 VAE。
@@ -29,9 +29,11 @@
 
 ## 安装
 
-仓库通过根目录 `.venv` 隔离依赖，CLI 与 WebUI 后台任务均调用 `.venv/bin/python`，不依赖外部 conda 或 ComfyUI 环境。
+仓库通过根目录 `.venv` 隔离依赖，CLI 与 WebUI 后台任务均直接调用 venv 里的解释器（Linux 为 `.venv/bin/python`，Windows 为 `.venv\Scripts\python.exe`），不依赖外部 conda 或 ComfyUI 环境。
 
 [setup.sh](<setup.sh>) 按 `python3.14` 至 `python3.11` 查找解释器，创建 `.venv` 并安装 [requirements.txt](<requirements.txt>)，再调用 [setup_fa2.py](<setup_fa2.py>) 匹配当前 Python、PyTorch、CUDA 与 GPU 架构安装预编译 FlashAttention-2 轮子（未匹配时告警并回退至 SDPA）。[run.sh](<run.sh>) 检查端口占用并在缺失 `.venv` 时先执行 `./setup.sh`，随后启动 WebUI（默认监听 `127.0.0.1:7861`）。
+
+原生 Windows 上由 [setup.ps1](<setup.ps1>) 承担同样的工作：通过 `py` 启动器找解释器，创建 `.venv`，按当前 NVIDIA 驱动挑 CUDA 索引装 torch（驱动 527+ 用 `cu126`，570+ 用 `cu128`，580+ 用 `cu130`），再装 [requirements.txt](<requirements.txt>)；`.venv` 缺失时 [run.ps1](<run.ps1>) 会先调用它。FlashAttention-2 的预编译轮子只发布 Linux 版本，因此 Windows 上用 `padded` 批次加 SDPA 训练，除非 `-WithFlashAttention` 能匹配到轮子。
 
 ```bash
 # 创建 .venv 并安装依赖（可通过 PYTHON 或 TORCH_INDEX_URL 指定环境）
@@ -42,6 +44,18 @@
 ./run.sh --port 7869
 ./run.sh --port 7869 --stop
 ```
+
+```powershell
+# Windows：同样的安装，CUDA 索引按当前驱动自动选
+.\setup.ps1
+.\setup.ps1 -Force -TorchIndex cu130
+.\setup.ps1 -DryRun
+
+# 启动 WebUI（首次运行会先创建 .venv）
+.\run.ps1 --port 7869
+```
+
+若 Windows 禁止运行本地脚本，改用 `powershell -ExecutionPolicy Bypass -File .\setup.ps1`。
 
 ## 快速开始
 
@@ -250,8 +264,8 @@ node tests/ui/smoke.mjs --base http://127.0.0.1:7891 --cdp http://127.0.0.1:9401
 
 ```text
 moss-image-trainer/
-├── setup.sh / setup_fa2.py   # 创建 .venv、安装依赖与匹配 FlashAttention-2 轮子
-├── run.sh                    # 环境自检并启动 WebUI
+├── setup.sh / setup.ps1 / setup_fa2.py   # 创建 .venv、安装依赖与匹配 FlashAttention-2 轮子
+├── run.sh / run.ps1          # 环境自检并启动 WebUI
 ├── settings.example.yaml     # 本机全局配置模板
 ├── moss_lora/
 │   ├── cli.py                # CLI 入口（cache / encode-text / train / export / web 等）

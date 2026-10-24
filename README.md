@@ -20,7 +20,7 @@ The trainer splits the workflow into offline caching and online training so the 
 
 ## Requirements
 
-- **OS and Python**: Linux or WSL2 with Python 3.11+.
+- **OS and Python**: Linux, WSL2, or Windows 10/11 with PowerShell 5.1+, and Python 3.11+.
 - **GPU and drivers**: NVIDIA GPU with `bfloat16` or `float16` support and CUDA drivers matching PyTorch 2.9+.
 - **VRAM settings, with presets as starting points**: every VRAM field is a plain value in the run's config, and the trainer reads those values as written. The preset selector in the WebUI (`32`, `24`, `16`, `12`, `8`, `6`) and `--preset` on the CLI fill in one tier's values once — gradient checkpointing, resident blocks, quantization scope and format, `torch.compile`, the 8-bit optimizer, and the preview VAE dtype — and then get out of the way. A new run starts at the defaults with no preset applied, nothing is derived from the card, and the trainer raises `blocks_to_swap` by itself only when a step runs out of memory.
 - **Local weights**: MOSS-Image DiT, Qwen3.5-9B text encoder (HuggingFace directory, or a ConvRot int8-quantized single-file `.safetensors`), and FLUX.2 VAE.
@@ -29,9 +29,11 @@ To choose settings for a specific card, read the [VRAM guide](<docs/VRAM.md>). I
 
 ## Installation
 
-The repository isolates dependencies in `.venv` at the project root. Both the CLI and WebUI background workers invoke `.venv/bin/python` directly, without relying on external conda or ComfyUI environments.
+The repository isolates dependencies in `.venv` at the project root. Both the CLI and WebUI background workers invoke the venv interpreter (`.venv/bin/python`, or `.venv\Scripts\python.exe` on Windows) directly, without relying on external conda or ComfyUI environments.
 
 [setup.sh](<setup.sh>) searches for `python3.14` down to `python3.11`, creates `.venv`, installs [requirements.txt](<requirements.txt>), and runs [setup_fa2.py](<setup_fa2.py>) to install a prebuilt FlashAttention-2 wheel matching your Python, PyTorch, CUDA, and GPU architecture (or warns and falls back to SDPA if no wheel matches). [run.sh](<run.sh>) checks whether the target port is free, runs `./setup.sh` if `.venv` is missing, and starts the WebUI (`127.0.0.1:7861` by default).
+
+On native Windows, [setup.ps1](<setup.ps1>) does the same job: it finds Python through the `py` launcher, creates `.venv`, installs CUDA PyTorch from the index that matches the installed NVIDIA driver (`cu126` for 527+, `cu128` for 570+, `cu130` for 580+), then installs [requirements.txt](<requirements.txt>). [run.ps1](<run.ps1>) calls it when `.venv` is missing. Prebuilt FlashAttention-2 wheels are published for Linux only, so Windows trains with `padded` batches and SDPA unless `-WithFlashAttention` finds a wheel.
 
 ```bash
 # Create .venv and install dependencies (override via PYTHON or TORCH_INDEX_URL)
@@ -42,6 +44,18 @@ The repository isolates dependencies in `.venv` at the project root. Both the CL
 ./run.sh --port 7869
 ./run.sh --port 7869 --stop
 ```
+
+```powershell
+# Windows: same install, with the CUDA index picked from the installed driver
+.\setup.ps1
+.\setup.ps1 -Force -TorchIndex cu130
+.\setup.ps1 -DryRun
+
+# Start the WebUI (creates .venv on first run)
+.\run.ps1 --port 7869
+```
+
+If Windows blocks local scripts, run `powershell -ExecutionPolicy Bypass -File .\setup.ps1`.
 
 ## Quick Start
 
@@ -250,8 +264,8 @@ node tests/ui/smoke.mjs --base http://127.0.0.1:7891 --cdp http://127.0.0.1:9401
 
 ```text
 moss-image-trainer/
-├── setup.sh / setup_fa2.py   # Create .venv, install dependencies, and match FlashAttention-2 wheels
-├── run.sh                    # Check environment and launch the WebUI
+├── setup.sh / setup.ps1 / setup_fa2.py   # Create .venv, install dependencies, and match FlashAttention-2 wheels
+├── run.sh / run.ps1          # Check environment and launch the WebUI
 ├── settings.example.yaml     # Machine-level configuration template
 ├── moss_lora/
 │   ├── cli.py                # CLI entry point (cache / encode-text / train / export / web, etc.)
