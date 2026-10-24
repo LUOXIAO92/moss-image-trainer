@@ -101,6 +101,21 @@ function measuredPeakGiB() {
   return peak;
 }
 
+/** The shape renderDashboard expects when there is nothing to show yet. */
+function emptyDashboard() {
+  return {
+    workspace: '',
+    run: null,
+    runs: [],
+    metrics: [],
+    samples: [],
+    summary: {},
+    compare: null,
+    jobs: [],
+    series: [],
+  };
+}
+
 function blankEstimate() {
   const card = $('#dash-estimate-card');
   if (card) card.classList.remove('is-over');
@@ -636,6 +651,15 @@ export async function loadActiveTraining() {
 
 export async function loadDashboard(run = null, options = {}) {
   if (state.dashboard.loading) return state.dashboard.data;
+  // A fresh install has no workspace yet, and the endpoint answers 400 for one
+  // it cannot resolve. Asking anyway turns the empty state into a console error
+  // and a warning toast on first open.
+  if (!workspaceParam()) {
+    state.dashboard.data = null;
+    state.dashboard.lastError = '';
+    renderDashboard(emptyDashboard());
+    return null;
+  }
   state.dashboard.loading = true;
   const liveLabel = state.job?.status === 'running' && state.job.kind === 'train' ? state.job.label : '';
   const requested = liveLabel || run || state.dashboard.run || '';

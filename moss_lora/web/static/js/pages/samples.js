@@ -81,6 +81,13 @@ export function createSampleCard(path, options = {}) {
 
 export async function loadSamples() {
   try {
+    // No workspace means no samples to list, and the endpoint answers 400 for a
+    // workspace it cannot resolve; a fresh install should stay quiet.
+    if (!workspaceParam()) {
+      state.samples.items = [];
+      renderSamples();
+      return;
+    }
     const list = await api('/api/samples?workspace=' + encodeURIComponent(workspaceParam()));
     state.samples.items = (Array.isArray(list) ? list : []).filter((item) => !/\/trajectory\.png$/i.test(item.path));
     renderSamples();
