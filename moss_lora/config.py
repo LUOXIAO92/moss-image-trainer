@@ -188,9 +188,10 @@ class PreviewConfig:
     # "turbo" adapter that turns 50 steps into 4-8 with guidance 1.
     lora: str = ""
     lora_scale: float = 1.0
-    # Prompts per sampling forward; 0 = all at once. One at a time flattens the
-    # sampling peak at the cost of proportional time.
-    batch: int = 0
+    # Prompts per sampling forward. 1 (the default) samples one at a time and
+    # keeps the sampling peak flat; 0 is the explicit override that batches every
+    # prompt into one pass, multiplying the sampler activations by their count.
+    batch: int = 1
     # Where the fp32 VAE decodes: gpu keeps the preview fast, cpu keeps it small.
     vae_device: str = "gpu"     # gpu | cpu
     vae_dtype: str = "fp32"     # fp32 | fp16 — fp16 halves decode memory, not bit-exact
@@ -442,10 +443,18 @@ def apply_preset(config: Config, vram_gb: float | None = None, *, detect: bool =
     capacity from nvidia-smi and passes it in, and falls back to the dataclass
     defaults when the driver cannot answer. A CUDA context in the web process
     would hold VRAM that the run being predicted for needs.
+
+    The 6 GB and 8 GB tiers also drop ``preview.vae_dtype`` to fp16 while it is
+    still the fp32 default. The preview peak, not the training step, is what runs
+    a small card out of memory first: an fp32 decode at 1024x1024 takes the
+    streamed run past the card even though its training step fits. Preview
+    resolution stays untouched, and a dtype the user chose is kept.
     """
     preset: dict[str, Any] | None = None
+    tier: str | None = None
     if config.vram.preset != "auto":
-        preset = VRAM_PRESETS.get(str(config.vram.preset).replace("GB", ""))
+        tier = str(config.vram.preset).replace("GB", "")
+        preset = VRAM_PRESETS.get(tier)
     else:
         if vram_gb is None and detect:
             vram_gb = detect_vram_gb()
@@ -453,9 +462,11 @@ def apply_preset(config: Config, vram_gb: float | None = None, *, detect: bool =
             for size in ("32", "24", "16", "12", "8", "6"):
                 if vram_gb >= int(size) - 1:
                     preset = VRAM_PRESETS[size]
+                    tier = size
                     break
             else:
                 preset = VRAM_PRESETS["6"]
+                tier = "6"
     if preset is None:
         return config
     if config.vram.gradient_checkpointing == "auto":
@@ -470,6 +481,10 @@ def apply_preset(config: Config, vram_gb: float | None = None, *, detect: bool =
         config.vram.quantize_dit = preset["quantize_dit"]
     if preset["compile"] is False:
         config.vram.compile = False
+    # fp32 is the default, so it is also the "let the preset decide" sentinel:
+    # a user who wrote fp16 (or fp8, which validate rejects) keeps that choice.
+    if tier in ("6", "8") and str(config.preview.vae_dtype).lower() == "fp32":
+        config.preview.vae_dtype = "fp16"
     return config
 
 
