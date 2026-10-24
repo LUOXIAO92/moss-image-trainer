@@ -101,6 +101,8 @@
 }
 .config-form.is-readonly .field-label { color: var(--color-text-muted); }
 .config-form.is-readonly .field-help { opacity: .8; }
+/* Dependent rows freeze in place while their scope is off; they stay readable. */
+#config-form label.field.is-disabled { opacity: .58; cursor: not-allowed; }
 
 .yaml-details {
   margin-top: var(--space-4);
