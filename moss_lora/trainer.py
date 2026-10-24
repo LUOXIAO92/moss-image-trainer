@@ -105,6 +105,37 @@ class Trainer:
         except OSError as exc:
             self.log(f"could not write the run config snapshot: {exc}")
 
+    def _warn_preview_budget(self):
+        """One line when the preview's modelled peak is over the card.
+
+        Training fitting is not enough: a streamed nf4 run trains inside 6 GB,
+        then an fp32 VAE decode at 1024x1024 takes the preview past 9 GB. This is
+        a warning, never a refusal -- the preview ladder still tries, and a card
+        that cannot be detected logs nothing.
+        """
+        from .config import detect_vram_gb
+        from .memory import estimate_vram
+
+        capacity = detect_vram_gb()
+        if capacity is None:
+            return
+        estimate = estimate_vram(self.config)
+        peak = estimate["preview"] + estimate["context"]
+        if peak <= capacity + 0.5:
+            return
+        preview = self.config.preview
+        width = int(getattr(preview, "width", 1024) or 1024)
+        height = int(getattr(preview, "height", 1024) or 1024)
+        dtype = str(getattr(preview, "vae_dtype", "fp32") or "fp32").lower()
+        on_cpu = str(getattr(preview, "vae_device", "gpu") or "gpu").lower() == "cpu"
+        levers = "lower preview.width/height"
+        if not on_cpu and dtype != "fp16":
+            levers += " or set preview.vae_dtype: fp16"
+        self.log(
+            f"preview: estimated {peak:.1f} GB with the {dtype} VAE at "
+            f"{width}x{height}, more than this card holds; {levers}"
+        )
+
     def _configure_precision(self):
         if self.dtype == torch.float16 and bool(getattr(self.config.vram, "fp16_accumulate", False)):
             torch.backends.cuda.matmul.allow_fp16_accumulation = True
@@ -146,6 +177,7 @@ class Trainer:
         decay = self.config.train.ema
         if decay > 0:
             self.ema = {k: v.detach().clone().float() for k, v in self.model.named_parameters() if v.requires_grad}
+        self._warn_preview_budget()
         return self
 
     def _set_checkpointing(self, enabled: bool):
@@ -1018,6 +1050,18 @@ class Trainer:
         return written
 
     # -- preview ---------------------------------------------------------
+    def _preview_dtype(self) -> str:
+        """The decode dtype: the user's choice, or fp16 after an OOM fallback.
+
+        A preview that ran out of memory remembers the fp16 decision for the rest
+        of the run on the trainer, never by rewriting ``config.preview``: the
+        user's YAML keeps what they wrote, and the run's own config snapshot is
+        not changed behind their back.
+        """
+        if getattr(self, "_vae_fp16_fallback", False):
+            return "fp16"
+        return str(getattr(self.config.preview, "vae_dtype", "fp32")).lower()
+
     def _preview_codec(self):
         """The decode half of the VAE, on the device and dtype the config asks for.
 
@@ -1031,7 +1075,7 @@ class Trainer:
         on_cpu = (str(getattr(preview, "vae_device", "gpu")).lower() == "cpu"
                   or getattr(self, "_vae_cpu_fallback", False))
         device = "cpu" if on_cpu else self.device
-        wanted = str(getattr(preview, "vae_dtype", "fp32")).lower()
+        wanted = self._preview_dtype()
         if on_cpu and wanted == "fp16":
             # CPU fp16 convolution is emulated or missing in every backend we run
             # on, so it is slower than fp32 and saves nothing: the card is already
@@ -1125,6 +1169,42 @@ class Trainer:
                 ))
         return torch.cat(images, 0) if len(images) > 1 else images[0]
 
+    def _preview_after_oom(self, original: torch.cuda.OutOfMemoryError, chunk: int):
+        """Climb the preview fallback ladder, cheapest rung first.
+
+        A preview must never kill a run that was training fine, but the old
+        fallback jumped straight to the slowest rung (CPU decode). This one tries
+        one prompt per pass on the current device, then fp16 on the GPU, then CPU
+        fp32, and stops at the first rung that fits. Every rung drops the codec
+        and empties the allocator first, so the replacement is built at the new
+        setting instead of reusing a cache sized for the old one. Already-current
+        rungs are skipped, so the ladder is finite. A total failure re-raises
+        ``original``: the training loop still sees a real OOM.
+        """
+        preview = self.config.preview
+        on_cpu = (str(getattr(preview, "vae_device", "gpu")).lower() == "cpu"
+                  or getattr(self, "_vae_cpu_fallback", False))
+        rungs = []
+        if chunk > 1:
+            rungs.append(("one prompt at a time", 1, ""))
+        if not on_cpu and self._preview_dtype() != "fp16":
+            rungs.append(("fp16 VAE on the GPU", 1, "fp16"))
+        if not on_cpu:
+            rungs.append(("fp32 VAE on the CPU", 1, "cpu"))
+        for label, rung_chunk, mode in rungs:
+            self.log(f"preview: out of memory -> {label}")
+            self._codec = None
+            torch.cuda.empty_cache()
+            if mode == "fp16":
+                self._vae_fp16_fallback = True
+            elif mode == "cpu":
+                self._vae_cpu_fallback = True
+            try:
+                return self._sample_preview(self._preview_codec(), rung_chunk)
+            except torch.cuda.OutOfMemoryError:
+                continue
+        raise original
+
     @contextlib.contextmanager
     def _preview_forward(self):
         """Sample through the eager forward, then hand torch.compile back."""
@@ -1141,6 +1221,13 @@ class Trainer:
             model.forward = previous
 
     def preview(self, step: int):
+        """Sample and save one image per cached prompt.
+
+        ``preview.batch`` caps how many prompts share a sampling pass: the default
+        1 keeps the peak flat, while 0 is the explicit override that runs every
+        prompt in one pass. A pass that runs out of memory climbs the fallback
+        ladder in ``_preview_after_oom`` rather than failing the run.
+        """
         path = os.path.join(self.cache_dir, "preview.safetensors")
         if not os.path.exists(path):
             return None
@@ -1150,23 +1237,17 @@ class Trainer:
         was_training = self.model.training
         started = time.perf_counter()
         self.model.eval()
-        # 0 = one forward for every prompt; 1 = one prompt at a time, which keeps
-        # the sampling peak flat on a card that cannot hold all of them at once.
-        batch = int(getattr(preview, "batch", 0) or 0)
+        # 0 = one forward for every prompt (explicit override); the default 1
+        # keeps the sampling peak flat on a card that cannot hold all of them.
+        batch = int(getattr(preview, "batch", 1) or 0)
         prompts = len(preview.prompts or []) or 1
         chunk = min(max(1, batch), prompts) if batch else prompts
         try:
             with self._preview_forward():
                 try:
                     images = self._sample_preview(self._preview_codec(), chunk)
-                except torch.cuda.OutOfMemoryError:
-                    # A preview must never kill a run that was training fine: drop
-                    # to one prompt at a time and decode on the CPU, then retry.
-                    self.log("preview: out of memory -> one prompt at a time, CPU decode")
-                    self._codec = None
-                    self._vae_cpu_fallback = True
-                    torch.cuda.empty_cache()
-                    images = self._sample_preview(self._preview_codec(), 1)
+                except torch.cuda.OutOfMemoryError as original:
+                    images = self._preview_after_oom(original, chunk)
         finally:
             self.model.train(was_training)
             torch.cuda.empty_cache()

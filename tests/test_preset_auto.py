@@ -11,7 +11,10 @@ compiled block loop that copies weights between host and card re-traces on every
 shape it has not seen.
 
 The check also pins the boundary arithmetic (a card one GB below a tier still
-gets that tier) and that `detect=False` never touches `torch.cuda`.
+gets that tier) and that `detect=False` never touches `torch.cuda`. The 6 GB and
+8 GB tiers additionally turn the preview VAE to fp16 while it still holds the
+fp32 default: the preview peak is what those cards hit first, and an explicit
+fp16 choice is kept by every tier.
 """
 
 from __future__ import annotations
@@ -45,6 +48,29 @@ def main() -> int:
             assert config.vram.compile is False, f"{tier} keeps torch.compile on while streaming every block"
         else:
             assert config.vram.compile is True, (tier, config.vram.compile)
+        # The preview decode, not the training step, is what a small card runs
+        # out of memory on first, so the two smallest tiers drop the VAE to fp16.
+        expected_dtype = "fp16" if tier in ("6", "8") else "fp32"
+        assert config.preview.vae_dtype == expected_dtype, (tier, config.preview.vae_dtype)
+        assert (config.preview.width, config.preview.height) == (1024, 1024), (tier, config.preview)
+
+    # The same rule holds for an explicitly chosen tier.
+    for tier, expected_dtype in (("8", "fp16"), ("6", "fp16"),
+                                 ("12", "fp32"), ("16", "fp32"),
+                                 ("24", "fp32"), ("32", "fp32")):
+        config = Config()
+        config.vram.preset = tier
+        config = apply_preset(config)
+        assert config.preview.vae_dtype == expected_dtype, (tier, config.preview.vae_dtype)
+
+    # A config that already chose fp16 keeps it on every tier; the preset only
+    # fills the fp32 default, exactly like the vram sentinels.
+    for tier in ("32", "24", "16", "12", "8", "6"):
+        config = Config()
+        config.vram.preset = tier
+        config.preview.vae_dtype = "fp16"
+        config = apply_preset(config)
+        assert config.preview.vae_dtype == "fp16", (tier, config.preview.vae_dtype)
 
     # An explicit tier fills what is unset and keeps what the user chose. compile
     # is the exception: the tier can turn it off and never on.
@@ -95,6 +121,7 @@ def main() -> int:
     finally:
         config_module.detect_vram_gb = real
     assert config.vram.quantize_dit == "none" and config.vram.blocks_to_swap == -1, config.vram
+    assert config.preview.vae_dtype == "fp32", config.preview
 
     print("preset auto checks passed")
     return 0

@@ -463,8 +463,8 @@
             </label>
             <label class="field" for="cfg-preview-batch">
               <span class="field-label" data-i18n="train.preview.batch">每次采样几条</span>
-              <input id="cfg-preview-batch" type="number" min="0" step="1" inputmode="numeric" placeholder="0" aria-describedby="cfg-preview-batch-help">
-              <span class="field-help" id="cfg-preview-batch-help" data-i18n="train.preview.batchHelp">0 = 全部提示词一次跑完；显存紧张填 1，逐条采样，峰值最平。</span>
+              <input id="cfg-preview-batch" type="number" min="0" step="1" inputmode="numeric" placeholder="1" aria-describedby="cfg-preview-batch-help">
+              <span class="field-help" id="cfg-preview-batch-help" data-i18n="train.preview.batchHelp">默认 1 = 逐条提示词采样，峰值最平；0 = 全部提示词一次跑完。</span>
             </label>
             <label class="field" for="cfg-preview-vae-device">
               <span class="field-label" data-i18n="train.preview.vaeDevice">VAE 解码位置</span>
