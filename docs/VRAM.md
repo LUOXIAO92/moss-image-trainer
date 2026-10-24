@@ -104,11 +104,11 @@ Preset `24` (or `32`). bf16, every block resident, `compile: true`. A bf16 run p
 
 ### 16 GB
 
-Preset `16`. `ffn` + nf4, every block resident, `compile: true`; a run peaks around 10 GB. Draw previews at 1024x1024 with `preview.vae_dtype: fp16`, or at 768x768 with fp32.
+Preset `16`. bf16 base weights with `blocks_to_swap: 6`: 36 blocks stay resident and the trailing 6 stream from host memory. `compile: false`, because a streamed run cannot use torch.compile. Gradient checkpointing stays on. Quantizing would only cost quality here, so the weights stay in bf16 and the copies buy the margin instead. Draw previews at 1024x1024 with the fp16 VAE the preset pins; an fp32 decode leaves almost no margin.
 
 ### 12 GB
 
-Preset `12`. The same `ffn` + nf4 resident settings; a run peaks around 10 GB. Keep previews at 768x768 with fp16 to leave headroom. If you need 1024x1024, raise `vram.blocks_to_swap` until the preview fits, or set `preview.blocks_to_swap` on its own; streaming applies during previews too, and the copies cost time.
+Preset `12`. bf16 base weights with `blocks_to_swap: 22`: 20 blocks stay resident and the trailing 22 stream from host memory. `compile: false`, because a streamed run cannot use torch.compile. Gradient checkpointing stays on, which streaming requires. Keeping the weights in bf16 rather than nf4 costs step time in the copies, not precision; these cards are expected to have enough host memory for the streamed tail. Previews use the fp16 VAE at 1024x1024: an fp32 decode leaves no usable margin. Lower the preview resolution or give the preview its own residency when another process shares the card.
 
 ### 8 GB
 

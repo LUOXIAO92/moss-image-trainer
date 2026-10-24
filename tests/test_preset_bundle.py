@@ -36,15 +36,33 @@ def check_bundle_shape() -> None:
             assert key in bundle, f"{tier}: missing {key}"
         assert "preview" in bundle and "vae_dtype" in bundle["preview"], tier
         assert 0 <= bundle["blocks_to_swap"] <= TRANSFORMER_BLOCKS, tier
-    # The small tiers stream every block and sample in fp16; the large ones do
-    # neither. These are the two differences the tiers exist for.
+        if bundle["blocks_to_swap"] > 0:
+            # torch.compile is skipped for a streamed run, so a preset that
+            # streams must not claim it: the form would show a setting the
+            # trainer silently ignores.
+            assert bundle["compile"] is False, f"{tier}: streaming cannot compile"
+    # 16 GB and 12 GB stream a slice of the tail and sample in fp16; the small
+    # tiers stream everything. These are the differences the tiers exist for.
     assert preset_bundle("8")["blocks_to_swap"] == TRANSFORMER_BLOCKS
     assert preset_bundle("8")["preview"]["vae_dtype"] == "fp16"
     assert preset_bundle("8")["compile"] is False
     assert preset_bundle("32")["blocks_to_swap"] == 0
     assert preset_bundle("32")["preview"]["vae_dtype"] == "fp32"
     assert preset_bundle("32")["compile"] is True
-    assert preset_bundle("16")["quantize_dit"] == "ffn"
+    # 16 GB and 12 GB keep the DiT in bf16 instead of quantizing it.
+    assert preset_bundle("16")["quantize_dit"] == "none"
+    assert preset_bundle("16")["blocks_to_swap"] == 6
+    assert preset_bundle("16")["gradient_checkpointing"] is True
+    assert preset_bundle("16")["optimizer_in_8bit"] is False
+    assert preset_bundle("16")["compile"] is False
+    assert preset_bundle("16")["preview"]["vae_dtype"] == "fp16"
+    assert preset_bundle("16")["preview"]["vae_dtype"] == "fp16"
+    assert preset_bundle("12")["quantize_dit"] == "none"
+    assert preset_bundle("12")["blocks_to_swap"] == 22
+    assert preset_bundle("12")["gradient_checkpointing"] is True
+    assert preset_bundle("12")["optimizer_in_8bit"] is False
+    assert preset_bundle("12")["compile"] is False
+    assert preset_bundle("12")["preview"]["vae_dtype"] == "fp16"
     assert preset_bundle("6")["quantize_dit"] == "all"
     # "8GB" and 8 mean the same thing; anything else is a typo the caller made.
     assert preset_bundle("8GB") == preset_bundle("8")
@@ -66,6 +84,11 @@ def check_apply_overwrites() -> None:
     assert config.vram.quantize_dtype == "nf4"
     assert config.vram.quantize_dit == "all"
     assert config.vram.blocks_to_swap == 42
+    assert config.vram.compile is False
+    assert config.preview.vae_dtype == "fp16"
+    apply_preset(config, "12")
+    assert config.vram.quantize_dit == "none"
+    assert config.vram.blocks_to_swap == 22
     assert config.vram.compile is False
     assert config.preview.vae_dtype == "fp16"
     apply_preset(config, "32")

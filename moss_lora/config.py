@@ -450,12 +450,17 @@ VRAM_PRESETS: dict[str, dict[str, Any]] = {
     "24": {"gradient_checkpointing": True, "blocks_to_swap": 0, "optimizer_in_8bit": False,
            "quantize_dit": "none", "quantize_dtype": "nf4", "quantize_conditioning": "none",
            "compile": True},
-    "16": {"gradient_checkpointing": True, "blocks_to_swap": 0, "optimizer_in_8bit": False,
-           "quantize_dit": "ffn", "quantize_dtype": "nf4", "quantize_conditioning": "none",
-           "compile": True},
-    "12": {"gradient_checkpointing": True, "blocks_to_swap": 0, "optimizer_in_8bit": False,
-           "quantize_dit": "ffn", "quantize_dtype": "nf4", "quantize_conditioning": "none",
-           "compile": True},
+    # 16 GB and 12 GB: keep the base weights in bf16 and stream the tail instead
+    # of quantizing. The owners of these cards have host memory to spare and
+    # rank quality above step time, so bf16 beats nf4 here. The 16 GB card
+    # streams 6 of the 42 blocks, the 12 GB card 22. Both drop torch.compile,
+    # which cannot trace the streaming copies.
+    "16": {"gradient_checkpointing": True, "blocks_to_swap": 6, "optimizer_in_8bit": False,
+           "quantize_dit": "none", "quantize_dtype": "nf4", "quantize_conditioning": "none",
+           "compile": False},
+    "12": {"gradient_checkpointing": True, "blocks_to_swap": 22, "optimizer_in_8bit": False,
+           "quantize_dit": "none", "quantize_dtype": "nf4", "quantize_conditioning": "none",
+           "compile": False},
     # 8 GB and below: the base weights leave bf16, the compiled block loop goes
     # away, and every block streams from host memory. A run at nf4 without
     # streaming still needs about 8.4 GiB of card once the CUDA context is
@@ -478,17 +483,18 @@ TRANSFORMER_BLOCKS = 42
 def preset_bundle(tier: str) -> dict[str, Any]:
     """One preset as the exact values it writes, preview fields included.
 
-    The 6 GB and 8 GB tiers sample with an fp16 VAE because an fp32 decode at
-    1024x1024 runs those cards out of memory, not the training step. Every tier
-    pins the preview dtype, so loading a preset shows that preset's value rather
-    than whatever the last config happened to carry.
+    The 6 GB through 16 GB tiers sample with an fp16 VAE: an fp32 decode at
+    1024x1024 runs the smaller cards out of memory, and on the 16 GB tier it
+    leaves no usable margin once the bf16 stack is resident. Every tier pins the
+    preview dtype, so loading a preset shows that preset's value rather than
+    whatever the last config happened to carry.
     """
     key = str(tier).replace("GB", "").strip()
     if key not in VRAM_PRESETS:
         raise ValueError(f"unknown vram preset: {tier}")
     bundle = dict(VRAM_PRESETS[key])
     bundle["preview"] = {
-        "vae_dtype": "fp16" if key in ("6", "8") else "fp32",
+        "vae_dtype": "fp16" if key in ("6", "8", "12", "16") else "fp32",
         "blocks_to_swap": -1,
     }
     return bundle

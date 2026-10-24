@@ -274,7 +274,7 @@ moss-image-trainer/
 ## 알려진 제한 사항
 
 - **배치 크기 및 처리량**: 마이크로 배치는 토큰 예산으로 구성되고 이미지는 각자의 해상도를 유지합니다. 한 스텝의 작업량을 정하는 것은 `batch_size`가 아니라 `train.bin_tokens`입니다. FlashAttention-2를 설치하면 기본값이 `padded`(토큰 패딩 + key mask)에서 `packed`(varlen, 마스크 없음)로 바뀝니다.
-- **저용량 VRAM 정밀도 트레이드오프**: `model.dtype: float16`과 `vram.fp16_accumulate: true` 조합은 높은 학습률이나 장시간 학습에서 `bfloat16`보다 수치적 불안정성이 발생하기 쉽습니다. 양자화(`quantize_dit: ffn|all`)와 블록 스트리밍은 16 GB 미만 GPU를 대상으로 하며, 들어가는 대신 미세한 디테일 재현력을 조금 절충합니다. `nf4`가 가장 작은 형식이고 `fp8`이 더 안정적인 형식이며, conditioning 절반을 일부러 양자화하면 오차가 모든 블록으로 누적되므로, 따로 요청하지 않는 한 꺼 두는 것이 기본입니다.
+- **저용량 VRAM 정밀도 트레이드오프**: `model.dtype: float16`과 `vram.fp16_accumulate: true` 조합은 높은 학습률이나 장시간 학습에서 `bfloat16`보다 수치적 불안정성이 발생하기 쉽습니다. 양자화(`quantize_dit: ffn|all`)는 8 GB와 6 GB 티어를 대상으로 하고, 16 GB와 12 GB 티어는 bf16 가중치를 유지한 채 뒤쪽 블록을 호스트 메모리에서 스트리밍합니다. 스텝 시간은 늘지만 가중치 정밀도는 떨어지지 않습니다. `nf4`가 가장 작은 형식이고 `fp8`이 더 안정적인 형식이며, conditioning 절반을 일부러 양자화하면 오차가 모든 블록으로 누적되므로, 따로 요청하지 않는 한 꺼 두는 것이 기본입니다.
 - **학습 범위**: LoRA 어댑터는 5B DiT(기본적으로 42개 레이어의 `q`, `k`, `v`, `o`, `ffn_up_gate`, `ffn_down` 및 선택적 `text_embedder`)에만 주입되며, Qwen3.5-9B 텍스트 인코더와 VAE는 동결됩니다.
 
 ## 라이선스 및 감사의 글
