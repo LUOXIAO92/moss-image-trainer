@@ -274,7 +274,7 @@ moss-image-trainer/
 ## 已知限制
 
 - 批大小与吞吐：一个微批按 token 预算组装，图片各自保留分辨率，因此决定单步工作量的是 `train.bin_tokens` 而不是 `batch_size`。装上 FlashAttention-2 后默认从 `padded`（token 补齐 + key mask）切到 `packed`（varlen，无 mask）。
-- 低显存精度权衡：`model.dtype: float16` 配合 `vram.fp16_accumulate: true` 在高学习率或长步数下比 `bfloat16` 更易数值不稳定；量化（`quantize_dit: ffn|all`）与块流式加载面向 16 GB 以下的卡，是用一点细粒度还原换跑得起来；`nf4` 最省、`fp8` 更稳，而 conditioning 半边会被每个块乘进去，刻意量化等于把误差叠加到全网络，所以默认关闭。
+- 低显存精度权衡：`model.dtype: float16` 配合 `vram.fp16_accumulate: true` 在高学习率或长步数下比 `bfloat16` 更易数值不稳定；量化（`quantize_dit: ffn|all`）面向 8 GB 和 6 GB 两档；16 GB 和 12 GB 两档保留 bf16 权重，把尾部块从主机内存流式加载，代价是单步时间，不是权重精度。`nf4` 最省、`fp8` 更稳，而 conditioning 半边会被每个块乘进去，刻意量化等于把误差叠加到全网络，所以默认关闭。
 - 训练范围：仅对 5B DiT 注入 LoRA（默认覆盖 42 层的 `q`、`k`、`v`、`o`、`ffn_up_gate`、`ffn_down` 及可选 `text_embedder`），不支持微调 Qwen3.5-9B 文本编码器或 VAE。
 
 ## 许可与上游致谢
