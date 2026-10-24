@@ -90,7 +90,11 @@ def _terminate(job: "Job") -> bool:
             return True
         return False
     try:
-        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+        # Windows has neither killpg nor process groups; terminate the child directly.
+        if hasattr(os, "killpg"):
+            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+        else:
+            process.terminate()
     except (ProcessLookupError, PermissionError):
         try:
             process.terminate()
