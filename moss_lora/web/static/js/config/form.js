@@ -217,9 +217,9 @@ export function syncSaveStateControls() {
 }
 
 // The format and conditioning selects only decide anything while the DiT is
-// quantized, so their whole label rows follow the scope select. Hiding the rows
-// beats disabling them: an inert dropdown that stays on screen reads as a live
-// control.
+// quantized. Keep both label rows on screen and freeze them instead of hiding
+// them: their values still describe the config, and rows that vanish make the
+// form jump under the cursor.
 export function syncQuantizeControls() {
   const dit = $('#cfg-quantize-dit');
   const dtype = $('#cfg-quantize-dtype');
@@ -228,7 +228,7 @@ export function syncQuantizeControls() {
   const enabled = String(dit.value || 'none').toLowerCase() !== 'none';
   for (const select of [dtype, conditioning]) {
     select.disabled = !enabled;
-    select.closest('label.field')?.classList.toggle('hidden', !enabled);
+    select.closest('label.field')?.classList.toggle('is-disabled', !enabled);
   }
 }
 
@@ -269,12 +269,13 @@ function syncSelectValue(select, value, fallback = '') {
 
 // A preset is a bundle of values, applied once. Nothing downstream reads it
 // back: the fields it filled are the config, and editing one afterwards is the
-// same as typing it yourself.
+// same as typing it yourself. The select keeps showing the tier the user picked
+// so the form records where those values came from.
 export function applyPresetToForm(tier) {
   const bundle = state.presets ? state.presets[tier] : null;
-  const select = $('#cfg-vram-preset');
-  if (select) select.value = '';
   if (!bundle) return false;
+  const select = $('#cfg-vram-preset');
+  if (select) select.value = String(tier);
   const vram = {
     'cfg-resident-blocks': bundle.blocks_to_swap,
     'cfg-grad-ckpt': bundle.gradient_checkpointing,
@@ -343,6 +344,8 @@ export function syncFormFromConfig(config) {
   syncPreviewResidentControl(config);
   syncSelectValue($('#cfg-dtype'), getPath(config, 'model.dtype'), 'bfloat16');
   syncSelectValue($('#cfg-sigma-mode'), getPath(config, 'train.sigma.mode'), '');
+  // A saved run carries no preset provenance, so the select starts at "not
+  // applied" even when the values happen to match a tier.
   const select = $('#cfg-vram-preset');
   if (select) select.value = '';
 
@@ -650,6 +653,9 @@ export function setMode(mode, options = {}) {
   $('#config-form')?.classList.remove('is-readonly');
   for (const element of $$('#config-form input, #config-form select, #config-form textarea, .dataset-config-fields input, .dataset-config-fields select, .dataset-config-fields textarea')) element.disabled = false;
   syncAttentionControls();
+  // The blanket enable above also released the quantise rows; restore the
+  // state the scope select asks for.
+  syncQuantizeControls();
   $('#mode-form')?.setAttribute('aria-pressed', 'true');
   $('#mode-yaml')?.setAttribute('aria-pressed', 'false');
   $('#mode-form')?.classList.add('is-on');
