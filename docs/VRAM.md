@@ -4,7 +4,7 @@
 
 Training loads the 5B DiT and nothing else. The text encoder and the VAE ran during caching, so the card holds the DiT, the activations of one step, the LoRA optimizer state, and the CUDA context. A preview adds sampling activations and the VAE decoder on top, and that is where a run that trained comfortably can still run out of memory.
 
-This guide gives the measured cost of each choice and a setting for each card class. All figures come from one machine; the last section explains how far they travel.
+This guide gives the measured cost of each choice and a setting for each card class. All figures come from one machine; the last section explains what they are worth.
 
 ## 1. What decides VRAM here
 
@@ -17,7 +17,7 @@ Four terms add up, and each has its own control.
 | Optimizer state | the number of trainable parameters and `vram.optimizer_in_8bit` |
 | CUDA context | the driver, about 1.5 GB |
 
-The DiT weights are 9.5 GB in bf16, 2.5 GB at nf4, and 4.7 GB at fp8. Those figures cover the 42 blocks. The conditioning half (text projection, both modulations, time embedding, final projection) adds 0.6 GB and stays bf16 unless you ask for otherwise.
+The DiT weights are 9.5 GB in bf16, 2.5 GB at nf4, and 4.7 GB at fp8. Those figures cover the 42 blocks. The conditioning half (text projection, both modulation layers, time embedding, final projection) adds 0.6 GB and stays bf16 unless you ask for otherwise.
 
 Activations follow the sequence the model sees. MOSS-Image is a single-stream DiT: image tokens and text tokens meet in one self-attention, so the term grows with their sum, not with the number of images alone. A 1024x1024 image produces about 4096 tokens (pixels divided by 256); a caption contributes tens of tokens. `dataset.max_area` caps the cached latent size, which fixes the image-token count before training starts. Raising it raises the activation term on every step; quantization and streaming leave that term alone.
 
@@ -39,7 +39,7 @@ The CUDA context is fixed. The driver charges about 1.5 GB before PyTorch alloca
 
 Measured at 1024x1024, batch 1, no previews, bf16 weights, `compile: false`, allocator `expandable`. Figures are driver peaks.
 
-Compared with bf16, the resident column drops by about 5 GB with `ffn` + nf4 and about 7 GB with `all` + nf4. On the 32 GB reference card none of these settings made a step faster. The differences stayed within noise; quantization bought memory, not speed.
+Compared with bf16, the resident peak drops by about 5 GB with `ffn` + nf4 and about 7 GB with `all` + nf4. On the 32 GB reference card none of these settings made a step faster. The differences stayed within noise; quantization bought memory, not speed.
 
 `nf4` is the smaller format and carries more quality risk. `fp8` costs more memory at the same scope and stays closer to bf16. When memory allows, prefer fp8. Between the 4-bit scopes, `ffn` rounds fewer matrices and is the safer choice; `all` trades more quality for another 2 GB. Leave `vram.quantize_conditioning` at `none`: it is off by default and unverified, and its rounding error feeds every block.
 
@@ -118,7 +118,7 @@ Step count dominates preview time. The same preview at 50 steps without the LoRA
 
 ## 7. What these numbers are worth
 
-Training figures come from 101-step runs on one 32 GB card with a 1007 GB disk, a bf16 base model, 1024x1024 images, and batch 1. Preview figures come from a single pass with the 8-step LoRA described above. The values are rounded: memory peaks keep one decimal in the tables, and the prose rounds them to whole numbers.
+Training figures come from 101-step runs on one 32 GB card with a 1007 GB disk, a bf16 base model, 1024x1024 images, and batch 1. Preview figures come from one pass per row with the 8-step LoRA described above. The values are rounded: memory peaks keep one decimal in the tables, and the prose rounds them to whole numbers.
 
 A slower card takes longer per step. Narrower PCIe makes the streaming copies cost more, so the 20% penalty for bf16 streaming grows. A machine with 16 GB of system memory is limited by pinned host memory before it is limited by the card.
 
