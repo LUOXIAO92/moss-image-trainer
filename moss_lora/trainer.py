@@ -487,7 +487,17 @@ class Trainer:
         """每样本保留自己的尺寸和真实文本长度（不 padding、不裁剪）。"""
         latents, contexts = [], []
         for entry in entries:
-            data = load_file(os.path.join(self.cache_dir, entry["file"]), device="cpu")
+            path = os.path.join(self.cache_dir, entry["file"])
+            data = load_file(path, device="cpu")
+            # 不在这里抛 KeyError：缺文本多半是只跑了 latent 阶段（或正则集缓存
+            # 单独建过），用户需要的是下一步命令，不是文件键名。
+            missing = [key for key in ("latent", "text_embeds", "text_mask") if key not in data]
+            if missing:
+                raise SystemExit(
+                    f"缓存里缺 {', '.join(missing)}：{path}\n"
+                    "训练需要文本嵌入；先跑 python -m moss_lora.cli encode-text --config <yaml>，"
+                    "或在「缓存」页点「一键生成缓存（latent + 文本）」。"
+                )
             latents.append(data["latent"].unsqueeze(0).to(self.device, self.dtype))
             mask = data["text_mask"]
             keep = int(mask.sum())
