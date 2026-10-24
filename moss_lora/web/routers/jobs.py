@@ -111,7 +111,10 @@ async def api_start(request: Request):
     os.makedirs(log_dir, exist_ok=True)
 
     if kind == "train":
-        workspace, run_id, run_dir = _workspace_target_run(workspace)
+        # A named run trains in place; only a bare YAML allocates a new run.
+        # The run directory names the config, so use that name rather than
+        # whatever a stale `name:` field happens to say.
+        workspace, run_id, run_dir = _workspace_target_run(workspace, run_arg)
         config.output_dir = _workspace_runs_dir(workspace)
         config.name = run_id
         data["name"] = run_id
@@ -147,6 +150,8 @@ async def api_start(request: Request):
         if summary.get("missing_text"):
             raise fail(400, "err.cache.missing_text", dir=cache_dir,
                        missing=summary["missing_text"], items=summary["items"])
+        # `_run` opens this log in append mode, so training a run again keeps
+        # the earlier session instead of truncating it.
         log_name = run_id
         run_label = run_id
     elif kind == "cache":
