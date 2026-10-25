@@ -397,6 +397,11 @@ def scan_runs(workspace_dir: str) -> list[dict]:
         run = os.path.basename(run_dir)
         state = classify(record)
         metrics = last_metrics(run_dir) or {}
+        # The heartbeat is deliberately sparse (every 20 steps), while the
+        # metrics file is written on every logged step. Readers that show
+        # progress need the latter; the heartbeat still owns status and exit.
+        step = metrics.get("step") or record.get("step")
+        total = metrics.get("total") or record.get("total")
         out.append({
             "id": run,
             "kind": "train",
@@ -413,10 +418,10 @@ def scan_runs(workspace_dir: str) -> list[dict]:
             "finished": record.get("finished") or 0.0,
             "exit_code": record.get("exit_code"),
             "phase": record.get("phase") or "",
-            "step": record.get("step"),
-            "total": record.get("total"),
-            "last": progress_event({**metrics, "step": record.get("step"), "total": record.get("total")})
-            if metrics else progress_event({"step": record.get("step"), "total": record.get("total")}),
+            "step": step,
+            "total": total,
+            "last": progress_event({**metrics, "step": step, "total": total})
+            if metrics else progress_event({"step": step, "total": total}),
         })
     out.sort(key=lambda item: (item.get("started") or 0.0), reverse=True)
     return out

@@ -32,7 +32,11 @@ RESERVED_WORKSPACES = {"train_cache", "reg_cache", "runs", "logs", "baseline", "
 SETTINGS_REL = os.path.relpath(runtime_settings.SETTINGS_PATH, ROOT)
 NAME_RE = runtime_settings.NAME_RE
 STEP_RE = re.compile(
-    r"step (\d+)/(\d+)\s+loss ([0-9.]+)\s+avg ([0-9.]+)\s+lr ([0-9.eE+-]+)\s+([0-9.]+)s\s+peak ([0-9.]+) GiB"
+    r"step (\d+)/(\d+)\s+loss ([0-9.]+)\s+avg ([0-9.]+)\s+lr ([0-9.eE+-]+)\s+([0-9.]+)s\s+"
+    # Token counts landed between seconds and peak after the original regex.
+    # Keep them optional so old job logs still replay through the same parser.
+    r"(?:tok \d+ \(img \d+ \+ txt \d+\)\s+)?"
+    r"peak ([0-9.]+) GiB"
     # The trainer appends the reserved and device-wide numbers; older log lines
     # stop after the allocated peak, so both are optional.
     r"(?:\s+\(reserved ([0-9.]+), device ([0-9.]+)\))?"
