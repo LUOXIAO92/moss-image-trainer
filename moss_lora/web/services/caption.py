@@ -12,7 +12,7 @@ import urllib.request
 
 from .. import deps
 from ..deps import _write_text
-from .launcher import _python
+from .launcher import _chain, _python
 from ..errors import fail
 
 
@@ -153,8 +153,7 @@ def _caption_command(config, caption: dict, log_dir: str, stamp: str, datasets: 
             overwrite=overwrite))
     if len(commands) == 1:
         return commands[0]
-    quoted = " && ".join(" ".join(f'"{part}"' for part in cmd) for cmd in commands)
-    return ["bash", "-c", quoted]
+    return _chain(commands)
 
 def _caption_prompt_defaults() -> dict:
     from ...captioner import NATURAL_PROMPT, TAGS_PROMPT

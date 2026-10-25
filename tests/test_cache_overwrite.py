@@ -118,16 +118,22 @@ def check_cli_and_job_command() -> None:
     assert parser.parse_args(["cache", "--config", "run.yaml", "--overwrite"]).overwrite is True
 
     latent = _command("cache", "/cache/run.yaml", ["latent"], overwrite=True)
-    assert latent[:2] == ["bash", "-c"], latent
-    assert "moss_lora.cli cache" in latent[2], latent
-    assert latent[2].endswith("--overwrite"), latent
-    assert "encode-text" not in latent[2], "a latents-only rebuild must not touch captions"
+    assert latent[:3] == [sys.executable, "-m", "moss_lora.cli"], latent
+    assert latent[3] == "cache", latent
+    assert latent[-1] == "--overwrite", latent
+    assert "encode-text" not in latent, "a latents-only rebuild must not touch captions"
 
     both = _command("cache", "/cache/run.yaml", ["latent", "text"], overwrite=True)
-    assert both[2].count("--overwrite") == 2, both
+    assert both[:3] == [sys.executable, "-m", "moss_lora.web.services.chain"], both
+    payload = json.loads(both[3])
+    assert len(payload) == 2, payload
+    assert all("--overwrite" in command for command in payload), payload
+    assert any("cache" in command for command in payload), payload
+    assert any("encode-text" in command for command in payload), payload
 
     plain = _command("cache", "/cache/run.yaml", ["latent", "text"], overwrite=False)
-    assert "--overwrite" not in plain[2], plain
+    payload = json.loads(plain[3])
+    assert all("--overwrite" not in command for command in payload), payload
 
 
 def main() -> None:

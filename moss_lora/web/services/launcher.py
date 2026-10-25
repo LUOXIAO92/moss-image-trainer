@@ -23,24 +23,37 @@ def _python() -> str:
     """The bundled interpreter is the only interpreter; no discovery/UI."""
     return sys.executable
 
+
+def _chain(commands: list[list[str]]) -> list[str]:
+    """Run commands in order without assuming a POSIX shell exists.
+
+    A single command runs directly. Several run through ``chain.py``: native
+    Windows has no POSIX shell, and the ``bash`` on PATH is usually WSL, which
+    cannot execute the venv's Windows interpreter.
+    """
+    if len(commands) == 1:
+        return commands[0]
+    return [_python(), "-m", "moss_lora.web.services.chain", json.dumps(commands)]
+
+
 def _command(kind: str, config_path: str, parts: list[str] | None = None,
              overwrite: bool = False) -> list[str]:
     python = _python()
     if kind == "cache":
         selected = parts or CACHE_PARTS
-        steps = []
+        commands = []
         # Overwrite applies per selected phase. The text step only exists when
         # the text part is checked, so a latents-only rebuild never re-encodes
         # captions just because the checkbox was on.
-        flag = " --overwrite" if overwrite else ""
+        flag = ["--overwrite"] if overwrite else []
         if "latent" in selected:
-            steps.append(f'"{python}" -m moss_lora.cli cache --config "{config_path}"{flag}')
+            commands.append([python, "-m", "moss_lora.cli", "cache",
+                             "--config", config_path, *flag])
         if "text" in selected:
-            steps.append(f'"{python}" -m moss_lora.cli encode-text --config "{config_path}"{flag}')
-        if len(steps) == 1:
-            return ["bash", "-c", steps[0]]
+            commands.append([python, "-m", "moss_lora.cli", "encode-text",
+                             "--config", config_path, *flag])
         # 先 latent 再文本，任一失败即停
-        return ["bash", "-c", " && ".join(steps)]
+        return _chain(commands)
     if kind == "train":
         return [python, "-m", "moss_lora.cli", "train", "--config", config_path]
     raise fail(400, "err.job.kind_unknown", kind=kind)
@@ -148,7 +161,8 @@ def _stream_command(job: Job, command: list[str], log_handle, parse_steps: bool)
         log_handle.flush()
     job.process = subprocess.Popen(
         command, cwd=ROOT, env=dict(job.env or {}), stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT, text=True, bufsize=1, start_new_session=True,
+        stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+        bufsize=1, start_new_session=True,
     )
     job.last_pid = job.process.pid
     _persist_job(job, force=True)
@@ -190,6 +204,7 @@ def _stream_command(job: Job, command: list[str], log_handle, parse_steps: bool)
 def _run(job: Job):
     job.env = dict(job.env or {})
     job.env.setdefault("PYTHONUNBUFFERED", "1")
+    job.env["PYTHONIOENCODING"] = "utf-8"
     log_handle = None
     try:
         os.makedirs(os.path.dirname(job.log_path), exist_ok=True)
