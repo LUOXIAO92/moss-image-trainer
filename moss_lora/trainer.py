@@ -226,6 +226,14 @@ class Trainer:
     def _maybe_compile(self):
         if not bool(getattr(self.config.vram, "compile", False)):
             return
+        # torch.compile on CUDA needs Triton at the first forward, not at this
+        # call. Native Windows wheels ship no Triton, so installing the wrapper
+        # would only move a TritonMissing error into eval or sampling.
+        import importlib.util
+
+        if self.device == "cuda" and importlib.util.find_spec("triton") is None:
+            self.log("compile: skipped, Triton is not installed")
+            return
         if int(getattr(self.config.vram, "blocks_to_swap", 0) or 0) > 0:
             # Streaming re-enters the model 84 times per step and records a CUDA
             # event on each copy. torch.compile cannot trace an event record (it
@@ -1204,7 +1212,7 @@ class Trainer:
             for handle in handles:
                 handle.remove()
 
-    def _sample_preview(self, codec, chunk: int) -> torch.Tensor:
+    def _sample_preview(self, codec, chunk: int, preview_lora: bool = True) -> torch.Tensor:
         """Run the sampler over the cached prompts, ``chunk`` prompts per pass."""
         from .sampling import sample
 
@@ -1215,7 +1223,8 @@ class Trainer:
         negative = data["negative_embeds"].to(self.device, self.dtype)
         negative_mask = data["negative_mask"].to(self.device)
         images = []
-        with self._preview_adapter():
+        adapter = self._preview_adapter() if preview_lora else contextlib.nullcontext()
+        with adapter:
             for start in range(0, embeds.shape[0], chunk):
                 pick = slice(start, min(start + chunk, embeds.shape[0]))
                 # the cache holds one negative row for every prompt, but a single
@@ -1233,7 +1242,8 @@ class Trainer:
                 ))
         return torch.cat(images, 0) if len(images) > 1 else images[0]
 
-    def _preview_after_oom(self, original: torch.cuda.OutOfMemoryError, chunk: int):
+    def _preview_after_oom(self, original: torch.cuda.OutOfMemoryError, chunk: int,
+                           preview_lora: bool = True):
         """Climb the preview fallback ladder, cheapest rung first.
 
         A preview must never kill a run that was training fine, but the old
@@ -1264,7 +1274,8 @@ class Trainer:
             elif mode == "cpu":
                 self._vae_cpu_fallback = True
             try:
-                return self._sample_preview(self._preview_codec(), rung_chunk)
+                return self._sample_preview(self._preview_codec(), rung_chunk,
+                                            preview_lora=preview_lora)
             except torch.cuda.OutOfMemoryError:
                 continue
         raise original
@@ -1329,13 +1340,19 @@ class Trainer:
             else:
                 swap.set_count(current)
 
-    def preview(self, step: int):
+    def preview(self, step: int, *, out_dir: str | None = None, prefix: str | None = None,
+                preview_lora: bool = True):
         """Sample and save one image per cached prompt.
 
         ``preview.batch`` caps how many prompts share a sampling pass: the default
         1 keeps the peak flat, while 0 is the explicit override that runs every
         prompt in one pass. A pass that runs out of memory climbs the fallback
         ladder in ``_preview_after_oom`` rather than failing the run.
+
+        ``out_dir``/``prefix`` let the LoRA-free baseline reuse this path without
+        writing into the run's ``samples`` directory. ``preview_lora=False``
+        keeps the sampling-only adapter out of that baseline; the training
+        adapters are zeroed by the caller.
         """
         preview = self.config.preview
         state = preview_cache_state(self.cache_dir, preview.prompts, preview.negative_prompt)
@@ -1361,18 +1378,21 @@ class Trainer:
         try:
             with self._preview_residency(), self._preview_forward():
                 try:
-                    images = self._sample_preview(self._preview_codec(), chunk)
+                    images = self._sample_preview(self._preview_codec(), chunk,
+                                                  preview_lora=preview_lora)
                 except torch.cuda.OutOfMemoryError as original:
-                    images = self._preview_after_oom(original, chunk)
+                    images = self._preview_after_oom(original, chunk,
+                                                     preview_lora=preview_lora)
         finally:
             self.model.train(was_training)
             torch.cuda.empty_cache()
-        out_dir = os.path.join(self.out_dir, "samples")
-        os.makedirs(out_dir, exist_ok=True)
+        target_dir = out_dir or os.path.join(self.out_dir, "samples")
+        os.makedirs(target_dir, exist_ok=True)
+        stem = prefix or f"step{step:06d}"
         paths = []
         for index, image in enumerate(images):
             pixels = ((image.clamp(-1, 1) + 1) * 127.5).to(torch.uint8).permute(1, 2, 0).cpu().numpy()
-            target = os.path.join(out_dir, f"step{step:06d}_{index}.png")
+            target = os.path.join(target_dir, f"{stem}_{index}.png")
             Image.fromarray(pixels).save(target)
             paths.append(target)
         self.log(f"preview -> {paths} ({time.perf_counter() - started:.1f}s)")

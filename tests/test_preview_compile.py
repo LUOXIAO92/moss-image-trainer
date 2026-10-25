@@ -15,6 +15,7 @@ No CUDA and no 5B model are involved.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import sys
 import types
@@ -36,7 +37,32 @@ class Tiny(nn.Module):
         return self.linear(x)
 
 
+def check_compile_skips_without_triton() -> None:
+    """A CUDA compile request without Triton must not install the wrapper."""
+    net = Tiny()
+    eager = net.forward
+    logs: list[str] = []
+    holder = types.SimpleNamespace(
+        config=types.SimpleNamespace(
+            vram=types.SimpleNamespace(compile=True, blocks_to_swap=0)
+        ),
+        device="cuda",
+        model=net,
+        log=logs.append,
+        _eager_forward=None,
+    )
+    real_find_spec = importlib.util.find_spec
+    importlib.util.find_spec = lambda name: None if name == "triton" else real_find_spec(name)
+    try:
+        Trainer._maybe_compile(holder)
+    finally:
+        importlib.util.find_spec = real_find_spec
+    assert net.forward == eager, "the compiled wrapper was installed without Triton"
+    assert logs == ["compile: skipped, Triton is not installed"], logs
+
+
 def main() -> int:
+    check_compile_skips_without_triton()
     net = Tiny()
     eager = net.forward
     calls = {"compiled": 0}

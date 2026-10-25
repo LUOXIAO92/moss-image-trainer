@@ -72,6 +72,7 @@ def install_fakes(trainer: Trainer, failures: int):
     """Replace the codec and sampler, raising OOM for the first ``failures`` calls."""
     codec_calls: list[dict] = []
     sample_calls: list[tuple[str, str, int]] = []
+    preview_lora_calls: list[bool] = []
     error = torch.cuda.OutOfMemoryError("CUDA out of memory. Tried to allocate 2.00 GiB")
 
     def fake_codec():
@@ -84,15 +85,16 @@ def install_fakes(trainer: Trainer, failures: int):
         trainer._codec = types.SimpleNamespace(device=device, dtype=dtype)
         return trainer._codec
 
-    def fake_sample(codec, chunk: int):
+    def fake_sample(codec, chunk: int, preview_lora: bool = True):
         sample_calls.append((codec.device, codec.dtype, chunk))
+        preview_lora_calls.append(preview_lora)
         if len(sample_calls) <= failures:
             raise error
         return torch.zeros(1, 3, 8, 8)
 
     trainer._preview_codec = fake_codec
     trainer._sample_preview = fake_sample
-    return codec_calls, sample_calls, error
+    return codec_calls, sample_calls, preview_lora_calls, error
 
 
 @contextlib.contextmanager
@@ -122,7 +124,7 @@ def patched_probe(capacity, estimate):
 def check_ladder_order() -> None:
     with tempfile.TemporaryDirectory() as root, no_cuda_empty_cache() as empty_calls:
         trainer = make_trainer(root, batch=4)
-        codecs, samples, _ = install_fakes(trainer, failures=2)
+        codecs, samples, preview_lora_calls, _ = install_fakes(trainer, failures=2)
         paths = trainer.preview(1)
 
         # Configured pass -> one prompt per pass -> fp16 VAE on the GPU.
@@ -135,6 +137,7 @@ def check_ladder_order() -> None:
         assert [call["dtype"] for call in codecs] == ["fp32", "fp32", "fp16"], codecs
         assert all(call["rebuilt"] for call in codecs), \
             "a rung reused the codec instead of rebuilding at the new setting"
+        assert preview_lora_calls == [True, True, True], preview_lora_calls
         assert len(empty_calls) >= 2, "a rung did not empty the allocator"
 
         # The fp16 rung is a decision cached on the trainer, not a config rewrite.
@@ -150,18 +153,32 @@ def check_ladder_order() -> None:
         assert len(paths) == 1 and os.path.exists(paths[0]), paths
 
 
+def check_baseline_reuses_preview() -> None:
+    """Baseline output and no preview adapter, through the same preview path."""
+    with tempfile.TemporaryDirectory() as root, no_cuda_empty_cache():
+        trainer = make_trainer(root, batch=1)
+        _, samples, preview_lora_calls, _ = install_fakes(trainer, failures=0)
+        out_dir = os.path.join(root, "baseline")
+        paths = trainer.preview(0, out_dir=out_dir, prefix="baseline",
+                                preview_lora=False)
+        assert samples == [("cuda", "fp32", 1)], samples
+        assert preview_lora_calls == [False], preview_lora_calls
+        assert paths and os.path.basename(paths[0]) == "baseline_0.png", paths
+        assert os.path.dirname(paths[0]) == out_dir, paths[0]
+
+
 def check_skips() -> None:
     # Default already batch 1: no identical first rung, fp16 comes next.
     with tempfile.TemporaryDirectory() as root, no_cuda_empty_cache():
         trainer = make_trainer(root, batch=1)
-        _, samples, _ = install_fakes(trainer, failures=1)
+        _, samples, _, _ = install_fakes(trainer, failures=1)
         trainer.preview(1)
         assert samples == [("cuda", "fp32", 1), ("cuda", "fp16", 1)], samples
 
     # fp16 already configured: skip the fp16 rung and go to the CPU decoder.
     with tempfile.TemporaryDirectory() as root, no_cuda_empty_cache():
         trainer = make_trainer(root, batch=4, vae_dtype="fp16")
-        _, samples, _ = install_fakes(trainer, failures=2)
+        _, samples, _, _ = install_fakes(trainer, failures=2)
         trainer.preview(1)
         assert samples == [
             ("cuda", "fp16", 4),
@@ -176,7 +193,7 @@ def check_skips() -> None:
     # would repeat the configured pass. Only the chunk rung remains.
     with tempfile.TemporaryDirectory() as root, no_cuda_empty_cache():
         trainer = make_trainer(root, batch=4, vae_device="cpu")
-        _, samples, error = install_fakes(trainer, failures=2)
+        _, samples, _, error = install_fakes(trainer, failures=2)
         try:
             trainer.preview(1)
         except torch.cuda.OutOfMemoryError as caught:
@@ -189,7 +206,7 @@ def check_skips() -> None:
 def check_total_failure_reraises() -> None:
     with tempfile.TemporaryDirectory() as root, no_cuda_empty_cache():
         trainer = make_trainer(root, batch=4)
-        _, samples, error = install_fakes(trainer, failures=99)
+        _, samples, _, error = install_fakes(trainer, failures=99)
         try:
             trainer.preview(1)
         except torch.cuda.OutOfMemoryError as caught:
@@ -246,6 +263,7 @@ def check_preview_budget_warning() -> None:
 
 def main() -> int:
     check_ladder_order()
+    check_baseline_reuses_preview()
     check_skips()
     check_total_failure_reraises()
     check_preview_budget_warning()

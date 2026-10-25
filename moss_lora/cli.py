@@ -222,14 +222,12 @@ def cmd_baseline(args):
     """Sample the base model (no LoRA) on the workspace prompts.
 
     The dashboard shows these as the "no LoRA" row so a run can be compared
-    against the model it started from.
+    against the model it started from. This is the preview path with the
+    training adapters zeroed and the sampling-only adapter disabled.
     """
     import torch
-    from safetensors.torch import load_file
 
-    from .sampling import sample as run_sample
     from .trainer import Trainer
-    from .weights import LatentCodec, load_vae
 
     config = _load(args)
     embeddings = os.path.join(config.cache.dir, "preview.safetensors")
@@ -238,27 +236,16 @@ def cmd_baseline(args):
         return 2
     workspace = os.path.dirname(os.path.dirname(os.path.abspath(args.config)))
     out_dir = args.out or os.path.join(workspace, "baseline")
-    os.makedirs(out_dir, exist_ok=True)
 
     trainer = Trainer(config, log=print).load()
-    trainer.model.eval()
-    data = load_file(embeddings)
-    codec = LatentCodec(load_vae(config.model.vae, dtype=torch.float32, device="cuda"))
-    images = run_sample(
-        trainer.model, codec,
-        data["embeds"].cuda().to(torch.bfloat16), data["mask"].cuda(),
-        data["negative_embeds"].cuda().to(torch.bfloat16), data["negative_mask"].cuda(),
-        height=config.preview.height, width=config.preview.width,
-        steps=config.preview.steps, guidance=config.preview.guidance, shift=config.preview.shift,
-        generator=torch.Generator("cpu").manual_seed(config.preview.seed),
-        uncond_skip_layers=config.preview.uncond_skip_layers,
-    )
-    from PIL import Image
-
-    for index, image in enumerate(images):
-        pixels = ((image.clamp(-1, 1) + 1) * 127.5).to(torch.uint8).permute(1, 2, 0).cpu().numpy()
-        path = os.path.join(out_dir, f"baseline_{index}.png")
-        Image.fromarray(pixels).save(path)
+    with torch.no_grad():
+        for name, param in trainer.model.named_parameters():
+            if "lora" in name.lower():
+                param.zero_()
+    paths = trainer.preview(0, out_dir=out_dir, prefix="baseline", preview_lora=False)
+    if not paths:
+        return 1
+    for path in paths:
         print(path)
     return 0
 
