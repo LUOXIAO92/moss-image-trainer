@@ -323,7 +323,7 @@ def load_vae(path: str, dtype=torch.float16, device: str | torch.device = "cpu")
             "act_fn": "silu", "batch_norm_eps": BN_EPS, "batch_norm_momentum": 0.1,
             "block_out_channels": [128, 256, 512, 512],
             "decoder_block_out_channels": [128, 256, 512, 512],
-            "down_block_types": ["DownEncoderBlock2D"] * 4, "force_upcast": True,
+            "down_block_types": ["DownEncoderBlock2D"] * 4,
             "in_channels": 3, "latent_channels": 32, "layers_per_block": 2,
             "mid_block_add_attention": True, "norm_num_groups": 32, "out_channels": 3,
             "patch_size": [2, 2], "sample_size": 1024,
