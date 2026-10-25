@@ -9,6 +9,7 @@ literal siblings they could otherwise swallow.
 
 from __future__ import annotations
 
+import logging
 import os
 
 from fastapi import FastAPI
@@ -27,6 +28,28 @@ from .routers import (config, dataset, estimate, export, files, i18n, jobs, samp
 # export in the meantime the graph fails to link and the app renders an empty
 # page. Serving every static file as uncached keeps a reload truthful.
 STATIC_CACHE_CONTROL = "no-store"
+
+
+class QuietApiReads(logging.Filter):
+    """Keep successful API GETs out of the access log.
+
+    The UI polls ``/api/system``, ``/api/jobs`` and ``/active`` every few
+    seconds. Those records say nothing changed; state-changing requests and
+    any non-2xx/3xx response still go through.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if not isinstance(args, tuple) or len(args) < 5:
+            return True
+        method = str(args[1]).upper()
+        path = str(args[2])
+        try:
+            status = int(args[4])
+        except (TypeError, ValueError):
+            return True
+        quiet = method == "GET" and path.startswith("/api/") and 200 <= status < 400
+        return not quiet
 
 
 class UncachedStaticFiles(StaticFiles):
@@ -102,6 +125,7 @@ def main():
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=7861)
     args = parser.parse_args()
+    logging.getLogger("uvicorn.access").addFilter(QuietApiReads())
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 
 
