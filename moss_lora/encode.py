@@ -33,6 +33,22 @@ def _text_encoder(config: Config, text_model: str):
     return HfTextEncoder(source, dtype=torch.bfloat16, config_dir=config_hint)
 
 
+def _write_preview_bundle(cache_dir: str, encode, prompts: list[str], negative: str) -> None:
+    """Encode the preview prompts and write them beside the cache.
+
+    Separate from ``run_encode_text`` so the cache path helper cannot be
+    shadowed by a local ``preview_path`` string again.
+    """
+    embeds, mask = encode(prompts)
+    negative_embeds, negative_mask = encode([negative])
+    save_file(
+        {"embeds": embeds, "mask": mask, "negative_embeds": negative_embeds,
+         "negative_mask": negative_mask},
+        preview_path(cache_dir),
+        metadata=preview_metadata(prompts, negative),
+    )
+
+
 def run_encode_text(
     config_path: str,
     overwrite: bool = False,
@@ -90,8 +106,8 @@ def run_encode_text(
     log(f"text: {len(pending)}/{len(items)} captions"
         + (f"（其中 {changed} 条 caption 变了）" if changed else ""))
     # 文本都齐了但 preview 还缺时也要继续跑：preview 只在提示词变更/缺失时需要重做
-    preview_path = os.path.join(cache_dir, "preview.safetensors")
-    want_preview = bool(config.preview.prompts) and (overwrite or not os.path.exists(preview_path))
+    preview_file = os.path.join(cache_dir, "preview.safetensors")
+    want_preview = bool(config.preview.prompts) and (overwrite or not os.path.exists(preview_file))
     if not pending and not preview_only and not want_preview:
         return 0
 
@@ -143,15 +159,9 @@ def run_encode_text(
     if config.preview.prompts:
         prompts = list(config.preview.prompts)
         negative_text = config.preview.negative_prompt or ""
-        embeds, mask = encode(prompts)
-        negative, negative_mask = encode([negative_text])
         # The prompts ride along in the metadata so a training run can tell
         # whether these vectors still describe the prompts in its config.
-        save_file(
-            {"embeds": embeds, "mask": mask, "negative_embeds": negative, "negative_mask": negative_mask},
-            preview_path(cache_dir),
-            metadata=preview_metadata(prompts, negative_text),
-        )
+        _write_preview_bundle(cache_dir, encode, prompts, negative_text)
         log(f"preview prompts: {len(prompts)} cached")
     builder.write_index()
     return 0

@@ -21,6 +21,7 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from moss_lora.cache import preview_cache_state, preview_metadata, preview_path  # noqa: E402
+from moss_lora.encode import _write_preview_bundle  # noqa: E402
 from safetensors.torch import save_file  # noqa: E402
 
 PROMPTS = ["a girl on a bed", "a girl in a forest"]
@@ -71,9 +72,27 @@ def check_legacy_bundle() -> None:
         assert preview_cache_state(root, PROMPTS, NEGATIVE) == "stale"
 
 
+def check_write_bundle() -> None:
+    """The write helper uses preview_path() and keeps the prompt metadata."""
+    with tempfile.TemporaryDirectory() as root:
+        calls = []
+
+        def encode(texts):
+            calls.append(list(texts))
+            count = len(texts)
+            return (torch.zeros(count, 1, 4, dtype=torch.bfloat16),
+                    torch.ones(count, 4, dtype=torch.long))
+
+        _write_preview_bundle(root, encode, PROMPTS, NEGATIVE)
+        assert calls == [PROMPTS, [NEGATIVE]], calls
+        assert preview_cache_state(root, PROMPTS, NEGATIVE) == "ok"
+        print("preview bundle write: ok  path helper stays callable")
+
+
 def main() -> int:
     check_states()
     check_legacy_bundle()
+    check_write_bundle()
     print("preview cache checks passed")
     return 0
 
