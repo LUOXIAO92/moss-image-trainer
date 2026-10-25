@@ -38,7 +38,7 @@ Diagnose the root cause and report your findings before touching any file when t
 Keep all version control operations strictly local so unapproved code or private artifacts never leave the machine.
 
 - Run `git init`, `git add`, `git commit`, `git diff`, `git log`, and `git status` locally as needed.
-- Commit every code change before reporting the work complete; do not leave modified tracked files uncommitted. Commits stay local unless the user authorizes a push.
+- Commit every tracked change (code, documentation, configuration) before reporting the work complete; do not leave modified tracked files uncommitted. Commits stay local unless the user authorizes a push.
 - Never run `git remote add`, `git push`, `git rebase`, configure submodules, or upload to GitHub without explicit user permission; do not even configure a remote until the user authorizes an upload.
 - Follow the user's per-command instructions on whether to push, whether to rebase, and which branch to target once upload is approved.
 - Track only the trainer core, agent skills, and public documentation:
