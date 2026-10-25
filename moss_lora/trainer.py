@@ -692,6 +692,47 @@ class Trainer:
                 f"已启动 GC"
             )
 
+    def start(self):
+        """Take the GPU lock and publish the loading heartbeat.
+
+        The lock comes first: a second process must fail before it can overwrite
+        the live run's heartbeat or clear its stop request.
+        """
+        self._acquire_lock()
+        self._publish_loading()
+
+    def _publish_loading(self):
+        """Publish a heartbeat before the weights load.
+
+        The first regular heartbeat waits for ``_train_loop``, after the model
+        is on the GPU. Without this one, a terminal-started run stays invisible
+        for the whole load on Windows, where there is no /proc to scan.
+        """
+        runtime.clear_stop(self.out_dir)
+        self._write_heartbeat(0, "running", "load")
+
+    def report_startup_exit(self, exit_code: int):
+        """Record an exit that happened before the loop wrote its own verdict."""
+        record = runtime.read_json(os.path.join(self.out_dir, "training.json"))
+        if not record or record.get("pid") != os.getpid() or record.get("exit_code") is not None:
+            return
+        status = "stopped" if exit_code == 130 else "failed"
+        self._write_heartbeat(int(record.get("step") or 0), status, "load", exit_code=exit_code)
+
+    def close(self):
+        """Release the lock after a startup failure before ``train`` ran."""
+        self._release_lock()
+
+    def _save_on_stop(self):
+        """Save the last completed step before an interrupt ends the run."""
+        step = int(self.state.step or 0)
+        if step <= 0:
+            return
+        try:
+            self.save_checkpoint(step)
+        except Exception as exc:  # a checkpoint failure must not mask the stop
+            self.log(f"checkpoint on stop failed: {type(exc).__name__}: {exc}")
+
     def train(self, resume: str = ""):
         """Run the loop, holding the GPU lock and publishing a terminal status.
 
@@ -703,16 +744,20 @@ class Trainer:
         try:
             return self._train_loop(resume)
         except KeyboardInterrupt:
+            self._save_on_stop()
             self._write_heartbeat(self.state.step, "stopped", "stopped", exit_code=130)
             raise
         except BaseException:
             self._write_heartbeat(self.state.step, "failed", "failed", exit_code=1)
             raise
         finally:
+            runtime.clear_stop(self.out_dir)
             self._release_lock()
 
     def _acquire_lock(self):
         """One GPU job per machine, whether it started from the CLI or the WebUI."""
+        if self._lock_held:
+            return
         if not self.workspace_root:
             return
         try:
@@ -737,6 +782,10 @@ class Trainer:
         self.model.train()
         self._write_heartbeat(start_step, "start")
         for step in range(start_step, cfg.steps):
+            # The web layer writes a .stop file; the trainer owns the exit so it
+            # saves the last completed step and records a clean stopped state.
+            if runtime.stop_requested(self.out_dir, self._started):
+                raise KeyboardInterrupt
             # perf_counter is monotonic: a system clock adjustment (NTP/WSL drift)
             # must not turn a step time into 0 or a negative number.
             started = time.perf_counter()

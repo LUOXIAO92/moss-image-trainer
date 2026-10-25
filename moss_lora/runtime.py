@@ -10,6 +10,8 @@ The contract is documented in ``docs/RUNTIME-CONTRACT.md``:
 
 ``runs/<run>/training.json``
     Written by the training process. Step progress plus a terminal status.
+``runs/<run>/.stop``
+    Written by the web layer to ask that run to stop at its next step.
 ``logs/<id>.json``
     Written by whoever spawned a job. Pid, argv, log path and the exit code.
 ``<workspace>/.gpu.lock``
@@ -30,6 +32,9 @@ STALE_AFTER = 60.0
 
 # What a heartbeat may claim as a terminal status.
 TERMINAL = ("done", "failed", "stopped", "interrupted")
+
+# States that mean a run still has a live owner.
+LIVE = ("running", "starting", "stopping")
 
 LOCK_NAME = ".gpu.lock"
 
@@ -73,6 +78,47 @@ def _zombie(pid: int) -> bool:
         return False
 
 
+def scan_pids() -> list[int]:
+    """PIDs to inspect. Empty where the OS has no /proc (Windows)."""
+    try:
+        return [int(entry) for entry in os.listdir("/proc") if entry.isdigit()]
+    except OSError:
+        return []
+
+
+def _windows_pid_alive(pid: int) -> bool:
+    """Ask the kernel whether ``pid`` is still running.
+
+    ``os.kill(pid, 0)`` is not a probe on Windows: CPython routes every signal
+    except CTRL_C_EVENT / CTRL_BREAK_EVENT to TerminateProcess, signal 0
+    included. Wait on the process handle instead.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    if not 0 < pid <= 0xFFFFFFFF:
+        return False
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    SYNCHRONIZE = 0x00100000
+    WAIT_TIMEOUT = 0x102
+    handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+    if not handle:
+        # ERROR_ACCESS_DENIED (5) means the process exists but is not ours;
+        # the POSIX branch counts a permission error as alive too.
+        return ctypes.get_last_error() == 5
+    try:
+        return kernel32.WaitForSingleObject(handle, 0) == WAIT_TIMEOUT
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def pid_alive(pid) -> bool:
     """True when ``pid`` is a live, non-zombie process.
 
@@ -88,6 +134,8 @@ def pid_alive(pid) -> bool:
         return False
     if value <= 0:
         return False
+    if os.name == "nt":
+        return _windows_pid_alive(value)
     try:
         os.kill(value, 0)
     except ProcessLookupError:
@@ -98,6 +146,49 @@ def pid_alive(pid) -> bool:
     except OSError:
         return False
     return not _zombie(value)
+
+
+# -- stop requests ----------------------------------------------------------
+
+STOP_NAME = ".stop"
+
+
+def stop_path(run_dir: str) -> str:
+    return os.path.join(run_dir, STOP_NAME)
+
+
+def request_stop(run_dir: str, started: float) -> bool:
+    """Ask one run to stop at its next step, without a signal.
+
+    The trainer reads this file in its loop and exits through the
+    KeyboardInterrupt path, so it saves the last completed step, stops between
+    steps, releases the GPU lock and writes a stopped heartbeat. ``started``
+    scopes the request to one run instead of a later run that reuses the same
+    directory.
+    """
+    try:
+        write_json_atomic(stop_path(run_dir), {"started": float(started)})
+        return True
+    except (OSError, TypeError, ValueError, OverflowError):
+        return False
+
+
+def stop_requested(run_dir: str, started: float) -> bool:
+    """True when this exact run has a pending stop request."""
+    request = read_json(stop_path(run_dir))
+    if not request:
+        return False
+    try:
+        return abs(float(request.get("started")) - float(started)) < 1e-6
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
+def clear_stop(run_dir: str) -> None:
+    try:
+        os.unlink(stop_path(run_dir))
+    except OSError:
+        pass
 
 
 # -- state derivation -------------------------------------------------------

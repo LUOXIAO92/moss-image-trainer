@@ -16,7 +16,7 @@ from ... import runtime
 from ..deps import RESERVED_WORKSPACES, _rel, _safe_name
 from ..jobs import JOBS
 from ..services.system import (_is_cli_train_process, _parse_metrics, _run_samples)
-from ..services.workspace import (_dir_usage, _ensure_workspace_dirs, _has_live_cli_training,
+from ..services.workspace import (_dir_usage, _ensure_workspace_dirs,
                                   _resolve_workspace, _run_config_snapshot, _workspace_dir,
                                   _workspace_exists, _workspace_info, _workspace_logs_dir,
                                   _workspace_name, _workspace_root, _workspace_run_dirs,
@@ -137,13 +137,13 @@ def api_run_log(name: str, run: str = "", tail: int = 200):
 
 
 def _has_live_cli_training(name: str) -> bool:
+    """Whether a terminal-started CLI training is alive.
+
+    Windows has no /proc, so the scan finds nothing there; those runs stay
+    visible through the heartbeat written before the weights load.
+    """
     workspace = os.path.abspath(_workspace_dir(name))
-    for item in os.listdir("/proc"):
-        if not item.isdigit():
-            continue
-        if _is_cli_train_process(int(item), workspace):
-            return True
-    return False
+    return any(_is_cli_train_process(pid, workspace) for pid in runtime.scan_pids())
 
 
 @router.get("/api/workspaces/{name}/active")
@@ -151,7 +151,7 @@ def api_active_run(name: str):
     """Which run is training right now, derived from the workspace files."""
     name = _workspace_name(name)
     runs = runtime.scan_runs(os.path.abspath(_workspace_dir(name)))
-    live = [run for run in runs if run["state"] in ("running", "starting", "stopping")]
+    live = [run for run in runs if run["state"] in runtime.LIVE]
     if live:
         run = live[0]
         return {"active": {"run": run["id"], "step": run.get("step"), "total": run.get("total"),
@@ -174,54 +174,32 @@ def api_active_run(name: str):
 
 @router.post("/api/workspaces/{name}/stop")
 def api_stop_training(name: str):
-    """Stop CLI-started training for one workspace.
+    """Ask live training runs in this workspace to stop at the next step.
 
-    Prefer the pid stored in training.json; if there is no usable heartbeat,
-    scan /proc for the python process (never the bash wrapper).
+    The request is a file next to the heartbeat, not a signal: the trainer reads
+    it and exits through its normal KeyboardInterrupt path, saving the last
+    completed step and stopping between steps instead of being terminated
+    mid-step. This works where there is no /proc (Windows), and on Linux too.
+    The returned pids accepted the request; the exit happens at the next step
+    boundary.
     """
     name = _workspace_name(name)
     if not _workspace_exists(name):
         raise fail(404, "err.workspace.not_found", name=name)
-    workspace = os.path.abspath(_workspace_dir(name))
-    pids: list[int] = []
-    seen: set[int] = set()
-
-    runs_dir = _workspace_runs_dir(name)
-    if os.path.isdir(runs_dir):
-        for entry in os.scandir(runs_dir):
-            if not entry.is_dir():
-                continue
-            beat = os.path.join(entry.path, "training.json")
-            try:
-                data = json.load(open(beat, encoding="utf-8"))
-                pid = int(data.get("pid"))
-            except (OSError, ValueError, TypeError, json.JSONDecodeError):
-                continue
-            if pid > 0 and pid not in seen and os.path.exists(f"/proc/{pid}") and _is_cli_train_process(pid, workspace):
-                pids.append(pid)
-                seen.add(pid)
-
-    if not pids:
-        for item in os.listdir("/proc"):
-            if not item.isdigit():
-                continue
-            pid = int(item)
-            if pid in seen or pid == os.getpid():
-                continue
-            if _is_cli_train_process(pid, workspace):
-                pids.append(pid)
-                seen.add(pid)
-
-    import signal
     stopped: list[int] = []
-    for pid in pids:
+    for run in runtime.scan_runs(os.path.abspath(_workspace_dir(name))):
+        if run.get("state") not in runtime.LIVE:
+            continue
         try:
-            os.kill(pid, signal.SIGINT)
-            stopped.append(pid)
-        except ProcessLookupError:
+            pid = int(run.get("pid") or 0)
+        except (TypeError, ValueError, OverflowError):
             continue
-        except PermissionError:
+        started = run.get("started") or 0.0
+        if pid <= 0 or not started:
             continue
+        if not runtime.request_stop(run["run_dir"], started):
+            continue
+        stopped.append(pid)
     return {"ok": bool(stopped), "stopped": stopped}
 
 
@@ -305,7 +283,7 @@ def api_dashboard(run: str = "", workspace: str = ""):
         for row in runtime.scan_jobs(_workspace_root()):
             if (row.get("workspace") or "") != scope or row.get("kind") != "train":
                 continue
-            if row.get("state") not in ("running", "starting", "stopping"):
+            if row.get("state") not in runtime.LIVE:
                 continue
             active = {
                 "id": row.get("id"), "kind": "train",

@@ -15,7 +15,7 @@ import yaml
 from ...config import Config
 from ..deps import RESERVED_WORKSPACES, ROOT, _rel, _safe_name, _settings_snapshot
 from ..errors import fail
-from .system import _dir_size, _is_cli_train_process, _parse_metrics
+from .system import _dir_size, _parse_metrics
 
 
 # ---------------------------------------------------------------------------
@@ -430,12 +430,3 @@ def _dir_usage(path: str) -> dict:
                 except OSError:
                     continue
     return {"bytes": total, "mb": round(total / 2**20, 1), "files": files}
-
-def _has_live_cli_training(name: str) -> bool:
-    workspace = os.path.abspath(_workspace_dir(name))
-    for item in os.listdir("/proc"):
-        if not item.isdigit():
-            continue
-        if _is_cli_train_process(int(item), workspace):
-            return True
-    return False

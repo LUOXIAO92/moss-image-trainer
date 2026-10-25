@@ -27,6 +27,7 @@ workspaces/<workspace>/
   runs/<run>/
     config.yaml                 the config this run was trained with
     training.json               heartbeat: who is training and how far
+    .stop                       the web layer's request to stop between steps
     metrics.jsonl               one JSON object per step
     checkpoints/  samples/
   logs/
@@ -68,6 +69,11 @@ gone, or a pid that belongs to something else all come back as 409. The writer
 records `stopped` with exit code 130 when the interrupt lands, so the panel says
 the build was stopped, not failed.
 
+That check reads `/proc/<pid>/cmdline`. Where the OS has no `/proc` (Windows), a
+terminal-started cache build cannot be verified, so the endpoint returns 409
+instead of signaling a pid it cannot prove is a cache process. Training uses the
+stop request below, which needs no `/proc`.
+
 ## The heartbeat
 
 `runs/<run>/training.json` is written atomically: a temporary file, then
@@ -78,14 +84,32 @@ the build was stopped, not failed.
 | `pid` | process that owns the run |
 | `step`, `total` | progress counters |
 | `status` | `starting`, `running`, `stopping`, `done`, `failed`, `stopped` |
-| `phase` | what the step means: `train`, `preview`, `export`, `done` |
+| `phase` | what the step means: `load`, `train`, `preview`, `export`, `done` |
 | `run_id` | run name, the same string as the directory |
 | `started`, `time` | wall clock: started, last heartbeat |
 | `exit_code` | terminal only: `0` success, `130` interrupted, other = failure |
 | `finished` | terminal only: when it ended |
 
-The trainer rewrites the file every few dozen steps and at each phase change.
+The trainer writes a first heartbeat with `phase: load` before the weights load,
+so a terminal-started run is visible during the long model load. `status` is
+`running` there: the process is alive, and `phase` says what it is doing. The
+trainer rewrites the file every few dozen steps and at each phase change.
 Writing it is cheap and it is the only liveness signal the system needs.
+
+## Stop requests
+
+`POST /api/workspaces/{name}/stop` does not signal a process. For every live
+training heartbeat it writes `runs/<run>/.stop` containing the run's `started`
+value, then returns `{ok, stopped}`. The trainer checks that file at the top of
+every step; when `started` matches, it raises `KeyboardInterrupt`, and the normal
+training path saves the last completed step, writes `stopped` with exit code 130
+and releases the GPU lock. The `started` token keeps an old request from stopping
+a later run in the same directory; `Trainer.start()` clears any leftover before
+a new run begins.
+
+This path needs no `/proc` and no signal, so it works on Windows and Linux. The
+web layer does not rewrite `training.json`; the trainer's next heartbeat is the
+authoritative state.
 
 ## From file to state
 
@@ -111,8 +135,8 @@ anyway: pids get reused. A trainer that dies without writing a terminal status
 stops refreshing its heartbeat, and `stale` catches it a minute later.
 
 `stale` marks a heartbeat older than 60 seconds whose process is still alive: a
-run inside a long sampling phase, or one that is wedged. The dashboard shows the
-flag rather than inventing a state for it.
+run inside a long model load or sampling phase, or one that is wedged. The
+dashboard shows the flag rather than inventing a state for it.
 
 ## One run, one row
 
@@ -162,7 +186,8 @@ and when the machine that started the run is gone.
 
 `tests/test_runtime_state.py` covers the projection layer without a GPU: the
 state table, atomic writes, the merge of record and heartbeat, the metrics tail,
-the lock.
+the lock, the pre-load heartbeat, stop-request scoping through the route, and the
+interrupt path's checkpoint plus stopped verdict.
 
 `python .tmp/check_three_way.py` covers the layer above it. The script starts a
 worker, writes the job record a launcher would write, then reads the same run

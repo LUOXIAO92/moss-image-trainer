@@ -435,18 +435,27 @@ def cmd_train(args):
         config.vram.gradient_checkpointing = args.grad_checkpointing
     if getattr(args, "detach", False):
         return _detach_train(args, config)
+    trainer = None
     code = 0
     try:
         # Load inside the guard: a missing driver or a bad checkpoint fails
         # here, and that exit still has to reach the record.
-        Trainer(config).load().train(resume=args.resume or "")
+        trainer = Trainer(config)
+        trainer.start()
+        trainer.load().train(resume=args.resume or "")
     except KeyboardInterrupt:
         code = 130
+        if trainer is not None:
+            trainer.report_startup_exit(code)
         raise
     except BaseException:
         code = 1
+        if trainer is not None:
+            trainer.report_startup_exit(code)
         raise
     finally:
+        if trainer is not None:
+            trainer.close()
         # A detached run writes its own verdict: the launcher is already gone,
         # and a record with no exit code would read as "interrupted" forever.
         _finish_job_record(code)

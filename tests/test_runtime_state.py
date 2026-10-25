@@ -48,6 +48,168 @@ def check_classify():
     print(f"classify            : ok  {len(cases)} states, stale window {runtime.STALE_AFTER:.0f}s")
 
 
+def check_start_heartbeat(tmp: str):
+    """The loading heartbeat appears under the GPU lock, before the weights load."""
+    import types
+
+    from moss_lora.trainer import Trainer
+
+    workspace = os.path.join(tmp, "start", "start-ws")
+    run_dir = os.path.join(workspace, "runs", "run-a")
+    os.makedirs(run_dir)
+    config = types.SimpleNamespace(name="run-a", train=types.SimpleNamespace(steps=12))
+
+    def trainer(started):
+        item = types.SimpleNamespace(out_dir=run_dir, config=config, _started=started,
+                                     _lock_held=False, workspace_root=workspace,
+                                     log=lambda message: None)
+        item._write_heartbeat = types.MethodType(Trainer._write_heartbeat, item)
+        item._publish_loading = types.MethodType(Trainer._publish_loading, item)
+        item._acquire_lock = types.MethodType(Trainer._acquire_lock, item)
+        item._release_lock = types.MethodType(Trainer._release_lock, item)
+        return item
+
+    first = trainer(123.0)
+    runtime.request_stop(run_dir, 123.0)
+    Trainer.start(first)
+    assert runtime.stop_requested(run_dir, 123.0) is False, "start did not clear an old stop"
+    assert runtime.check_lock(workspace) is not None, "start did not take the GPU lock"
+    record = runtime.read_json(os.path.join(run_dir, "training.json"))
+    assert record is not None, "start wrote no heartbeat"
+    assert record["status"] == "running" and record["phase"] == "load", record
+    assert record["pid"] == os.getpid() and record["total"] == 12, record
+
+    # A second start on the same run must fail before it can overwrite this record.
+    second = trainer(456.0)
+    try:
+        Trainer.start(second)
+    except SystemExit:
+        pass
+    else:
+        raise AssertionError("a second start did not report GPU busy")
+    assert runtime.read_json(os.path.join(run_dir, "training.json"))["started"] == 123.0
+
+    Trainer.report_startup_exit(first, 1)
+    failed = runtime.read_json(os.path.join(run_dir, "training.json"))
+    assert failed["status"] == "failed" and failed["exit_code"] == 1, failed
+    Trainer.report_startup_exit(first, 130)
+    assert runtime.read_json(os.path.join(run_dir, "training.json"))["exit_code"] == 1
+
+    Trainer._publish_loading(first)  # fresh loading record for the stopped branch
+    Trainer.report_startup_exit(first, 130)
+    stopped = runtime.read_json(os.path.join(run_dir, "training.json"))
+    assert stopped["status"] == "stopped" and stopped["exit_code"] == 130, stopped
+
+    Trainer.close(first)
+    assert runtime.check_lock(workspace) is None, "close did not release the GPU lock"
+    print("start heartbeat     : ok  lock first, load visible, failure/stop recorded")
+
+
+def check_train_stop(tmp: str):
+    """A stop request saves the last step, writes stopped, and releases the lock."""
+    import types
+
+    from moss_lora.trainer import Trainer
+
+    workspace = os.path.join(tmp, "stop-train", "ws")
+    run_dir = os.path.join(workspace, "runs", "run-a")
+    os.makedirs(run_dir)
+    config = types.SimpleNamespace(name="run-a", train=types.SimpleNamespace(steps=10))
+    saved = []
+    trainer = types.SimpleNamespace(
+        out_dir=run_dir, workspace_root=workspace, _lock_held=False, _started=123.0,
+        state=types.SimpleNamespace(step=7), config=config,
+        log=lambda message: None, save_checkpoint=lambda step: saved.append(step),
+    )
+    trainer._write_heartbeat = types.MethodType(Trainer._write_heartbeat, trainer)
+    trainer._acquire_lock = types.MethodType(Trainer._acquire_lock, trainer)
+    trainer._release_lock = types.MethodType(Trainer._release_lock, trainer)
+    trainer._save_on_stop = types.MethodType(Trainer._save_on_stop, trainer)
+
+    def interrupted(resume: str = ""):
+        raise KeyboardInterrupt
+
+    trainer._train_loop = interrupted
+    try:
+        Trainer.train(trainer)
+    except KeyboardInterrupt:
+        pass
+    else:
+        raise AssertionError("train did not propagate the interrupt")
+    assert saved == [7], saved
+    record = runtime.read_json(os.path.join(run_dir, "training.json"))
+    assert record["status"] == "stopped" and record["exit_code"] == 130, record
+    assert runtime.check_lock(workspace) is None, "train did not release the GPU lock"
+    print("train stop           : ok  saves last step, stopped/130, lock released")
+
+
+def check_stop_request(tmp: str):
+    """A request belongs to one run start, not to the directory forever."""
+    run_dir = os.path.join(tmp, "stop-beat")
+    os.makedirs(run_dir)
+    assert runtime.stop_requested(run_dir, 123.0) is False
+    assert runtime.request_stop(run_dir, 123.0) is True
+    assert runtime.stop_requested(run_dir, 123.0) is True
+    assert runtime.stop_requested(run_dir, 456.0) is False
+    runtime.clear_stop(run_dir)
+    assert runtime.stop_requested(run_dir, 123.0) is False
+    print("stop request        : ok  scoped to one run start")
+
+
+def check_stop_route(tmp: str):
+    """The HTTP stop path writes the request instead of signaling a pid."""
+    from moss_lora.web.routers import workspaces as router
+
+    workspace = os.path.join(tmp, "route", "stop-ws")
+    run_dir = os.path.join(workspace, "runs", "run-a")
+    os.makedirs(run_dir)
+    runtime.write_json_atomic(os.path.join(run_dir, "training.json"), {
+        "pid": os.getpid(), "step": 3, "total": 10, "status": "running",
+        "phase": "train", "run_id": "run-a", "started": 123.0, "time": time.time(),
+    })
+    real_dir, real_exists = router._workspace_dir, router._workspace_exists
+    router._workspace_dir = lambda name: workspace
+    router._workspace_exists = lambda name: True
+    try:
+        result = router.api_stop_training("ws")
+    finally:
+        router._workspace_dir, router._workspace_exists = real_dir, real_exists
+    assert result == {"ok": True, "stopped": [os.getpid()]}, result
+    assert runtime.stop_requested(run_dir, 123.0) is True
+    record = runtime.read_json(os.path.join(run_dir, "training.json"))
+    assert record["status"] == "running", "the web layer must not rewrite the heartbeat"
+
+    empty = os.path.join(tmp, "route", "empty")
+    os.makedirs(os.path.join(empty, "runs"))
+    router._workspace_dir = lambda name: empty
+    router._workspace_exists = lambda name: True
+    try:
+        assert router.api_stop_training("ws") == {"ok": False, "stopped": []}
+    finally:
+        router._workspace_dir, router._workspace_exists = real_dir, real_exists
+    print("stop route          : ok  writes a stop request, no heartbeat rewrite")
+
+
+def check_no_proc():
+    """No /proc must mean no pids, not a 500 from the active route."""
+    from moss_lora.web.routers.workspaces import api_active_run
+
+    real_listdir = os.listdir
+
+    def fake_listdir(path):
+        if os.path.abspath(path) == os.path.abspath("/proc"):
+            raise FileNotFoundError(2, "No such file or directory", path)
+        return real_listdir(path)
+
+    os.listdir = fake_listdir
+    try:
+        assert runtime.scan_pids() == []
+        assert api_active_run("no-such-workspace") == {"active": None}
+    finally:
+        os.listdir = real_listdir
+    print("no /proc            : ok  scan is empty, active returns None")
+
+
 def check_atomic(tmp: str):
     path = os.path.join(tmp, "beat.json")
     runtime.write_json_atomic(path, {"step": 1, "status": "running"})
@@ -164,6 +326,11 @@ def main():
     tmp = tempfile.mkdtemp(prefix="moss-state-")
     try:
         check_classify()
+        check_start_heartbeat(tmp)
+        check_train_stop(tmp)
+        check_stop_request(tmp)
+        check_stop_route(tmp)
+        check_no_proc()
         check_atomic(tmp)
         check_merge(tmp)
         check_metrics(tmp)
