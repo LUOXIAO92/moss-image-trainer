@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import argparse
+import faulthandler
 import json
 import os
 import sys
 import time
 
 from .config import Config, apply_preset
+
+# SIGSEGV and other native faults happen below Python's exception machinery.
+# Enable the C-level handler before any model/CUDA code can run so the job log
+# gets a fatal-error line and the current Python stack instead of only -11.
+faulthandler.enable()
 
 
 def _cli_path(value: str) -> str:
@@ -428,7 +434,9 @@ def cmd_train(args):
         # Load inside the guard: a missing driver or a bad checkpoint fails
         # here, and that exit still has to reach the record.
         trainer = Trainer(config)
-        trainer.start()
+        # Reset only after the GPU lock is held; otherwise a second process
+        # training this run would lose its metrics/samples before we fail.
+        trainer.start(reset=not args.resume)
         trainer.load().train(resume=args.resume or "")
     except KeyboardInterrupt:
         code = 130

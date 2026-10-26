@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -39,13 +40,12 @@ def _checkpoints(run_dir: str) -> list[tuple[int, str]]:
     if not os.path.isdir(directory):
         return found
     for name in os.listdir(directory):
-        if not name.startswith("step") or not name.endswith(".safetensors"):
+        # Weight checkpoints only. ``stepNNNNNN.state.safetensors`` holds
+        # optimizer state and is not a loadable LoRA on its own.
+        match = re.fullmatch(r"step(\d+)\.safetensors", name)
+        if not match:
             continue
-        try:
-            step = int(name[4:10])
-        except ValueError:
-            continue
-        found.append((step, os.path.join(directory, name)))
+        found.append((int(match.group(1)), os.path.join(directory, name)))
     return sorted(found)
 
 

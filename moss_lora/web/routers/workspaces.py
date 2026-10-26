@@ -16,11 +16,12 @@ from ... import runtime
 from ..deps import RESERVED_WORKSPACES, _rel, _safe_name
 from ..jobs import JOBS
 from ..services.system import (_is_cli_train_process, _parse_metrics, _run_samples)
-from ..services.workspace import (_dir_usage, _ensure_workspace_dirs,
-                                  _resolve_workspace, _run_config_snapshot, _workspace_dir,
-                                  _workspace_exists, _workspace_info, _workspace_logs_dir,
-                                  _workspace_name, _workspace_root, _workspace_run_dirs,
-                                  _workspace_run_list, _workspace_runs_dir, _workspaces_payload)
+from ..services.workspace import (_dir_usage, _ensure_workspace_dirs, _run_entry,
+                                  _resolve_workspace, _workspace_config_run_dirs,
+                                  _workspace_dir, _workspace_exists, _workspace_info,
+                                  _workspace_logs_dir, _workspace_name, _workspace_root,
+                                  _workspace_run_dirs, _workspace_run_list, _workspace_runs_dir,
+                                  _workspaces_payload)
 from ..errors import error_detail, fail
 
 router = APIRouter()
@@ -235,38 +236,39 @@ async def api_layout_put(name: str, request: Request):
 def api_dashboard(run: str = "", workspace: str = ""):
     """Aggregated snapshot for one workspace."""
     scope = _resolve_workspace(workspace)
-    run_dirs = [(root, directory) for root, directory in _workspace_run_dirs(scope)]
+    run_dirs = list(_workspace_run_dirs(scope)) + list(_workspace_config_run_dirs(scope))
     runs = []
     for root, directory in run_dirs:
         rows = _parse_metrics(directory)
-        if not rows:
-            continue
+        entry = _run_entry(scope, directory, rows)
         rel = os.path.relpath(directory, root)
         label = f"{scope}/{rel.replace(os.sep, '/')}"
-        parts = rel.split(os.sep)
-        steps = [r for r in rows if "train" in r]
-        evals = [r for r in rows if "eval" in r]
-        metrics_path = os.path.join(directory, "metrics.jsonl")
-        config_yaml, config_path, config_source = _run_config_snapshot(scope, parts[-1])
         runs.append({
+            # A run is a config: a directory with no metrics is still selectable
+            # and still answers with the config it would train with.
             "name": label,
             "label": label,
-            "path": _rel(directory),
+            "path": entry["path"],
             "root": _rel(root),
             "workspace": scope,
             "profile": scope,
-            "run_id": parts[-1] if parts else label,
-            "mtime": os.path.getmtime(metrics_path),
+            "run_id": entry["name"],
+            "mtime": entry["mtime"],
             "rows": rows,
-            "step": (steps[-1]["step"] if steps else 0),
-            "total": (steps[-1].get("total") if steps else 0),
-            "train": (steps[-1]["train"] if steps else None),
-            "eval": (evals[-1]["eval"] if evals else None),
-            "samples": _run_samples(directory),
+            "step": entry["step"],
+            "total": entry["total"],
+            "train": entry["last_train"],
+            "eval": entry["last_eval"],
+            "samples": entry["samples"],
+            "has_metrics": entry["has_metrics"],
+            "checkpoint": entry["checkpoint"],
+            "checkpoint_step": entry["checkpoint_step"],
+            "resumable": entry["resumable"],
             # The run's own record of what it was trained with; empty when the
             # run predates the snapshot or never started.
-            "config_path": config_path,
-            "config_source": config_source,
+            "config_path": entry["config_path"],
+            "config_source": entry["config_source"],
+            "_samples": _run_samples(directory),
         })
 
     active = None
@@ -306,18 +308,25 @@ def api_dashboard(run: str = "", workspace: str = ""):
         pass
 
     runs.sort(key=lambda r: r["mtime"], reverse=True)
-    chosen = next((r for r in runs if r["name"] == run), None) or (runs[0] if runs else None)
+    # Accept the full ``workspace/run`` label and the short run name: the two
+    # pickers previously spoke different dialects and a short name silently
+    # fell back to the newest run.
+    chosen = next((r for r in runs if r["name"] == run
+                   or r["run_id"] == run
+                   or r["name"].split("/")[-1] == run), None)
+    chosen = chosen or (runs[0] if runs else None)
     return {
         "gpu": gpu,
         "active": active,
         "workspace": scope,
         "runs": [{k: r[k] for k in (
             "name", "label", "path", "root", "workspace", "profile", "run_id", "mtime",
-            "step", "total", "train", "eval", "config_path", "config_source",
+            "step", "total", "train", "eval", "samples", "has_metrics", "checkpoint",
+            "checkpoint_step", "resumable", "config_path", "config_source",
         )} for r in runs],
         "run": chosen["name"] if chosen else None,
         "run_config_path": chosen["config_path"] if chosen else "",
         "run_config_source": chosen["config_source"] if chosen else "",
         "rows": chosen["rows"] if chosen else [],
-        "samples": chosen["samples"] if chosen else [],
+        "samples": chosen["_samples"] if chosen else [],
     }

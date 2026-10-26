@@ -120,6 +120,11 @@ def _workspace_cache_dir(name: str) -> str:
 
 
 def _workspace_run_dirs(name: str):
+    """Run directories that have metrics.
+
+    Kept metrics-only on purpose: ``_workspace_latest_run`` answers "where did
+    training get to", and a config-only run has no answer yet.
+    """
     base = _workspace_runs_dir(name)
     if not os.path.isdir(base):
         return
@@ -132,6 +137,18 @@ def _workspace_run_dirs(name: str):
         if real in seen:
             continue
         seen.add(real)
+        yield base, dirpath
+
+
+def _workspace_config_run_dirs(name: str):
+    """Run directories that have a config but no metrics yet."""
+    base = _workspace_runs_dir(name)
+    if not os.path.isdir(base):
+        return
+    for dirpath, dirnames, filenames in os.walk(base):
+        dirnames[:] = [item for item in dirnames if not item.startswith(".")]
+        if "config.yaml" not in filenames or "metrics.jsonl" in filenames:
+            continue
         yield base, dirpath
 
 
@@ -317,6 +334,17 @@ def _run_checkpoints(directory: str) -> list[dict]:
     return out
 
 
+def _latest_checkpoint(checkpoints: list[dict]) -> dict | None:
+    """The newest numbered checkpoint, ignoring the terminal ``final`` file.
+
+    ``final`` is an export, not a resume point: its step is the end of the run.
+    """
+    for item in reversed(checkpoints):
+        if item.get("step") != "final":
+            return item
+    return None
+
+
 def _run_entry(name: str, directory: str, rows: list[dict]) -> dict:
     """One entry for a run directory: metrics when present, config always."""
     train_rows = [row for row in rows if "train" in row]
@@ -333,29 +361,58 @@ def _run_entry(name: str, directory: str, rows: list[dict]) -> dict:
         samples = len([f for f in os.listdir(sample_dir) if f.endswith(".png")])
     log_path = os.path.join(_workspace_logs_dir(name), f"{run}.log")
     metrics_path = os.path.join(directory, "metrics.jsonl")
-    if os.path.isfile(metrics_path):
+    has_metrics = os.path.isfile(metrics_path)
+    if has_metrics:
         mtime = os.path.getmtime(metrics_path)
     elif config_path:
         mtime = os.path.getmtime(os.path.join(directory, "config.yaml"))
     else:
         mtime = os.path.getmtime(directory)
+
+    step = train_rows[-1].get("step") if train_rows else 0
+    try:
+        step = int(step or 0)
+    except (TypeError, ValueError):
+        step = 0
+    total = train_rows[-1].get("total") if train_rows else 0
+    try:
+        total = int(total or 0)
+    except (TypeError, ValueError):
+        total = 0
+    if not total:
+        try:
+            total = int(((config_data or {}).get("train") or {}).get("steps") or 0)
+        except (AttributeError, TypeError, ValueError):
+            total = 0
+
+    checkpoints = _run_checkpoints(directory)
+    numbered = _latest_checkpoint(checkpoints)
+    latest = checkpoints[-1] if checkpoints else None
+    checkpoint = latest["file"] if latest else None
+    checkpoint_step = int(latest["step"]) if latest and latest["step"] != "final" else None
+    # Only a numbered checkpoint can resume; ``final`` is the finished export.
+    resumable = bool(numbered) and (not has_metrics or bool(total and step < total))
     return {
         "name": run,
         "label": f"{name}/{run}",
         "workspace": name,
         "path": _rel(directory),
-        "step": train_rows[-1]["step"] if train_rows else 0,
-        "total": train_rows[-1].get("total") if train_rows else 0,
+        "has_metrics": has_metrics,
+        "step": step,
+        "total": total,
         "last_train": train_rows[-1].get("train") if train_rows else None,
         "last_eval": eval_rows[-1].get("eval") if eval_rows else None,
         "mtime": mtime,
         "samples": samples,
+        "checkpoint": checkpoint,
+        "checkpoint_step": checkpoint_step,
+        "resumable": resumable,
         "config_yaml": config_yaml,
         "config": config_data,
         "config_path": config_path,
         "config_source": config_source,
         "log_path": _rel(log_path) if os.path.isfile(log_path) else "",
-        "checkpoints": _run_checkpoints(directory),
+        "checkpoints": checkpoints,
         # Training freezes the config; the picker and the form read this flag.
         "live": _run_is_live(name, run),
     }
@@ -368,17 +425,11 @@ def _workspace_run_list(name: str) -> list[dict]:
     for _root, directory in _workspace_run_dirs(name):
         seen.add(os.path.realpath(directory))
         runs.append(_run_entry(name, directory, _parse_metrics(directory)))
-    base = _workspace_runs_dir(name)
-    if os.path.isdir(base):
-        for entry in sorted(os.listdir(base)):
-            directory = os.path.join(base, entry)
-            if entry.startswith(".") or not os.path.isdir(directory):
-                continue
-            if os.path.realpath(directory) in seen:
-                continue
-            if not os.path.isfile(os.path.join(directory, "config.yaml")):
-                continue
-            runs.append(_run_entry(name, directory, []))
+    for _root, directory in _workspace_config_run_dirs(name):
+        if os.path.realpath(directory) in seen:
+            continue
+        seen.add(os.path.realpath(directory))
+        runs.append(_run_entry(name, directory, []))
     runs.sort(key=lambda item: item["mtime"], reverse=True)
     return runs
 

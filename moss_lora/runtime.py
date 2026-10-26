@@ -458,6 +458,10 @@ def scan_job_records(workspace_dir: str) -> list[dict]:
             "baseline_status": record.get("baseline_status") or "",
             "baseline_error": record.get("baseline_error") or "",
             "config_path": record.get("config_path") or "",
+            "signal": record.get("signal") or "",
+            "traceback": record.get("traceback") or "",
+            "resume": record.get("resume") or "",
+            "resume_step": record.get("resume_step"),
             "profile": record.get("profile") or record.get("workspace") or "",
             "last": record.get("last") or None,
         })

@@ -42,6 +42,15 @@ class Job:
     baseline_error: str = ""
     last_pid: int = 0
     exit_code: int | None = None
+    # Resume metadata travels with the job record so a restarted server can
+    # still explain how this run was started. ``resume`` is the checkpoint
+    # path as shown in the record; ``resume_step`` is parsed from its name.
+    resume: str = ""
+    resume_step: int | None = None
+    # Fresh training truncates its own log; resume keeps the earlier session.
+    log_mode: str = "a"
+    signal: str = ""
+    traceback: str = ""
     persisted_at: float = 0.0
 
     def push(self, event: dict):

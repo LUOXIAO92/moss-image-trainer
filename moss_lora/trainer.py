@@ -12,7 +12,10 @@ import math
 import contextlib
 import hashlib
 import os
+import re
+import shutil
 import time
+import traceback
 from dataclasses import dataclass, field
 
 import torch
@@ -280,6 +283,79 @@ class Trainer:
         path = os.path.join(self.out_dir, "metrics.jsonl")
         with open(path, "a", encoding="utf-8") as handle:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    def reset_run_state(self):
+        """Start a fresh run with no stale metrics, heartbeat or previews.
+
+        Checkpoints and exports survive: they are history the user may still
+        want to export or resume from after deliberately starting over.
+        """
+        removed = []
+        for name in ("metrics.jsonl", "training.json"):
+            path = os.path.join(self.out_dir, name)
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                pass
+            else:
+                removed.append(name)
+        sample_dir = os.path.join(self.out_dir, "samples")
+        if os.path.isdir(sample_dir):
+            shutil.rmtree(sample_dir)
+            removed.append("samples/")
+        if removed:
+            self.log(f"fresh run: cleared {', '.join(removed)}")
+
+    def _prune_after_resume(self, start_step: int):
+        """Drop rows and previews the failed session wrote after the checkpoint.
+
+        Resume must not append a second 801..841 on top of the rows the crashed
+        process already wrote.  Rows at or below ``start_step`` are the history
+        the checkpoint represents and stay untouched.
+        """
+        metrics_path = os.path.join(self.out_dir, "metrics.jsonl")
+        kept = 0
+        dropped = 0
+        if os.path.isfile(metrics_path):
+            tmp = f"{metrics_path}.{os.getpid()}.prune.tmp"
+            with open(metrics_path, encoding="utf-8") as source, \
+                    open(tmp, "w", encoding="utf-8") as target:
+                for line in source:
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    try:
+                        step = int(json.loads(stripped).get("step") or 0)
+                    except (json.JSONDecodeError, AttributeError, TypeError, ValueError):
+                        target.write(line if line.endswith("\n") else line + "\n")
+                        kept += 1
+                        continue
+                    if step > start_step:
+                        dropped += 1
+                        continue
+                    target.write(line if line.endswith("\n") else line + "\n")
+                    kept += 1
+            os.replace(tmp, metrics_path)
+
+        sample_dir = os.path.join(self.out_dir, "samples")
+        sample_dropped = 0
+        if os.path.isdir(sample_dir):
+            for name in os.listdir(sample_dir):
+                match = re.fullmatch(r"step(\d+)_\d+\.png", name)
+                if match and int(match.group(1)) > start_step:
+                    try:
+                        os.remove(os.path.join(sample_dir, name))
+                    except FileNotFoundError:
+                        pass
+                    else:
+                        sample_dropped += 1
+            # The contact sheet includes previews that no longer exist.
+            stale_sheet = os.path.join(sample_dir, "trajectory.png")
+            if os.path.isfile(stale_sheet):
+                os.remove(stale_sheet)
+        if kept or dropped or sample_dropped:
+            self.log(f"resume from step {start_step}: kept {kept} metric row(s), "
+                     f"dropped {dropped} row(s) and {sample_dropped} preview(s)")
 
     def _memory_stats(self) -> dict:
         """Allocated, reserved and device-wide usage in GiB.
@@ -700,13 +776,17 @@ class Trainer:
                 f"已启动 GC"
             )
 
-    def start(self):
+    def start(self, reset: bool = False):
         """Take the GPU lock and publish the loading heartbeat.
 
         The lock comes first: a second process must fail before it can overwrite
-        the live run's heartbeat or clear its stop request.
+        the live run's heartbeat or clear its stop request.  A fresh run's
+        cleanup happens after the lock and before the loading beat for the same
+        reason: it must never delete files from a run that is still alive.
         """
         self._acquire_lock()
+        if reset:
+            self.reset_run_state()
         self._publish_loading()
 
     def _publish_loading(self):
@@ -739,7 +819,8 @@ class Trainer:
         try:
             self.save_checkpoint(step)
         except Exception as exc:  # a checkpoint failure must not mask the stop
-            self.log(f"checkpoint on stop failed: {type(exc).__name__}: {exc}")
+            self.log(f"checkpoint on stop failed: {type(exc).__name__}: {exc}\n"
+                     + traceback.format_exc().rstrip())
 
     def train(self, resume: str = ""):
         """Run the loop, holding the GPU lock and publishing a terminal status.
@@ -752,10 +833,13 @@ class Trainer:
         try:
             return self._train_loop(resume)
         except KeyboardInterrupt:
+            self.log("training stopped by user")
             self._save_on_stop()
             self._write_heartbeat(self.state.step, "stopped", "stopped", exit_code=130)
             raise
         except BaseException:
+            # A failed training must leave a real stack, not only an exit code.
+            self.log("training failed:\n" + traceback.format_exc().rstrip())
             self._write_heartbeat(self.state.step, "failed", "failed", exit_code=1)
             raise
         finally:
@@ -783,7 +867,13 @@ class Trainer:
     def _train_loop(self, resume: str = ""):
         cfg = self.config.train
         self._report_allocator()
-        start_step = self._load_checkpoint(resume) if resume else 0
+        start_step = 0
+        if resume:
+            start_step = self._load_checkpoint(resume)
+            # A stop before the first resumed step must checkpoint this step,
+            # not step 0; the pruning below is also anchored here.
+            self.state.step = start_step
+            self._prune_after_resume(start_step)
         rng = self.generator
         torch.cuda.reset_peak_memory_stats()
         running = 0.0
@@ -844,7 +934,8 @@ class Trainer:
                 try:
                     self.preview(step + 1)
                 except Exception as exc:  # a broken preview must not kill the run
-                    self.log(f"preview failed at step {step + 1}: {type(exc).__name__}: {exc}")
+                    self.log(f"preview failed at step {step + 1}: {type(exc).__name__}: {exc}\n"
+                             + traceback.format_exc().rstrip())
                 self._write_heartbeat(step + 1, "running", "train")
         self._write_heartbeat(cfg.steps, "running", "export")
         self.save_checkpoint(cfg.steps, final=True)

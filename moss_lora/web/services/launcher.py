@@ -6,9 +6,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
+import traceback
 
 import yaml
 
@@ -36,8 +38,28 @@ def _chain(commands: list[list[str]]) -> list[str]:
     return [_python(), "-m", "moss_lora.web.services.chain", json.dumps(commands)]
 
 
+def signal_name(returncode: int | None) -> str:
+    """Turn a negative subprocess return code into its signal name.
+
+    ``Popen.returncode`` is ``-N`` when the child was killed by signal N.  The
+    enum is not identical on every platform, so an unknown number still gets a
+    readable fallback instead of disappearing from the log.
+    """
+    try:
+        code = int(returncode)
+    except (TypeError, ValueError):
+        return ""
+    if code >= 0:
+        return ""
+    number = -code
+    try:
+        return signal.Signals(number).name
+    except (AttributeError, ValueError):
+        return f"signal {number}"
+
+
 def _command(kind: str, config_path: str, parts: list[str] | None = None,
-             overwrite: bool = False) -> list[str]:
+             overwrite: bool = False, resume: str = "") -> list[str]:
     python = _python()
     if kind == "cache":
         selected = parts or CACHE_PARTS
@@ -55,7 +77,10 @@ def _command(kind: str, config_path: str, parts: list[str] | None = None,
         # 先 latent 再文本，任一失败即停
         return _chain(commands)
     if kind == "train":
-        return [python, "-m", "moss_lora.cli", "train", "--config", config_path]
+        command = [python, "-m", "moss_lora.cli", "train", "--config", config_path]
+        if resume:
+            command += ["--resume", os.path.abspath(os.path.expanduser(resume))]
+        return command
     raise fail(400, "err.job.kind_unknown", kind=kind)
 
 
@@ -144,6 +169,10 @@ def _persist_job(job: Job, force: bool = False) -> None:
         "baseline_status": job.baseline_status,
         "baseline_error": job.baseline_error,
         "exit_code": job.exit_code,
+        "resume": job.resume,
+        "resume_step": job.resume_step,
+        "signal": job.signal,
+        "traceback": job.traceback,
         "last": job.last or None,
         "time": time.time(),
     }
@@ -193,7 +222,9 @@ def _stream_command(job: Job, command: list[str], log_handle, parse_steps: bool)
                 if "preview ->" in line:
                     job.push({"type": "samples", "line": line})
             job.push({"type": "log", "line": line})
-        return job.process.wait()
+        code = job.process.wait()
+        job.signal = signal_name(code)
+        return code
     finally:
         process = job.process
         job.process = None
@@ -205,10 +236,14 @@ def _run(job: Job):
     job.env = dict(job.env or {})
     job.env.setdefault("PYTHONUNBUFFERED", "1")
     job.env["PYTHONIOENCODING"] = "utf-8"
+    # A native crash cannot raise a Python exception; faulthandler is the only
+    # thing that can still print the Python stack and the fatal signal.
+    job.env.setdefault("PYTHONFAULTHANDLER", "1")
     log_handle = None
     try:
         os.makedirs(os.path.dirname(job.log_path), exist_ok=True)
-        log_handle = open(job.log_path, "a", encoding="utf-8")
+        mode = "w" if str(job.log_mode or "a").lower() == "w" else "a"
+        log_handle = open(job.log_path, mode, encoding="utf-8")
         _persist_job(job, force=True)
 
         stopped = False
@@ -224,8 +259,11 @@ def _run(job: Job):
                 code = _stream_command(job, command, log_handle, parse_steps=False)
             except Exception as exc:  # a pre-step must never block training
                 code = 1
+                text = traceback.format_exc()
+                job.traceback = text[-65536:]
                 if log_handle is not None:
                     log_handle.write(f"[{stage}] failed to start: {exc}\n")
+                    log_handle.write(text)
                     log_handle.flush()
             if job.status == "stopped":
                 stopped = True
@@ -264,15 +302,27 @@ def _run(job: Job):
         _persist_job(job, force=True)
         if code == 0 and job.kind == "train":
             _write_preview_sidecars(job)
+        suffix = f" ({job.signal})" if code and job.signal else ""
         if log_handle is not None:
-            log_handle.write(f"[job] {'done' if code == 0 else 'error'} · exit code {code}\n")
+            log_handle.write(f"[job] {'done' if code == 0 else 'error'} · exit code {code}{suffix}\n")
             log_handle.flush()
-        job.push({"type": "done" if code == 0 else "error", "message": f"exit code {code}"})
+        job.push({"type": "done" if code == 0 else "error",
+                  "message": f"exit code {code}{suffix}",
+                  "exit_code": code,
+                  "signal": job.signal,
+                  "traceback": job.traceback})
     except Exception as exc:  # pragma: no cover
         job.status = "error"
-        job.push({"type": "error", "message": str(exc)})
+        # Keep the full stack in the job log; the record gets a bounded copy so
+        # a repeated exception cannot bloat JSON written on every heartbeat.
+        text = traceback.format_exc()
+        job.traceback = text[-65536:]
+        job.exit_code = 1
+        job.push({"type": "error", "message": str(exc), "exit_code": 1,
+                  "signal": "", "traceback": job.traceback})
         if log_handle is not None:
-            log_handle.write(f"[job] error: {exc}\n")
+            log_handle.write(text)
+            log_handle.flush()
     finally:
         if log_handle is not None:
             log_handle.close()

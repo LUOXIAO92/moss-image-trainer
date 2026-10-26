@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import random
+import re
 import signal
 import threading
 import time
@@ -33,6 +34,47 @@ from ..errors import fail, problem
 router = APIRouter()
 
 
+def _checkpoint_step(filename: str) -> int | None:
+    match = re.fullmatch(r"step(\d+)\.safetensors", filename)
+    return int(match.group(1)) if match else None
+
+
+def _resolve_resume(run_dir: str, value: str) -> tuple[str, int | None]:
+    """Resolve ``latest`` or one direct checkpoint filename under the run.
+
+    The API never accepts a path: only a basename that exists in this run's
+    ``checkpoints/`` is valid. That keeps a crafted ``../`` or absolute path
+    from selecting a file outside the run.
+    """
+    folder = os.path.join(run_dir, "checkpoints")
+    raw = str(value or "").strip()
+    if raw.lower() == "latest":
+        best: tuple[int, str] | None = None
+        if os.path.isdir(folder):
+            for name in os.listdir(folder):
+                step = _checkpoint_step(name)
+                if step is not None and (best is None or (step, name) > best):
+                    best = (step, name)
+        if best is None:
+            raise fail(404, "err.export.checkpoint_missing", file="latest")
+        return os.path.join(folder, best[1]), best[0]
+
+    # Reject both Windows and POSIX separators before basename(), because a
+    # backslash is a normal filename character on POSIX.
+    name = os.path.basename(raw.replace("\\", "/"))
+    if not name or name != raw or "/" in raw or "\\" in raw:
+        raise fail(400, "err.name.charset.run")
+    step = _checkpoint_step(name)
+    if step is None:
+        # `final` is an export, and `*.state.safetensors` lacks the LoRA
+        # weights; neither can start a meaningful resumed loop.
+        raise fail(400, "err.export.step_invalid", step=name)
+    candidate = os.path.join(folder, name)
+    if not os.path.isfile(candidate):
+        raise fail(404, "err.export.checkpoint_missing", file=name)
+    return candidate, step
+
+
 @router.post("/api/jobs")
 async def api_start(request: Request):
     body = await request.json()
@@ -45,6 +87,11 @@ async def api_start(request: Request):
     workspace = _resolve_workspace(body.get("workspace"))
     text = body.get("yaml") or ""
     run_arg = str(body.get("run") or "").strip()
+    resume_arg = str(body.get("resume") or "").strip()
+    if resume_arg and kind != "train":
+        raise fail(400, "err.job.kind_unknown", kind=f"{kind}:resume")
+    if resume_arg and not run_arg:
+        raise fail(400, "err.run.required")
     if run_arg:
         # A run names its own config; the file is the only thing read. Editing
         # it afterwards is allowed, but not while the run is training.
@@ -103,6 +150,8 @@ async def api_start(request: Request):
 
     run_dir = ""
     run_id = ""
+    resume_path = ""
+    resume_step: int | None = None
     run_label = config.name
     pre_commands: list[dict] = []
     stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -115,6 +164,8 @@ async def api_start(request: Request):
         # The run directory names the config, so use that name rather than
         # whatever a stale `name:` field happens to say.
         workspace, run_id, run_dir = _workspace_target_run(workspace, run_arg)
+        if resume_arg:
+            resume_path, resume_step = _resolve_resume(run_dir, resume_arg)
         config.output_dir = _workspace_runs_dir(workspace)
         config.name = run_id
         data["name"] = run_id
@@ -150,8 +201,7 @@ async def api_start(request: Request):
         if summary.get("missing_text"):
             raise fail(400, "err.cache.missing_text", dir=cache_dir,
                        missing=summary["missing_text"], items=summary["items"])
-        # `_run` opens this log in append mode, so training a run again keeps
-        # the earlier session instead of truncating it.
+        # A fresh run starts a new log; resume keeps the earlier session.
         log_name = run_id
         run_label = run_id
     elif kind == "cache":
@@ -212,7 +262,8 @@ async def api_start(request: Request):
         command=(_caption_command(config, settings.get("caption") or {}, log_dir, stamp,
                                   datasets, styles, overwrite)
                  if kind == "caption" else _command(kind, snapshot, parts,
-                                                    overwrite=cache_overwrite)),
+                                                    overwrite=cache_overwrite,
+                                                    resume=resume_path)),
         profile=workspace,
         workspace=workspace,
         run_name=run_label,
@@ -221,6 +272,9 @@ async def api_start(request: Request):
         state_path=os.path.join(log_dir, f"{job_id}.json"),
         env=job_env,
         pre_commands=pre_commands,
+        resume=_rel(resume_path) if resume_path else "",
+        resume_step=resume_step,
+        log_mode="a" if resume_path else ("w" if kind == "train" else "a"),
     )
     JOBS.add(job)
     threading.Thread(target=_run, args=(job,), daemon=True).start()
@@ -235,6 +289,9 @@ async def api_start(request: Request):
         "workspace": workspace,
         "output_dir": _rel(run_dir) if run_dir else None,
         "baseline": bool(pre_commands),
+        "resume": _rel(resume_path) if resume_path else "",
+        "resume_step": resume_step,
+        "log_mode": job.log_mode,
         "python": python,
     }
 
@@ -298,6 +355,10 @@ def api_jobs():
             "started": job.created,
             "finished": job.finished,
             "exit_code": job.exit_code,
+            "resume": job.resume or entry.get("resume") or "",
+            "resume_step": job.resume_step if job.resume_step is not None else entry.get("resume_step"),
+            "signal": job.signal or entry.get("signal") or "",
+            "traceback": job.traceback or entry.get("traceback") or "",
             "last": job.last or entry.get("last"),
             "stale": entry.get("stale", False),
             "age": entry.get("age"),
@@ -333,6 +394,10 @@ def api_jobs():
             "age": entry.get("age"),
             "pid": entry.get("pid"),
             "exit_code": entry.get("exit_code"),
+            "signal": entry.get("signal") or "",
+            "resume": entry.get("resume") or "",
+            "resume_step": entry.get("resume_step"),
+            "traceback": entry.get("traceback") or "",
         })
     items.sort(key=lambda item: item.get("created") or 0.0, reverse=True)
     return items
