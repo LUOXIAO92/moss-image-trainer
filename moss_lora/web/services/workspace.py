@@ -387,10 +387,10 @@ def _run_entry(name: str, directory: str, rows: list[dict]) -> dict:
 
     checkpoints = _run_checkpoints(directory)
     numbered = _latest_checkpoint(checkpoints)
-    latest = checkpoints[-1] if checkpoints else None
-    checkpoint = latest["file"] if latest else None
-    checkpoint_step = int(latest["step"]) if latest and latest["step"] != "final" else None
-    # Only a numbered checkpoint can resume; ``final`` is the finished export.
+    # ``checkpoint`` is the resume target, so it is always a numbered file.
+    # The full ``checkpoints`` array still exposes ``final`` for the export UI.
+    checkpoint = numbered["file"] if numbered else None
+    checkpoint_step = int(numbered["step"]) if numbered else None
     resumable = bool(numbered) and (not has_metrics or bool(total and step < total))
     return {
         "name": run,

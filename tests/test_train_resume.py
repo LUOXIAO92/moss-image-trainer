@@ -448,6 +448,10 @@ def check_run_list_and_dashboard() -> None:
         os.makedirs(os.path.join(demo_dir, "checkpoints"))
         with open(os.path.join(demo_dir, "checkpoints", "step000050.safetensors"), "wb") as handle:
             handle.write(b"weights")
+        # ``final`` is an export, not a resume target; the API must keep the
+        # numbered checkpoint even when the final export is newer.
+        with open(os.path.join(demo_dir, "checkpoints", "final.safetensors"), "wb") as handle:
+            handle.write(b"export")
         with open(os.path.join(demo_dir, "metrics.jsonl"), "w", encoding="utf-8") as handle:
             handle.write('{"step": 10, "total": 100, "train": 1.0}\n')
         os.makedirs(os.path.join(demo_dir, "samples"))
