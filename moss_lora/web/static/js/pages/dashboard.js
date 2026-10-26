@@ -4,8 +4,8 @@
  * ========================================================================= */
 
 import { buildLine, drawChart, movingAverage, setChartSeries } from '../components/chart.js';
-import { renderRunStrip, updateJobUi, updateTrainMetrics, updateTrainRunState } from '../components/jobs.js';
-import { loadRunLog, shortRunName } from '../components/logview.js';
+import { jobSignal, renderRunStrip, updateJobUi, updateTrainMetrics, updateTrainRunState } from '../components/jobs.js';
+import { loadRunLog } from '../components/logview.js';
 import { defaultDashboardLayout, drawMetricCards, renderWidgetCards, saveDashboardLayout } from '../components/metriccards.js';
 import { api, describeError } from '../core/api.js';
 import { $, clamp, escapeHtml, fileUrl, setText, thumbUrl } from '../core/dom.js';
@@ -14,7 +14,7 @@ import { localeCode, t } from '../core/i18n.js';
 import { showAlert, showError } from '../core/notify.js';
 import { state, workspaceParam } from '../core/state.js';
 import { getCurrentYaml } from '../config/form.js';
-import { renderDashboardConfigOptions } from '../config/list.js';
+import { renderDashboardConfigOptions, selectDashboardConfig } from '../config/list.js';
 
 function dashboardSeries(rows) {
   const train = [];
@@ -250,6 +250,8 @@ export function clearCompareState() {
   state.compareRuns.clear();
   state.compareData = [];
   state.sampleCompareSelection.clear();
+  state.sampleCompareKnown = new Set();
+  state.sampleCompareSignature = '';
   state.sampleCompareData = [];
   state.sampleCompareInitialized = false;
   state.sampleCompareLoading = false;
@@ -329,31 +331,55 @@ function sampleNegativeFor(run) {
   return run.negative || '';
 }
 
+function runShortName(value) {
+  return String(value || '').split('/').pop();
+}
+
 function sampleRunOptions() {
   const dashRuns = state.dashboard.data?.runs || [];
-  if (state.runs.length) {
-    return state.runs.map((run) => {
-      const short = run.name.split('/').pop();
-      const dash = dashRuns.find((item) => item.name.split('/').pop() === short);
-      return {
-        name: dash?.name || (run.name.includes('/') ? run.name : `${state.profileName}/${run.name}`),
-        label: dash?.label || run.label || run.name,
-        samples: Number(run.samples || 0),
-      };
-    }).filter((run) => run.samples > 0);
+  const dashByShort = new Map();
+  for (const run of dashRuns) {
+    dashByShort.set(runShortName(run.name || run.label), run);
   }
-  return dashRuns.map((run) => ({
-    name: run.name,
-    label: run.label || run.name,
-    samples: run.name === state.dashboard.data?.run
+  const seen = new Set();
+  const options = [];
+  const add = (entry, dash) => {
+    const short = runShortName(entry?.name || entry?.label || dash?.name || dash?.label);
+    if (!short || seen.has(short)) return;
+    seen.add(short);
+    const activeFallback = runShortName(state.dashboard.data?.run)
+      && runShortName(state.dashboard.data?.run) === runShortName(dash?.name || dash?.label || entry?.name)
       ? (state.dashboard.data?.samples || []).length
-      : 1,
-  })).filter((run) => run.samples > 0);
+      : 0;
+    const samples = Math.max(
+      Number(dash?.samples || 0),
+      Number(entry?.samples || 0),
+      Number(activeFallback || 0),
+    );
+    if (!Number.isFinite(samples) || samples <= 0) return;
+    options.push({
+      name: entry?.label || dash?.label || (state.profileName ? `${state.profileName}/${short}` : short),
+      short,
+      label: entry?.label || dash?.label || short,
+      samples,
+    });
+  };
+  for (const entry of state.runs || []) add(entry, dashByShort.get(runShortName(entry.name)));
+  for (const dash of dashRuns) add(null, dash);
+  return options;
+}
+
+function dashboardRunFor(name) {
+  const short = runShortName(name);
+  return (state.dashboard.data?.runs || []).find((run) => runShortName(run.name || run.label) === short) || null;
 }
 
 function sampleRunConfig(name) {
-  const shortName = String(name || '').split('/').pop();
-  const config = state.runs.find((item) => item.name === shortName)?.config || {};
+  const short = runShortName(name);
+  const entry = (state.runs || []).find((item) => (
+    item.name === short || runShortName(item.name) === short || item.label === name
+  ));
+  const config = entry?.config || {};
   return {
     prompts: Array.isArray(config.preview?.prompts) ? config.preview.prompts : [],
     negative: config.preview?.negative_prompt || '',
@@ -362,17 +388,52 @@ function sampleRunConfig(name) {
 
 export function initSampleCompareSelection() {
   if (!state.dashboard.data) return;
-  if (state.sampleCompareInitialized) return;
   const available = sampleRunOptions();
   const availableNames = new Set(available.map((run) => run.name));
-  const saved = state.layout?.sampleRuns;
-  const selected = Array.isArray(saved)
-    ? saved.filter((name) => availableNames.has(name))
-    : available.map((run) => run.name);
-  state.sampleCompareSelection = new Set(selected);
-  state.sampleCompareInitialized = true;
+  let known = state.sampleCompareKnown;
+  if (!(known instanceof Set)) known = new Set(availableNames);
+  let selection = state.sampleCompareSelection;
+  if (!(selection instanceof Set)) selection = new Set();
+  const first = !state.sampleCompareInitialized;
+  let changed = false;
+
+  if (first) {
+    const saved = state.layout?.sampleRuns;
+    selection = new Set(Array.isArray(saved)
+      ? saved.filter((name) => availableNames.has(name))
+      : [...availableNames]);
+    known = new Set(availableNames);
+    changed = true;
+    state.sampleCompareInitialized = true;
+  } else {
+    for (const name of [...known]) {
+      if (availableNames.has(name)) continue;
+      known.delete(name);
+      selection.delete(name);
+      changed = true;
+    }
+    for (const name of availableNames) {
+      if (known.has(name)) continue;
+      known.add(name);
+      // A newly discovered run starts selected; an explicitly deselected run
+      // was already known, so it is never added back.
+      selection.add(name);
+      changed = true;
+    }
+  }
+  state.sampleCompareKnown = known;
+  state.sampleCompareSelection = selection;
+
+  const signature = available.map((run) => `${run.name}:${run.samples}`).join('|');
+  const dataChanged = signature !== state.sampleCompareSignature;
+  state.sampleCompareSignature = signature;
+  if (changed) {
+    if (!state.layout) state.layout = defaultDashboardLayout();
+    state.layout.sampleRuns = [...selection];
+    if (state.layoutLoaded) saveDashboardLayout();
+  }
   renderSampleRunMenu();
-  loadSampleCompareData().catch(() => {});
+  if (changed || dataChanged) loadSampleCompareData().catch(() => {});
 }
 
 function renderSampleRunMenu() {
@@ -428,15 +489,19 @@ async function loadSampleCompareData() {
   }
   state.sampleCompareLoading = true;
   try {
-    const runs = state.dashboard.data?.runs || [];
     const data = await Promise.all(names.map(async (name) => {
-      const run = runs.find((item) => item.name === name);
-      if (!run) return null;
+      const dashRun = dashboardRunFor(name);
+      const short = runShortName(name);
+      const entry = (state.runs || []).find((run) => run.name === short
+        || runShortName(run.name) === short || run.label === name);
       const payload = await api('/api/dashboard?workspace=' + encodeURIComponent(workspaceParam()) + '&run=' + encodeURIComponent(name));
       const config = sampleRunConfig(name);
       return {
-        name, label: run.label || name, samples: payload.samples || [],
-        prompts: config.prompts, negative: config.negative,
+        name,
+        label: entry?.label || dashRun?.label || name,
+        samples: payload.samples || [],
+        prompts: config.prompts,
+        negative: config.negative,
       };
     }));
     state.sampleCompareData = data.filter(Boolean);
@@ -649,6 +714,32 @@ export async function loadActiveTraining() {
   updateJobUi();
 }
 
+let runsRefreshing = false;
+let runsRefreshedAt = 0;
+
+function refreshRunsInBackground(force = false) {
+  if (runsRefreshing) return;
+  if (!force && Date.now() - runsRefreshedAt < 15000) return;
+  runsRefreshing = true;
+  runsRefreshedAt = Date.now();
+  // Loaded lazily: workspace.js imports jobsse.js, which imports this module.
+  import('./workspace.js')
+    .then(({ loadWorkspaceRuns }) => loadWorkspaceRuns())
+    .then(async () => {
+      const selectedExists = (state.runs || []).some((entry) => entry.name === state.activeRun);
+      if (!selectedExists && state.runs.length && !state.dirty) {
+        // The viewed run was deleted; fall back to the newest remaining config.
+        const ok = await selectDashboardConfig(state.runs[0].name);
+        if (ok) await loadDashboard(state.dashboard.run, { silent: true });
+      } else {
+        renderDashboardConfigOptions();
+        initSampleCompareSelection();
+      }
+    })
+    .catch(() => {})
+    .finally(() => { runsRefreshing = false; });
+}
+
 export async function loadDashboard(run = null, options = {}) {
   if (state.dashboard.loading) return state.dashboard.data;
   // A fresh install has no workspace yet, and the endpoint answers 400 for one
@@ -662,18 +753,23 @@ export async function loadDashboard(run = null, options = {}) {
   }
   state.dashboard.loading = true;
   const liveLabel = state.job?.status === 'running' && state.job.kind === 'train' ? state.job.label : '';
-  const requested = liveLabel || run || state.dashboard.run || '';
+  const activeEntry = (state.runs || []).find((entry) => entry.name === state.activeRun);
+  const requested = liveLabel || run || state.dashboard.run || activeEntry?.label || '';
   try {
     const query = new URLSearchParams({ workspace: workspaceParam() });
     if (requested) query.set('run', requested);
     const data = await api('/api/dashboard?' + query.toString());
     state.dashboard.data = data;
-    state.dashboard.run = data.run || null;
+    // A config-only run has no rows yet, so the endpoint may not choose it.
+    // Keep the run the user selected instead of falling back to the newest one.
+    state.dashboard.run = data.run || requested || null;
     state.dashboard.lastError = '';
     renderDashboard(data);
     initSampleCompareSelection();
-    loadSampleCompareData().catch(() => {});
-    loadRunLog(data.run).catch(() => {});
+    const known = new Set((state.runs || []).map((entry) => runShortName(entry.name)));
+    const missing = (data.runs || []).some((entry) => !known.has(runShortName(entry.name || entry.label)));
+    refreshRunsInBackground(missing);
+    loadRunLog(state.dashboard.run).catch(() => {});
     loadBaselineSamples().catch(() => {});
     if (!options.silent) setText('#dash-updated', t('dash.updated', { time: new Date().toLocaleTimeString(localeCode(), { hour12: false }) }));
     return data;
@@ -706,18 +802,7 @@ function gpuUsageSummary(gpu, peak = null) {
 }
 
 export function renderDashboard(data) {
-  const select = $('#dash-run');
   const runs = [...(data.runs || [])].sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
-  if (select) {
-    const previous = select.value;
-    select.innerHTML = runs.length
-      ? runs.map((run) => `<option value="${escapeHtml(run.name)}">${escapeHtml(shortRunName(run.name))}</option>`).join('')
-      : `<option value="">${escapeHtml(t('dash.run.none'))}</option>`;
-    const wanted = data.run || previous;
-    if (wanted && runs.some((run) => run.name === wanted)) select.value = wanted;
-    select.disabled = !runs.length;
-  }
-
   const rows = data.rows || [];
   const series = dashboardSeries(rows);
   const train = series.train;
@@ -727,9 +812,10 @@ export function renderDashboard(data) {
   const lastEval = evals[evals.length - 1];
   const total = lastTrain?.row?.total || 0;
   const newestRun = runs[0]?.name;
-  const active = Boolean(data.active) && data.run === (state.currentRun?.label || state.currentRun?.name || newestRun);
+  const activeName = state.currentRun?.label || state.currentRun?.name || newestRun;
+  const active = Boolean(data.active) && runShortName(data.run) === runShortName(activeName);
   const liveLabel = state.job?.status === 'running' && state.job.kind === 'train' ? state.job.label : '';
-  const liveMismatch = Boolean(liveLabel && data.run !== liveLabel);
+  const liveMismatch = Boolean(liveLabel && runShortName(data.run) !== runShortName(liveLabel));
   if (!liveMismatch) setChartSeries('dash', series, total, rows);
   const smoothed = movingAverage(train, state.smoothWindow);
   const lastSmoothed = smoothed[smoothed.length - 1];
@@ -832,11 +918,20 @@ export function renderDashboard(data) {
   setText('#metric-gpu-usage', gpuSummary || '--');
 
   const liveStep = state.job?.status === 'running' && state.job.kind === 'train'
-    && state.job.label === data.run ? state.job.last?.step : null;
+    && runShortName(state.job.label) === runShortName(data.run) ? state.job.last?.step : null;
+  const runInfo = runs.find((run) => run.name === data.run || run.label === data.run
+    || runShortName(run.name) === runShortName(data.run));
   const status = runRunState(data, active, liveStep);
+  const selectedSignal = data.run && state.job?.status === 'error'
+    && runShortName(state.job.label) === runShortName(data.run)
+    ? jobSignal(state.job)
+    : '';
+  if (selectedSignal) {
+    status.text = t('dash.runState.signal', { signal: selectedSignal });
+    status.className = 'chip chip-err';
+  }
   setText('#dash-run-status', status.text);
   setText('#dash-run-name', data.run || '--');
-  const runInfo = runs.find((run) => run.name === data.run);
   setText('#dash-run-path', runInfo?.path || '--');
   // The run's own config file, or "no snapshot": never another config's.
   const runConfigName = String(data.run || '').split('/').pop();
@@ -857,8 +952,8 @@ export function renderDashboard(data) {
   if (liveMismatch) updateTrainMetrics();
   renderRunStrip();
   updateTrainRunState();
-  // The config picker follows the viewed run; it used to only re-render when a
-  // config changed, which is how the two selectors drifted apart.
+  // One picker, one run: the dashboard never rebuilds a second selector from
+  // `data.runs`; it only keeps the training-config picker in sync.
   renderDashboardConfigOptions();
   // The measured peak lives in the live series, so refresh the suffix on each
   // dashboard poll without asking /api/estimate again.

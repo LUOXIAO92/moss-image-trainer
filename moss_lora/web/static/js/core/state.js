@@ -144,6 +144,8 @@ export const state = {
   compareData: [],
   compareSampleRuns: [],
   sampleCompareSelection: new Set(),
+  sampleCompareKnown: new Set(),
+  sampleCompareSignature: '',
   sampleCompareData: [],
   sampleCompareStep: null,
   sampleCompareTrigger: null,

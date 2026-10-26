@@ -17,6 +17,21 @@ export function isLogNearBottom(box) {
   return box.scrollHeight - box.scrollTop - box.clientHeight < 48;
 }
 
+export function logLineClass(line) {
+  const text = String(line || '');
+  if (/traceback|exception|error|failed|out of memory|CUDA error|segmentation fault|sigsegv|fatal python error|signal \d+/i.test(text)) return 'err';
+  return text.startsWith('$ ') ? 'sys' : '';
+}
+
+export function appendTraceback(traceback) {
+  const text = Array.isArray(traceback) ? traceback.join('\n') : String(traceback || '');
+  if (!text.trim()) return false;
+  for (const line of text.split(/\r?\n/)) {
+    if (line) pushLog(line, 'err');
+  }
+  return true;
+}
+
 export function updateLogCount() {
   setText('#log-count', t('common.lines', { count: state.logs.length }));
 }
@@ -69,7 +84,7 @@ export function shortRunName(value) {
 }
 
 export function currentLogRun() {
-  return shortRunName(state.dashboard.data?.run || $('#dash-run')?.value || state.activeTraining?.run || '');
+  return shortRunName(state.dashboard.data?.run || state.dashboard.run || state.activeRun || state.activeTraining?.run || '');
 }
 
 export async function loadRunLog(run, { force = false } = {}) {
@@ -85,10 +100,7 @@ export async function loadRunLog(run, { force = false } = {}) {
     const first = state.runLog.run !== name;
     state.runLog.run = name;
     state.runLog.text = text;
-    state.logs = lines.map((line) => ({
-      line,
-      className: /traceback|exception|error|failed|out of memory|CUDA error/i.test(line) ? 'err' : line.startsWith('$ ') ? 'cmd' : '',
-    }));
+    state.logs = lines.map((line) => ({ line, className: logLineClass(line) }));
     if (first) {
       const box = $('#log');
       if (box) box.scrollTop = 0;
@@ -97,6 +109,13 @@ export async function loadRunLog(run, { force = false } = {}) {
     if (!data.exists && !lines.length) {
       state.logs = [{ line: t('dash.log.missingRun', { name }), className: 'dim' }];
       rebuildLog(true);
+    }
+    const jobTraceback = state.job?.status === 'error'
+      && shortRunName(state.job.label || state.job.runName) === name
+      ? state.job.traceback : '';
+    if (jobTraceback) {
+      const first = (Array.isArray(jobTraceback) ? jobTraceback : String(jobTraceback).split(/\r?\n/)).find(Boolean);
+      if (!first || !state.logs.some((entry) => entry.line === first)) appendTraceback(jobTraceback);
     }
   } catch (error) {
     if (!state.runLog.text) {

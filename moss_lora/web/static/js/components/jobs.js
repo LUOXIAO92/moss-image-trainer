@@ -5,8 +5,8 @@
 
 import { movingAverage, setChartSeries } from './chart.js';
 import { finishJob, subscribe } from './jobsse.js';
-import { beginCacheProgress, beginCaptionProgress, cacheStageLabel, clearLog } from './logview.js';
-import { hasDashboardConfigSelection } from '../config/list.js';
+import { appendTraceback, beginCacheProgress, beginCaptionProgress, cacheStageLabel, clearLog } from './logview.js';
+import { hasDashboardConfigSelection, updateDashboardResumeState } from '../config/list.js';
 import { parseYaml } from '../config/yaml.js';
 import { api } from '../core/api.js';
 import { $, $$, clamp, setText } from '../core/dom.js';
@@ -18,6 +18,53 @@ import { currentTab } from '../main.js';
 import { renderCacheJob, updateCacheStartState } from '../pages/cache.js';
 import { updateCaptionStartState } from '../pages/dataset.js';
 import { startSamplePolling } from '../pages/train.js';
+
+const SIGNAL_NAMES = {
+  1: 'SIGHUP', 2: 'SIGINT', 3: 'SIGQUIT', 4: 'SIGILL', 5: 'SIGTRAP',
+  6: 'SIGABRT', 7: 'SIGBUS', 8: 'SIGFPE', 9: 'SIGKILL', 10: 'SIGUSR1',
+  11: 'SIGSEGV', 12: 'SIGUSR2', 13: 'SIGPIPE', 14: 'SIGALRM', 15: 'SIGTERM',
+};
+
+export function jobSignalName(value) {
+  if (value == null || value === '') return '';
+  if (typeof value === 'string' && /^SIG[A-Z0-9]+$/i.test(value)) return value.toUpperCase();
+  const number = Number(value);
+  // A positive exit code is a normal failure, not a signal. Only the negative
+  // return code the OS reports for a terminating signal maps to a name.
+  if (!Number.isFinite(number) || number >= 0) return '';
+  const signal = Math.abs(number);
+  return SIGNAL_NAMES[signal] || `SIG${signal}`;
+}
+
+export function jobSignal(job) {
+  const explicit = job?.signal;
+  if (explicit != null && explicit !== '') {
+    if (typeof explicit === 'string' && /^SIG[A-Z0-9]+$/i.test(explicit)) return explicit.toUpperCase();
+    const number = Number(explicit);
+    if (Number.isFinite(number) && number > 0) return SIGNAL_NAMES[number] || `SIG${number}`;
+    const named = jobSignalName(explicit);
+    if (named) return named;
+  }
+  return jobSignalName(job?.exitCode ?? job?.exit_code);
+}
+
+export function jobFailureChip(job) {
+  const signal = jobSignal(job);
+  return signal
+    ? t('job.kindFailedSignal', { kind: jobLabel(job?.kind || 'train'), signal })
+    : t('job.kindFailed', { kind: jobLabel(job?.kind || 'train') });
+}
+
+export function jobFailureText(job) {
+  const signal = jobSignal(job);
+  if (!signal) return '';
+  const code = job?.exitCode ?? job?.exit_code;
+  return t('job.signalFailed', {
+    kind: jobLabel(job?.kind || 'train'),
+    signal,
+    code: code == null ? '?' : code,
+  });
+}
 
 export function resetTrainSeries() {
   state.series = { train: new Map(), avg: new Map(), eval: new Map(), meta: new Map() };
@@ -87,7 +134,7 @@ export function updateTrainRunState() {
   }
   if (state.job && state.job.status === 'error' && state.job.kind === 'train') {
     chip.className = 'chip chip-err';
-    chip.textContent = t('train.msg49');
+    chip.textContent = jobFailureChip(state.job);
     return;
   }
   const run = state.dashboard.data && state.dashboard.data.run === (state.currentRun?.label || state.currentRun?.name)
@@ -149,7 +196,7 @@ export function renderRunStrip() {
       chip.textContent = t('train.msg48');
     } else if (state.job && state.job.kind === 'train' && state.job.status === 'error') {
       chip.className = 'chip chip-err';
-      chip.textContent = t('train.msg49');
+      chip.textContent = jobFailureChip(state.job);
     } else if (state.currentRun) {
       const rows = state.dashboard.data?.run === (state.currentRun.label || state.currentRun.name) ? state.dashboard.data.rows : [];
       const trainRows = rows.filter((row) => Number.isFinite(row.train));
@@ -253,8 +300,8 @@ export function updateJobUi() {
       chip.title = state.job.name ? t('job.kindWithName', { kind: jobLabel(state.job.kind), name: state.job.name }) : t('job.msg4');
     } else if (state.job && state.job.status === 'error') {
       chip.className = 'chip chip-err';
-      chipText.textContent = t('job.kindFailed', { kind: jobLabel(state.job.kind) });
-      chip.title = t('job.msg5');
+      chipText.textContent = jobFailureChip(state.job);
+      chip.title = jobFailureText(state.job) || t('job.msg5');
     } else if (state.job && state.job.status === 'done') {
       chip.className = 'chip chip-ok';
       chipText.textContent = t('job.kindDone', { kind: jobLabel(state.job.kind) });
@@ -272,6 +319,7 @@ export function updateJobUi() {
   renderActivity();
   renderRunStrip();
   updateTrainRunState();
+  updateDashboardResumeState();
   renderCacheJob();
 }
 
@@ -373,6 +421,9 @@ export async function loadJobs() {
         workspace: running.workspace || '',
         outputDir: running.output_dir || '', configPath: running.config_path || '', logPath: running.log_path || '',
         stage: running.stage || '', baselineError: running.baseline_error || '',
+        exitCode: running.exit_code ?? null,
+        signal: running.signal || '',
+        traceback: running.traceback || '',
         created: running.created || Date.now() / 1000,
       };
       state.jobInfoFor = null;
@@ -396,6 +447,9 @@ export async function loadJobs() {
       state.job.logPath = state.job.logPath || running.log_path || '';
       state.job.stage = running.stage || state.job.stage || '';
       state.job.baselineError = running.baseline_error || state.job.baselineError || '';
+      state.job.exitCode = running.exit_code ?? state.job.exitCode ?? null;
+      state.job.signal = running.signal || state.job.signal || '';
+      state.job.traceback = running.traceback || state.job.traceback || '';
       // /api/jobs already carries the heartbeat's progress. Take it when it is
       // newer than what the stream delivered, so a run adopted from disk moves
       // at the same rate as one this tab started.
@@ -414,8 +468,42 @@ export async function loadJobs() {
     applyJobRunInfo(state.job).catch(() => {});
   } else if (state.job && state.job.status === 'running') {
     const match = state.jobs.find((job) => job.id === state.job.id);
-    if (match) finishJob(match.status === 'done' ? 'done' : match.status, '');
-    else finishJob('stopped', t('job.msg55'));
+    if (match) {
+      finishJob(match.status === 'done' ? 'done' : match.status, '', {
+        signal: match.signal,
+        traceback: match.traceback,
+        exitCode: match.exit_code,
+      });
+    } else {
+      finishJob('stopped', t('job.msg55'));
+    }
+  } else if (!state.job && state.activeRun) {
+    // A page reload has no live job object, but the last crash may still own
+    // the selected run's traceback. Adopt only that run and only the newest
+    // job, so an old failure never masquerades as the current one.
+    const activeShort = String(state.activeRun || '').split('/').pop();
+    const latest = state.jobs
+      .filter((job) => job.workspace === state.profileName
+        && String(job.run_name || '').split('/').pop() === activeShort)
+      .sort((a, b) => (b.created || 0) - (a.created || 0))[0];
+    if (latest?.status === 'error' && (latest.traceback || Number(latest.exit_code) < 0)) {
+      const label = latest.workspace && latest.run_name
+        ? `${latest.workspace}/${latest.run_name}` : (latest.run_name || '');
+      state.job = {
+        id: latest.id, kind: latest.kind || 'train', status: 'error',
+        name: latest.run_name || '', runName: latest.run_name || '',
+        label, profile: latest.profile || state.profileName,
+        workspace: latest.workspace || state.profileName,
+        outputDir: latest.output_dir || '', configPath: latest.config_path || '',
+        logPath: latest.log_path || '', stage: latest.stage || '',
+        exitCode: latest.exit_code ?? null, signal: latest.signal || '',
+        traceback: latest.traceback || '', tracebackShown: false,
+        created: latest.created || 0,
+      };
+      if (state.job.traceback) appendTraceback(state.job.traceback);
+      state.job.tracebackShown = Boolean(state.job.traceback);
+      state.jobInfoFor = null;
+    }
   }
   updateJobUi();
 }

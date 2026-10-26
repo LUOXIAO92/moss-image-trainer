@@ -58,6 +58,7 @@ export async function loadConfig(run = null) {
   if (!state.profileName) {
     state.runs = [];
     state.activeRun = '';
+    state.dashboard.run = null;
     showEmptyState();
     renderProfileOptions();
     setHidden('#setup-panel', true);
@@ -78,6 +79,12 @@ export async function loadConfig(run = null) {
   let name = String(run || '') || localStorage.getItem(`moss.run.${state.profileName}`) || state.activeRun || '';
   if (!state.runs.some((entry) => entry.name === name)) name = state.runs[0]?.name || '';
   state.activeRun = name;
+  // One config owns the whole dashboard: switching the run here must also
+  // switch the chart, resume state, and sample picker to that same run.
+  const selected = state.runs.find((entry) => entry.name === name);
+  state.dashboard.run = name
+    ? (selected?.label || (state.profileName ? `${state.profileName}/${name}` : name))
+    : null;
   if (!name) {
     // No run yet: nothing to edit until one is created. The run browser still
     // has to drop the previous workspace's list.

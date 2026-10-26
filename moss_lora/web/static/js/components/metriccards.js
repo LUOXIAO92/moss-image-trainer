@@ -569,6 +569,8 @@ async function resetDashboardLayout() {
   state.layout = defaultDashboardLayout();
   state.layoutLoaded = true;
   state.sampleCompareInitialized = false;
+  state.sampleCompareKnown = new Set();
+  state.sampleCompareSignature = '';
   state.sampleCompareSelection = new Set();
   state.sampleCompareData = [];
   state.layout.sampleCollapsed = false;

@@ -3,8 +3,8 @@
  * split from web/static/app.js, source 3507-4303 (13 non-contiguous spans, see .tmp/js-map.json); behaviour unchanged
  * ========================================================================= */
 
-import { applyJobRunInfo, loadJobs, renderActivity, resetTrainSeries, syncTrainChart, updateJobUi, updateTrainMetrics, updateTrainRunState } from './jobs.js';
-import { beginCacheProgress, beginCaptionProgress, clearLog, completeCacheProgress, copyLog, finalizeCaptionProgress, logErrorMessage, pushLog } from './logview.js';
+import { applyJobRunInfo, jobFailureChip, jobFailureText, jobSignal, loadJobs, renderActivity, resetTrainSeries, syncTrainChart, updateJobUi, updateTrainMetrics, updateTrainRunState } from './jobs.js';
+import { appendTraceback, beginCacheProgress, beginCaptionProgress, clearLog, completeCacheProgress, copyLog, finalizeCaptionProgress, logErrorMessage, logLineClass, pushLog } from './logview.js';
 import { hidePreflight, runPreflight, setPreflight } from './preflight.js';
 import { clearYamlError, focusYamlLine, getCurrentYaml, showYamlError } from '../config/form.js';
 import { saveConfig } from '../config/file.js';
@@ -83,9 +83,7 @@ function rebuildLogFromText(text) {
   if (box) box.innerHTML = '';
   for (const line of String(text || '').split('\n')) {
     if (!line) continue;
-    const cls = line.startsWith('$ ') ? 'sys'
-      : /traceback|exception|error|failed|out of memory|CUDA error/i.test(line) ? 'err' : '';
-    pushLog(line, cls);
+    pushLog(line, logLineClass(line));
   }
   state.logFileText = String(text || '');
 }
@@ -143,8 +141,7 @@ function handleJobEvent(event) {
     case 'log': {
       state.lastSseLogAt = Date.now();
       const line = String(event.line || '');
-      const className = /traceback|exception|error|failed|out of memory|CUDA error/i.test(line) ? 'err' : '';
-      pushLog(line, className);
+      pushLog(line, logLineClass(line));
       break;
     }
     case 'progress':
@@ -189,8 +186,15 @@ function handleJobEvent(event) {
       finishJob('done', event.message || '');
       break;
     case 'error':
-      if (state.job?.status === 'stopped') finishJob('stopped', event.message || '');
-      else finishJob('error', event.message || '');
+      if (state.job?.status === 'stopped') {
+        finishJob('stopped', event.message || '');
+      } else {
+        finishJob('error', event.message || '', {
+          signal: event.signal,
+          traceback: event.traceback,
+          exitCode: event.exit_code ?? event.exitCode,
+        });
+      }
       break;
     case 'closed':
       closeStream();
@@ -201,14 +205,27 @@ function handleJobEvent(event) {
   }
 }
 
-export async function finishJob(status, message) {
+export async function finishJob(status, message, detail = {}) {
   if (!state.job) return;
   const job = state.job;
   job.status = status;
+  job.exitCode = detail.exitCode ?? job.exitCode ?? job.exit_code ?? null;
+  job.signal = jobSignal({
+    signal: detail.signal ?? job.signal,
+    exitCode: job.exitCode,
+  }) || '';
+  job.traceback = detail.traceback || job.traceback || '';
   closeStream();
   stopJobFallback();
   stopSamplePolling();
-  pushLog(`[job] ${status}${message ? ' · ' + message : ''}`, status === 'error' ? 'err' : 'ok');
+  const failure = status === 'error' ? jobFailureText(job) : '';
+  const summary = failure || message;
+  pushLog(`[job] ${status}${summary ? ' · ' + summary : ''}`, status === 'error' ? 'err' : 'ok');
+  if (status === 'error' && job.traceback && !job.tracebackShown) {
+    const first = (Array.isArray(job.traceback) ? job.traceback : String(job.traceback).split(/\r?\n/)).find(Boolean);
+    if (!first || !state.logs.some((entry) => entry.line === first)) appendTraceback(job.traceback);
+    job.tracebackShown = true;
+  }
   if (isCaptionJob(job.kind)) finalizeCaptionProgress(job, status);
   if (job.kind === 'cache' && status === 'done') completeCacheProgress();
   updateJobUi();
@@ -224,11 +241,12 @@ export async function finishJob(status, message) {
       } },
     ], `job-done-${job.id}`);
   } else if (status === 'error') {
-    const errorText = logErrorMessage() || message || t('job.msg24');
-    showError(t('job.kindFailed', { kind: jobLabel(job.kind) }), errorText, [
-      { label: t('job.viewLog'), onClick: focusLogPanel },
-      { label: t('job.msg25'), onClick: copyLog },
-    ], `job-error-${job.id}`);
+    const errorText = failure || logErrorMessage() || message || t('job.msg24');
+    const actions = [];
+    if (job.traceback) actions.push({ label: t('job.viewTraceback'), onClick: focusLogPanel });
+    actions.push({ label: t('job.viewLog'), onClick: focusLogPanel });
+    actions.push({ label: t('job.msg25'), onClick: copyLog });
+    showError(jobFailureChip(job), errorText, actions, `job-error-${job.id}`);
   } else {
     showAlert({ type: 'info', title: t('job.kindStopped', { kind: jobLabel(job.kind) }), text: message || t('job.msg26'), timeout: 4000 });
   }
@@ -348,7 +366,12 @@ export async function startJob(kind, options = {}) {
         // Caption jobs carry their own settings and need no run.
         ...(kind !== 'caption' && state.activeRun ? { run: state.activeRun } : { yaml: yamlText }),
         workspace: state.profileName,
-        ...(kind === 'train' ? { baseline: Boolean($('#cfg-run-baseline')?.checked) } : {}),
+        ...(kind === 'train' ? {
+          baseline: options.baseline != null
+            ? Boolean(options.baseline)
+            : Boolean($('#cfg-run-baseline')?.checked),
+        } : {}),
+        ...(kind === 'train' && options.resume ? { resume: options.resume } : {}),
         ...(kind === 'caption' ? {
           datasets: captionSelection.datasets,
           styles: captionSelection.styles,
@@ -381,6 +404,9 @@ export async function startJob(kind, options = {}) {
       baseline: Boolean(data.baseline),
       baselineError: '',
       stage: '',
+      exitCode: null,
+      signal: '',
+      traceback: '',
       created: Date.now() / 1000,
     };
     state.jobInfoFor = null;

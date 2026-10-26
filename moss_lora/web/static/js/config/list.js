@@ -12,7 +12,16 @@ import { applyFrozenState, switchRun } from './file.js';
 import { $, escapeHtml, setHidden, setText } from '../core/dom.js';
 import { fmtInt } from '../core/fmt.js';
 import { t } from '../core/i18n.js';
+import { showAlert } from '../core/notify.js';
 import { state } from '../core/state.js';
+
+// The picker is async; keep the user's target selected while the config loads
+// instead of letting a dashboard poll snap it back to the previous run.
+let pendingDashboardRun = '';
+
+function shortRunName(value) {
+  return String(value || '').split('/').pop();
+}
 
 function runEntryLabel(entry) {
   const bits = [entry.name || ''];
@@ -65,14 +74,93 @@ export function renderConfigList() {
 }
 
 function dashboardConfigOptions() {
-  // Same list, same order as the train tab: a run is the config.
-  return (state.runs || []).map((entry) => ({ value: entry.name, label: entry.name }));
+  // Same list, same order as the train tab: a run is the config. The full
+  // workspace/run label is the stable identity shown to the user.
+  return (state.runs || []).map((entry) => ({
+    value: entry.name,
+    label: entry.label || (state.profileName ? `${state.profileName}/${entry.name}` : entry.name),
+  }));
+}
+
+function dashboardConfigEntry(target) {
+  const wanted = String(target || '');
+  const short = shortRunName(wanted);
+  return (state.runs || []).find((entry) => entry.name === wanted || entry.name === short
+    || entry.label === wanted) || null;
 }
 
 export function hasDashboardConfigSelection() {
   const select = $('#dash-config-select');
   if (!select || select.disabled) return false;
   return Boolean(select.value);
+}
+
+function latestCheckpoint(entry) {
+  const checkpoints = Array.isArray(entry?.checkpoints)
+    ? entry.checkpoints.filter((item) => item && item.file && item.step !== 'final')
+    : [];
+  return checkpoints.sort((a, b) => Number(a.step) - Number(b.step)).pop() || null;
+}
+
+function resumeInfo(entry) {
+  if (!entry) return { resumable: false, file: '', checkpointStep: 0, step: 0, total: 0, done: false };
+  const latest = latestCheckpoint(entry);
+  const reported = String(entry.checkpoint || '').split(/[\\/]/).pop();
+  const file = (reported && !/^final\./i.test(reported) ? reported : latest?.file) || '';
+  const parsed = file.match(/step(\d+)/i);
+  const checkpointStep = Number(entry.checkpoint_step ?? latest?.step ?? (parsed ? parsed[1] : 0));
+  const step = Number(entry.step || 0);
+  const total = Number(entry.total || 0);
+  // The backend owns this verdict. Only fall back to checkpoint presence when
+  // talking to an older API, never to `step < total` alone.
+  const resumable = entry.resumable === false ? false : (entry.resumable === true || Boolean(file));
+  return {
+    resumable,
+    file: file || (resumable ? 'latest' : ''),
+    checkpointStep: Number.isFinite(checkpointStep) ? checkpointStep : 0,
+    step: Number.isFinite(step) ? step : 0,
+    total: Number.isFinite(total) ? total : 0,
+    done: total > 0 && step >= total && !resumable,
+  };
+}
+
+export function updateDashboardResumeState() {
+  const button = $('#btn-resume');
+  if (!button) return;
+  const entry = dashboardConfigEntry(state.activeRun);
+  const info = resumeInfo(entry);
+  const running = state.job?.status === 'running' || Boolean(state.activeTraining);
+  button.dataset.resume = info.file;
+  button.dataset.resumable = info.resumable ? '1' : '0';
+  button.disabled = !info.resumable || running || state.busy || !state.profileName;
+  button.setAttribute('aria-disabled', String(button.disabled));
+  button.title = info.resumable ? t('dash.train.resumeHint') : t('dash.train.resumeUnavailableText');
+  setHidden('#dash-resume-line', !entry);
+  if (!entry) {
+    setText('#dash-resume-status', '--');
+    return;
+  }
+  if (info.resumable) {
+    if (info.checkpointStep > 0 && info.step > 0 && info.total > 0) {
+      setText('#dash-resume-status', t('dash.train.resumeStatus', {
+        step: fmtInt(info.step),
+        total: fmtInt(info.total),
+        checkpoint: fmtInt(info.checkpointStep),
+        next: fmtInt(info.checkpointStep + 1),
+      }));
+    } else if (info.checkpointStep > 0) {
+      setText('#dash-resume-status', t('dash.train.resumeCheckpointOnly', {
+        checkpoint: fmtInt(info.checkpointStep),
+        next: fmtInt(info.checkpointStep + 1),
+      }));
+    } else {
+      setText('#dash-resume-status', t('dash.train.resumeLatest'));
+    }
+  } else if (info.done) {
+    setText('#dash-resume-status', t('dash.train.resumeDone'));
+  } else {
+    setText('#dash-resume-status', t('dash.train.resumeUnavailable'));
+  }
 }
 
 export function renderDashboardConfigOptions() {
@@ -88,15 +176,19 @@ export function renderDashboardConfigOptions() {
     select.innerHTML = options
       .map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`)
       .join('');
-    const active = options.some((option) => option.value === state.activeRun)
-      ? state.activeRun
-      : options[0].value;
-    select.value = active;
+    const activeShort = shortRunName(state.activeRun);
+    const activeOption = options.find((option) => option.value === state.activeRun
+      || shortRunName(option.value) === activeShort);
+    const desired = pendingDashboardRun && options.some((option) => option.value === pendingDashboardRun)
+      ? pendingDashboardRun
+      : (activeOption?.value || options[0].value);
+    select.value = desired;
     select.disabled = !state.profileName;
     setHidden('#dash-config-line', false);
     setHidden('#dash-config-empty', true);
-    renderDashboardConfigSummary(active);
+    renderDashboardConfigSummary(desired);
   }
+  updateDashboardResumeState();
   updateJobUi();
 }
 
@@ -108,13 +200,19 @@ function renderDashboardConfigSummary(activeName = state.activeRun) {
 
 export async function selectDashboardConfig(target) {
   if (!state.profileName || !target) return false;
-  if (target === state.activeRun) {
-    renderDashboardConfigOptions();
-    return true;
-  }
-  await switchRun(target);
+  const entry = dashboardConfigEntry(target);
+  const name = entry?.name || shortRunName(target);
+  pendingDashboardRun = name;
   renderDashboardConfigOptions();
-  return state.activeRun === target;
+  try {
+    if (name !== state.activeRun) await switchRun(name);
+    const current = dashboardConfigEntry(state.activeRun) || entry;
+    if (current) state.dashboard.run = current.label || (state.profileName ? `${state.profileName}/${current.name}` : current.name);
+    return state.activeRun === name;
+  } finally {
+    pendingDashboardRun = '';
+    renderDashboardConfigOptions();
+  }
 }
 
 export async function ensureDashboardConfigSelection() {
@@ -124,7 +222,7 @@ export async function ensureDashboardConfigSelection() {
   }
   const options = dashboardConfigOptions();
   const allowed = new Set(options.map((option) => option.value));
-  if (allowed.has(state.activeRun)) {
+  if (allowed.has(state.activeRun) || allowed.has(shortRunName(state.activeRun))) {
     renderDashboardConfigOptions();
     return;
   }
@@ -133,15 +231,30 @@ export async function ensureDashboardConfigSelection() {
   else renderDashboardConfigOptions();
 }
 
-export async function startDashboardTraining() {
+export async function startDashboardTraining(options = {}) {
   const target = $('#dash-config-select')?.value || '';
   if (!target) {
     renderDashboardConfigOptions();
-    return;
+    return false;
   }
   if (target !== state.activeRun) {
     const ok = await selectDashboardConfig(target);
-    if (!ok) return;
+    if (!ok) return false;
   }
-  startJob('train');
+  if (!options.resume) return startJob('train');
+  const entry = dashboardConfigEntry(state.activeRun);
+  const info = resumeInfo(entry);
+  if (!info.resumable) {
+    updateDashboardResumeState();
+    showAlert({
+      type: 'warn',
+      title: t('dash.train.resumeUnavailable'),
+      text: t('dash.train.resumeUnavailableText'),
+      timeout: 5000,
+    });
+    return false;
+  }
+  // Resume never reruns the no-LoRA baseline: that is a fresh-run step and
+  // would overwrite the baseline the user already has.
+  return startJob('train', { resume: info.file || 'latest', baseline: false });
 }

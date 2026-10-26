@@ -14,7 +14,7 @@ import { setUiLanguage, t } from './core/i18n.js'; import { closeModal, focusabl
 import { showAlert, showError, showSuccess } from './core/notify.js'; import { state } from './core/state.js';
 import { loadSystem } from './layout/topbar.js'; import { activateTabFromKeyboard, downloadYaml, focusLogPanel, readJobLogFile, route } from './main.js';
 import { loadCache, saveCaptionSource, startCacheJob, updateCacheStartState } from './pages/cache.js'; import { clearCaptionApiKey, loadCaptionSettings, markCaptionSettingsDirty, renderCaptionApiKeyStatus, resetCaptionPrompts, saveCaptionSettings, updateCaptionApiKeyButton, updateCaptionTriggerWarning } from './pages/caption.js';
-import { closeSampleCompare, loadActiveTraining, loadDashboard, loadDashboardCompare, openCompareMenu, openSampleCompare, renderCompareLegend, toggleSampleCollapsed, toggleSampleCompareRun } from './pages/dashboard.js'; import { loadCaptionDatasetInfo, readCaptionSelection, scanDataset, scanRegDataset, updateCaptionStartState } from './pages/dataset.js';
+import { closeSampleCompare, initSampleCompareSelection, loadActiveTraining, loadDashboard, loadDashboardCompare, openCompareMenu, openSampleCompare, renderCompareLegend, toggleSampleCollapsed, toggleSampleCompareRun } from './pages/dashboard.js'; import { loadCaptionDatasetInfo, readCaptionSelection, scanDataset, scanRegDataset, updateCaptionStartState } from './pages/dataset.js';
 import { applyExportRange, choosePathFromBrowser, closeExportDirectory, closePathBrowser, defaultExportDirectory, downloadSingleStep, exportSelected, loadExportDirectory, loadPathBrowser, onExportRunChange, renderExportStepRows, setExportDestination, updateExportSelectionUi } from './pages/export.js'; import { loadSamples, renderSamples } from './pages/samples.js';
 import { MODEL_FIELD_KINDS, clearSettingsErrors, closeOnboarding, deleteI18nLanguage, focusField, importI18nPack, loadSettings, markSettingsDirty, probeModel, readI18nImportFile, runSetupCheck, saveSettings, setModelStatus, syncAllocatorControls } from './pages/settings.js'; import { refreshTrainSamples } from './pages/train.js';
 import { closeWorkspaceConfirm, loadWorkspacePage, openWorkspaceConfirm, performWorkspaceDelete } from './pages/workspace.js';
@@ -129,6 +129,7 @@ export function bindEvents() {
   });
   $('#btn-setup-refresh')?.addEventListener('click', () => runSetupCheck());
   $('#btn-start')?.addEventListener('click', () => startDashboardTraining().catch((error) => showError(t('common.msg63'), describeError(error))));
+  $('#btn-resume')?.addEventListener('click', () => startDashboardTraining({ resume: true }).catch((error) => showError(t('common.msg63'), describeError(error))));
   $('#btn-stop')?.addEventListener('click', () => stopJob());
   $('#btn-preflight')?.addEventListener('click', async () => {
     const button = $('#btn-preflight');
@@ -528,17 +529,19 @@ export function bindEvents() {
     loadActiveTraining().catch(() => {});
     loadSystem().catch(() => {});
   });
-  $('#dash-run')?.addEventListener('change', (event) => {
-    state.dashboard.run = event.target.value || null;
-    // Inspecting a run shows the config it actually used, as a read-only line;
-    // the picker keeps pointing at the run whose config starts next.
-    loadDashboard(state.dashboard.run, {})
-      .then(() => loadDashboardCompare())
-      .catch(() => {});
-  });
   $('#dash-config-select')?.addEventListener('change', (event) => {
-    if (!event.target.value) return;
-    selectDashboardConfig(event.target.value).catch((error) => showError(t('common.msg84'), describeError(error)));
+    const target = event.target.value;
+    if (!target) return;
+    selectDashboardConfig(target)
+      .then(async (ok) => {
+        if (!ok) return;
+        const entry = (state.runs || []).find((run) => run.name === target) || null;
+        const runLabel = state.dashboard.run || entry?.label || target;
+        await loadDashboard(runLabel, {});
+        await loadDashboardCompare();
+        initSampleCompareSelection();
+      })
+      .catch((error) => showError(t('common.msg84'), describeError(error)));
   });
   $('#dash-smooth')?.addEventListener('input', applySmoothWindow);
   $('#dash-smooth')?.addEventListener('change', applySmoothWindow);

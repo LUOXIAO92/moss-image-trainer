@@ -11,10 +11,6 @@
         <span data-i18n="dash.workspace">工作区</span>
         <select id="dash-workspace-select" class="select-compact" aria-label="选择工作区" data-i18n-aria="dash.selectWorkspace"></select>
       </label>
-      <label class="field-inline" for="dash-run">
-        <span data-i18n="dash.run">运行记录</span>
-        <select id="dash-run" class="select-compact"></select>
-      </label>
       <button class="btn btn-ghost btn-sm" id="dash-refresh" type="button" aria-label="刷新中控台" data-i18n-aria="dash.refreshAria">
         <svg aria-hidden="true"><use href="#i-refresh"></use></svg><span data-i18n="common.refresh">刷新</span>
       </button>
@@ -25,13 +21,13 @@
     <header class="panel-head">
       <div>
         <h2 id="dash-train-title" data-i18n="dash.train.title">训练任务</h2>
-        <p class="panel-desc" data-i18n="dash.train.desc">选择实验配置；开始前会套用这份 YAML，再运行预检并启动训练。</p>
+        <p class="panel-desc" data-i18n="dash.train.desc">选择训练配置；开始前会套用这份 YAML，再运行预检并启动训练。</p>
       </div>
     </header>
     <div class="dash-train-controls">
       <label class="field-inline dash-experiment-field" for="dash-config-select">
-        <span data-i18n="dash.train.experiment">实验</span>
-        <select id="dash-config-select" class="select-compact" aria-label="选择实验配置" data-i18n-aria="dash.train.selectConfig"></select>
+        <span data-i18n="dash.train.config">训练配置</span>
+        <select id="dash-config-select" class="select-compact" aria-label="选择训练配置" data-i18n-aria="dash.train.configAria"></select>
       </label>
       <label class="baseline-toggle" for="cfg-run-baseline" title="先运行一次无 LoRA 基线采样到 baseline/，再串行开始训练" data-i18n-title="dash.train.baselineTitle">
         <input id="cfg-run-baseline" type="checkbox">
@@ -53,6 +49,9 @@
         <button class="btn btn-primary btn-sm" id="btn-start" type="button">
           <svg aria-hidden="true"><use href="#i-play"></use></svg><span id="btn-start-text" data-i18n="dash.train.start">开始训练</span>
         </button>
+        <button class="btn btn-ghost btn-sm" id="btn-resume" type="button" disabled title="从最近一次保存继续训练" data-i18n-title="dash.train.resumeHint">
+          <svg aria-hidden="true"><use href="#i-refresh"></use></svg><span data-i18n="dash.train.resume">继续训练</span>
+        </button>
         <button class="btn btn-danger-ghost btn-sm" id="btn-stop" type="button" disabled>
           <svg aria-hidden="true"><use href="#i-stop"></use></svg><span data-i18n="common.stop">停止</span>
         </button>
@@ -62,6 +61,11 @@
       <span class="dash-config-label" data-i18n="dash.train.currentConfig">当前配置</span>
       <span class="mono" id="dash-config-path">runs/&lt;run&gt;/config.yaml</span>
       <span class="mono muted" id="dash-config-summary">--</span>
+    </p>
+    <p class="dash-config-line" id="dash-resume-line" role="status" aria-live="polite">
+      <span class="dash-config-label" data-i18n="dash.train.resumeLabel">续训</span>
+      <span class="mono" id="dash-resume-status">--</span>
+      <span class="muted small" id="dash-resume-hint" data-i18n="dash.train.freshHint">全新开始会清空本 run 的 metrics、样图和日志；续训会保留已有进度。</span>
     </p>
     <p class="dash-config-empty hidden" id="dash-config-empty" role="status">
       <svg aria-hidden="true"><use href="#i-alert"></use></svg>
