@@ -21,6 +21,7 @@ workspaces/<workspace>/
   runs/<run>/
     config.yaml                 这次训练实际用的配置
     training.json               心跳：谁在训、训到哪
+    .stop                       Web 层发出的、在步间停止的请求
     metrics.jsonl               每步一行 JSON
     checkpoints/  samples/
   logs/
@@ -44,6 +45,8 @@ workspaces/<workspace>/
 
 `POST /api/cache/stop?workspace=<name>` 能停掉任何人起的构建。它从记录里取 pid，先核对这个 pid 确实是缓存进程，再发 SIGINT，并把记录标成 `stopping`。记录已经结束、pid 已经不在、或者 pid 属于别的进程，一律返回 409。中断落地时写入方把记录写成 `stopped`、退出码 130，所以面板说的是“已停止”，不是“失败”。
 
+这一核对读取 `/proc/<pid>/cmdline`。在没有 `/proc` 的系统（Windows）上，终端起的缓存构建无法核实，接口会返回 409，而不是向一个无法证明是缓存进程的 pid 发信号。训练走下面的停止请求，不需要 `/proc`。
+
 ## 心跳
 
 `runs/<run>/training.json` 采用原子写：先写临时文件，再 `os.replace`。读者要么看到旧记录，要么看到新记录，不会读到一半新一半旧。
@@ -53,13 +56,19 @@ workspaces/<workspace>/
 | `pid` | 持有这次运行的进程 |
 | `step`、`total` | 进度计数 |
 | `status` | `starting`、`running`、`stopping`、`done`、`failed`、`stopped` |
-| `phase` | 这一步在做什么：`train`、`preview`、`export`、`done` |
+| `phase` | 这一步在做什么：`load`、`train`、`preview`、`export`、`done` |
 | `run_id` | 运行名，与目录名同一字符串 |
 | `started`、`time` | 启动时刻、最后一次心跳时刻 |
 | `exit_code` | 仅终态：`0` 成功，`130` 被中断，其余为失败 |
 | `finished` | 仅终态：结束时刻 |
 
-训练进程每几十步重写一次，每次阶段切换也重写。写这个文件很便宜，而它是系统唯一需要的存活信号。
+训练器在加载权重之前先写一条 `phase: load` 的心跳，所以终端起的运行在漫长的模型加载期间也看得见。这时 `status` 是 `running`：进程活着，`phase` 说明它在做什么。之后每几十步和每次阶段切换重写一次。写这个文件很便宜，而它是系统唯一需要的存活信号。
+
+## 停止请求
+
+`POST /api/workspaces/{name}/stop` 不向进程发信号。对每一条仍活着的训练心跳，它把该运行的 `started` 写进 `runs/<run>/.stop`，然后返回 `{ok, stopped}`。训练器在每步开头检查这个文件；`started` 匹配时抛出 `KeyboardInterrupt`，正常训练路径保存最后一个完成的步，写入 `stopped` 与退出码 130，并释放显卡锁。`started` 令牌防止旧请求停掉同一目录里后来的一次运行；`Trainer.start()` 会在新运行开始前清掉残留。
+
+这条路径既不需要 `/proc` 也不需要信号，所以在 Windows 与 Linux 上都能用。Web 层不改写 `training.json`；训练器下一次心跳才是权威状态。
 
 ## 从文件到状态
 
@@ -78,7 +87,7 @@ workspaces/<workspace>/
 
 存活只问内核。早先的版本还会把命令行和包名比对，结果是：用 `python -c` 包一层的 worker 明明活着却被判死；而 pid 复用的情况下它也证明不了谁死了。真正挂掉的训练不会再刷新心跳，`stale` 一分钟内就会把它标出来。
 
-`stale` 标记心跳超过 60 秒而进程仍在的情况：可能卡在漫长的采样阶段，也可能已经僵死。看板显示这个标记，而不是替它编一个状态。
+`stale` 标记心跳超过 60 秒而进程仍在的情况：可能卡在漫长的模型加载或采样阶段，也可能已经僵死。看板显示这个标记，而不是替它编一个状态。
 
 ## 一次运行，一行
 
@@ -112,7 +121,7 @@ workspaces/<workspace>/
 
 ## 验收测试
 
-`tests/test_runtime_state.py` 覆盖投影层，不需要显卡：状态表、原子写、记录与心跳的合并、metrics 尾部、显卡锁。
+`tests/test_runtime_state.py` 覆盖投影层，不需要显卡：状态表、原子写、记录与心跳的合并、metrics 尾部、显卡锁、加载前心跳、按路由校验停止请求的作用域，以及中断路径的检查点与 stopped 判定。
 
 `python .tmp/check_three_way.py` 覆盖它上面那一层。脚本起一个 worker，写出启动器会写的作业记录，然后用命令行、`/api/jobs` 和直接读盘三种方式读同一次运行——运行中读一次、几秒后再读一次、`SIGINT` 之后读一次。三次采样里三者的状态、pid、步数必须完全一致。谁先知道了别人不知道的事，它就会立刻报错。
 

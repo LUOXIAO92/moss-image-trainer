@@ -13,8 +13,9 @@
 - 分阶段缓存：FLUX.2 VAE 编码潜变量，本地 Qwen3.5-9B 编码文本特征并落盘。文本批处理采用右侧因果 padding，训练前向按掩码切取有效长度，避免 padding 污染文本特征。
 - 流匹配训练与显存分档：采用截断 logit-normal $\sigma$ 采样与按 token 归一化的速度场 MSE 损失。六档显存预设（`32`、`24`、`16`、`12`、`8`、`6` GB）组合激活检查点、权重量化（`quantize_dit: none|ffn|all`，格式 `nf4` 或 `fp8`，conditioning 半边可选）、从主机内存流式加载块、`torch.compile` 与 `fp16` 累加，训练支持 `packed`（FlashAttention-2 varlen）与 `padded`（token 维补齐）两种批处理模式。仪表盘在运行前后并排显示预测显存峰值与实测峰值。
 - 正则集与留出验证：通过 `dataset.reg_path` 引入正则集抑制概念漂移，按 `train.eval_holdout` 切分留出集定期计算验证损失。
+- 从已有适配器预热：`lora.init_from` 指向一个 `.safetensors` LoRA（kohya、PEFT 或 ComfyUI 命名），训练开始前把其中的权重装进新适配器。文件的 rank 必须等于 `lora.rank`；alpha 不同会折进 `lora_B`，加载后的模型因此仍复现文件原来的计算。WebUI 在启动时检查文件，rank 不一致直接拒绝，缩放 alpha 前会先询问。
 - 双风格提示词生成：调用 OpenAI 兼容视觉模型接口，支持保留原 tag 并补写场景句的 `tag_caption` 与长中短三档描述的 `official` 风格，写入同名 sidecar JSON。
-- 免构建 WebUI：前端运行原生 ES module（含中控台、训练配置、数据集、缓存、采样对比、导出、工作区、设置、提示词生成九个标签页），修改代码后刷新直接生效。
+- 免构建 WebUI：前端运行原生 ES module（含中控台、训练配置、数据集、缓存、采样对比、导出、工作区、设置、提示词生成九个标签页），修改代码后刷新直接生效。仪表盘只有一个训练操作：有检查点时继续训练选中的运行；勾选**重新训练**复选框后，下一次训练会先确认，再从第 0 步开始。
 - 原生 ComfyUI 格式：检查点与导出文件默认采用 `lora_unet_*` 键名，支持转换 `diffusers` 格式或按步数区间批量打包。
 - 多语言界面：内置简体中文、English、日本語、한국어 四套词典，支持无刷新切换、模板导出与自定义语言包覆盖。
 
@@ -22,7 +23,7 @@
 
 - 系统与解释器：Linux、WSL2 或 Windows 10/11（PowerShell 5.1+），Python 3.11+。
 - 硬件与驱动：支持 `bfloat16` 或 `float16` 的 NVIDIA GPU，CUDA 驱动匹配 PyTorch 2.9+。
-- 显存设置，预设只是起点：显存的每一项都是运行配置里的普通值，训练器照着这些值跑。WebUI 里的预设下拉（`32`、`24`、`16`、`12`、`8`、`6`）和 CLI 的 `--preset` 只把某一档的值一次性填进来——梯度检查点、常驻层数、量化范围与格式、`torch.compile`、8-bit 优化器、预览 VAE 精度——填完就不再参与。新建运行从默认值开始，不套用任何档位，也不按显卡推导任何东西；只有单步真的显存不足时，训练器才会自己调高 `blocks_to_swap`。
+- 显存设置，预设只是起点：显存的每一项都是运行配置里的普通值，训练器照着这些值跑。WebUI 里的预设下拉（`32`、`24`、`16`、`12`、`8`、`6`）和 CLI 的 `--preset` 只把某一档的值一次性填进来——梯度检查点、常驻层数、激活值卸载、量化范围与格式、`torch.compile`、8-bit 优化器、预览 VAE 精度——填完就不再参与。新建运行从默认值开始，不套用任何档位，也不按显卡推导任何东西；只有单步真的显存不足时，训练器才会自己调高 `blocks_to_swap`。
 - 本地模型：MOSS-Image DiT、Qwen3.5-9B 文本编码器（HuggingFace 目录，或 ConvRot int8 量化的单文件 `.safetensors`）与 FLUX.2 VAE。
 
 要按具体显卡挑设置，看[显存指南](<docs/VRAM.md>)：写清了量化与块流式加载的实测开销、分配器设置，并按显卡档位给出预览尺寸。
@@ -136,6 +137,7 @@ lora:
   targets: [q, k, v, o, ffn_up_gate, ffn_down]
 train:
   steps: 1000
+  seed: 42
   batch_size: 1
   grad_accum: 1
   lr: 0.0001
@@ -144,12 +146,15 @@ train:
   sample_every: 250
 vram:
   gradient_checkpointing: true
+  offload_activations: false
   blocks_to_swap: 0
   quantize_dit: none
   compile: true
 export:
   formats: [kohya]
 ```
+
+`train.seed` 驱动训练里的每一次随机抽取：批次采样、sigma、每步的流匹配噪声、提示词丢弃与适配器初始化。检查点会带上 RNG 状态，续训因此继续同一条轨迹。同一台机器上，同一配置跑两次得到相同的损失，代价是 FlashAttention-2 的 varlen 反向改用确定性模式，单步时间约多十分之一。`preview.seed` 只控制预览采样。
 
 ## 提示词生成
 
@@ -198,6 +203,8 @@ export:
 `dataset.moss_caption_source` 指定训练读取字段（`tag_caption`、`official_long`、`official_medium` 或 `official_short`）；配置 `dataset.metadata` 时优先读 `metadata.jsonl`，缺失所选风格时回退至同名 `.txt`/`.caption` 与 `reg_caption`。切换来源后只需重跑 `encode-text`，无需重建潜变量缓存。
 
 批次是缓存配置而不是隐式猜测：`cache.text_batch` 与 `cache.vae_batch` 可以把它固定下来（`0` 表示按空闲显存自适应），构建这份缓存时用的批次记录在 `train_cache/index.json` 的 `batch` 字段。VAE latent 与批次无关（`LatentCodec` 用全精度 fp32 卷积计算），文本嵌入则随批次变化，需要可复现的缓存时把文本批次固定下来。
+
+`train.caption_dropout` 是逐样本的提示词丢弃率，取值 `[0, 1]`，默认 `0`。`encode-text` 会把无条件提示词写到缓存旁的 `empty_text.safetensors`。比例大于 0 时，训练按该比例把提示词嵌入替换为这份缓存提示词；为 0 时保持原样。要在旧缓存上启用丢弃，需要重跑一次 `encode-text` 补上提示词。
 
 ## 界面语言
 
@@ -289,6 +296,7 @@ moss-image-trainer/
 
 - 批大小与吞吐：一个微批按 token 预算组装，图片各自保留分辨率，因此决定单步工作量的是 `train.bin_tokens` 而不是 `batch_size`。装上 FlashAttention-2 后默认从 `padded`（token 补齐 + key mask）切到 `packed`（varlen，无 mask）。
 - 低显存精度权衡：`model.dtype: float16` 配合 `vram.fp16_accumulate: true` 在高学习率或长步数下比 `bfloat16` 更易数值不稳定；量化（`quantize_dit: ffn|all`）面向 8 GB 和 6 GB 两档；16 GB 和 12 GB 两档保留 bf16 权重，把尾部块从主机内存流式加载，代价是单步时间，不是权重精度。`nf4` 最省、`fp8` 更稳，而 conditioning 半边会被每个块乘进去，刻意量化等于把误差叠加到全网络，所以默认关闭。
+- 激活值卸载：`vram.offload_activations: true` 把梯度检查点边界写入锁页主机内存，在 1024² 下省约 1 GB 显存，代价是单步时间约多十分之一。它要求开启梯度检查点，并会关闭 `torch.compile`。
 - 训练范围：仅对 5B DiT 注入 LoRA（默认覆盖 42 层的 `q`、`k`、`v`、`o`、`ffn_up_gate`、`ffn_down` 及可选 `text_embedder`），不支持微调 Qwen3.5-9B 文本编码器或 VAE。
 
 ## 许可与上游致谢

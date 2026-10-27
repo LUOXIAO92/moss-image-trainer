@@ -13,8 +13,9 @@
 - **2단계 캐싱**: FLUX.2 VAE로 이미지 latent를, 로컬 Qwen3.5-9B로 텍스트 임베딩을 인코딩하여 디스크에 저장합니다. 텍스트 배치는 우측 인과적(causal) 패딩을 사용하며, 학습 순전파 시 어텐션 마스크에 따라 각 시퀀스의 유효 길이를 슬라이싱하므로 패딩 토큰이 유효한 텍스트 특징을 오염시키지 않습니다.
 - **Flow Matching 학습 및 VRAM 프리셋**: 절단된 logit-normal $\sigma$ 샘플링과 토큰 단위로 정규화된 속도장 MSE 손실로 학습합니다. 여섯 가지 프리셋(`32`, `24`, `16`, `12`, `8`, `6` GB)은 그래디언트 체크포인팅, 가중치 전용 양자화(`quantize_dit: none|ffn|all`을 `nf4` 또는 `fp8`로, 선택적 conditioning 절반 포함), 호스트 메모리에서의 블록 스트리밍, `torch.compile`, `fp16` 누적을 `packed`(FlashAttention-2 varlen)와 `padded`(토큰 차원 패딩) 배치 모드 양쪽에 걸쳐 조합합니다. 프리셋은 설정에 값을 써 넣을 뿐이고, 실행은 그 값을 읽습니다. 대시보드는 실행 전과 실행 중에 측정된 VRAM 피크 옆에 예상 VRAM 피크를 함께 표시합니다.
 - **정규화 세트 및 홀드아웃 검증**: `dataset.reg_path`를 통해 정규화 이미지를 로드하여 개념 드리프트를 억제하고, `train.eval_holdout`으로 결정론적 검증 세트를 분리하여 주기적으로 검증 손실을 계산합니다.
+- **기존 어댑터에서 웜 스타트**: `lora.init_from`은 `.safetensors` LoRA(kohya, PEFT, ComfyUI 명명 모두 가능)를 가리키며, 학습 시작 전에 그 가중치를 새 어댑터에 불러옵니다. 파일의 rank는 `lora.rank`와 같아야 합니다. alpha가 다르면 `lora_B`에 반영되므로 불러온 모델은 파일이 계산하던 결과를 그대로 재현합니다. WebUI는 시작 시 파일을 검사하고, rank 불일치는 거부하며, alpha를 다시 스케일하기 전에 확인을 요청합니다.
 - **이중 스타일 캡션 생성**: OpenAI 호환 비전 모델 엔드포인트를 호출하여 기존 태그를 유지하고 장면 문장을 추가하는 `tag_caption`과 3단계(long / medium / short) 설명을 생성하는 `official` 스타일을 지원하며, 동일한 이름의 sidecar JSON에 저장합니다.
-- **무빌드 WebUI**: 9개 탭(대시보드, 학습 설정, 데이터셋, 캐시, 샘플 이미지, 내보내기, 작업 공간, 설정, 캡션 생성)에서 네이티브 ES module을 직접 실행합니다. 소스 수정 사항은 브라우저 새로고침만으로 즉시 반영됩니다.
+- **무빌드 WebUI**: 9개 탭(대시보드, 학습 설정, 데이터셋, 캐시, 샘플 이미지, 내보내기, 작업 공간, 설정, 캡션 생성)에서 네이티브 ES module을 직접 실행합니다. 소스 수정 사항은 브라우저 새로고침만으로 즉시 반영됩니다. 대시보드의 학습 동작은 하나입니다. 체크포인트가 있으면 선택한 run을 재개하고, **다시 학습** 체크박스를 선택하면 다음 학습은 확인 후 처음부터 시작합니다.
 - **네이티브 ComfyUI 형식**: 체크포인트와 내보내기 파일은 기본적으로 `lora_unet_*` 키 형식으로 저장되며, `diffusers` 형식 변환과 스텝 범위 일괄 ZIP 패키징을 지원합니다.
 - **다국어 UI**: 간체 중국어, 영어, 일본어, 한국어 사전을 내장하여 페이지 새로고침 없이 전환할 수 있으며, 템플릿 내보내기와 사용자 언어 팩 덮어쓰기를 지원합니다.
 
@@ -22,7 +23,7 @@
 
 - **OS 및 Python**: Linux, WSL2 또는 Windows 10/11(PowerShell 5.1 이상), Python 3.11 이상.
 - **GPU 및 드라이버**: `bfloat16` 또는 `float16`을 지원하는 NVIDIA GPU 및 PyTorch 2.9 이상에 맞는 CUDA 드라이버.
-- **VRAM 설정, 프리셋은 출발점일 뿐**: VRAM의 각 항목은 실행 설정에 적힌 평범한 값이며, 학습기는 그 값을 그대로 사용합니다. WebUI의 프리셋 선택(`32`, `24`, `16`, `12`, `8`, `6`)과 CLI의 `--preset`은 해당 티어의 값——그래디언트 체크포인팅, 상주 레이어 수, 양자화 범위와 형식, `torch.compile`, 8bit 옵티마이저, 프리뷰 VAE 정밀도——을 한 번 채워 넣고 그 뒤로는 관여하지 않습니다. 새 run은 기본값으로 시작하며 어떤 티어도 적용하지 않고, 카드에서 무엇도 도출하지 않습니다. 한 스텝이 정말로 메모리에 모자랄 때만 학습기가 `blocks_to_swap`을 스스로 올립니다.
+- **VRAM 설정, 프리셋은 출발점일 뿐**: VRAM의 각 항목은 실행 설정에 적힌 평범한 값이며, 학습기는 그 값을 그대로 사용합니다. WebUI의 프리셋 선택(`32`, `24`, `16`, `12`, `8`, `6`)과 CLI의 `--preset`은 해당 티어의 값——그래디언트 체크포인팅, 상주 레이어 수, 활성값 오프로드, 양자화 범위와 형식, `torch.compile`, 8bit 옵티마이저, 프리뷰 VAE 정밀도——을 한 번 채워 넣고 그 뒤로는 관여하지 않습니다. 새 run은 기본값으로 시작하며 어떤 티어도 적용하지 않고, 카드에서 무엇도 도출하지 않습니다. 한 스텝이 정말로 메모리에 모자랄 때만 학습기가 `blocks_to_swap`을 스스로 올립니다.
 - **로컬 가중치**: MOSS-Image DiT, Qwen3.5-9B 텍스트 인코더(HuggingFace 디렉터리 또는 ConvRot int8 양자화 단일 파일 `.safetensors`), FLUX.2 VAE.
 
 특정 그래픽 카드에 맞는 설정을 고르려면 [VRAM 가이드](<docs/VRAM.md>)를 읽으십시오. 양자화와 블록 스트리밍의 실측 비용, 할당자 설정 설명, 등급별 미리보기 크기를 담고 있습니다.
@@ -136,6 +137,7 @@ lora:
   targets: [q, k, v, o, ffn_up_gate, ffn_down]
 train:
   steps: 1000
+  seed: 42
   batch_size: 1
   grad_accum: 1
   lr: 0.0001
@@ -144,12 +146,15 @@ train:
   sample_every: 250
 vram:
   gradient_checkpointing: true
+  offload_activations: false
   blocks_to_swap: 0
   quantize_dit: none
   compile: true
 export:
   formats: [kohya]
 ```
+
+`train.seed`는 학습의 모든 무작위 추출을 구동합니다. 배치 샘플링, sigma, 스텝별 Flow Matching 노이즈, 캡션 dropout, 어댑터 초기화입니다. 체크포인트는 RNG 상태를 함께 저장하므로 재개한 run은 같은 궤적을 이어갑니다. 같은 머신에서 같은 설정으로 두 번 실행하면 동일한 손실이 나옵니다. FlashAttention-2 varlen 역전파를 결정론 모드로 실행하기 때문이며, 스텝 시간은 약 10분의 1 늘어납니다. `preview.seed`는 미리보기 샘플링만 제어합니다.
 
 ## 캡션 생성
 
@@ -198,6 +203,8 @@ export:
 `dataset.moss_caption_source`는 학습 시 읽을 필드(`tag_caption`, `official_long`, `official_medium` 또는 `official_short`)를 선택합니다. `dataset.metadata`를 설정하면 `metadata.jsonl`이 우선 적용되며, 선택한 스타일이 없는 샘플은 `<stem>.txt`/`.caption` 및 `reg_caption`으로 대체됩니다. 캡션 소스를 변경한 후에는 `encode-text`만 다시 실행하면 되며 latent 캐시는 그대로 유지됩니다.
 
 배치 크기는 캐시 설정입니다. `cache.text_batch`와 `cache.vae_batch`로 고정할 수 있고(`0`은 남은 VRAM에서 자동), 실제로 사용한 값은 `train_cache/index.json`의 `batch`에 기록됩니다. VAE latent는 배치와 무관하며(`LatentCodec`는 fp32 합성곱으로 계산), 텍스트 임베딩은 배치에 따라 달라지므로 재현이 필요하면 텍스트 배치를 고정하세요.
+
+`train.caption_dropout`은 샘플별 캡션 드롭아웃 비율(`[0, 1]`)이며 기본값은 `0`입니다. `encode-text`는 무조건 프롬프트를 캐시 옆의 `empty_text.safetensors`에 기록합니다. 비율이 0보다 크면 학습은 그 비율만큼의 캡션 임베딩을 캐시된 프롬프트로 교체합니다. 0이면 교체하지 않습니다. 이전 캐시에서 드롭아웃을 켜려면 `encode-text`를 한 번 다시 실행해 프롬프트를 추가해야 합니다.
 
 ## UI 언어
 
@@ -289,6 +296,7 @@ moss-image-trainer/
 
 - **배치 크기 및 처리량**: 마이크로 배치는 토큰 예산으로 구성되고 이미지는 각자의 해상도를 유지합니다. 한 스텝의 작업량을 정하는 것은 `batch_size`가 아니라 `train.bin_tokens`입니다. FlashAttention-2를 설치하면 기본값이 `padded`(토큰 패딩 + key mask)에서 `packed`(varlen, 마스크 없음)로 바뀝니다.
 - **저용량 VRAM 정밀도 트레이드오프**: `model.dtype: float16`과 `vram.fp16_accumulate: true` 조합은 높은 학습률이나 장시간 학습에서 `bfloat16`보다 수치적 불안정성이 발생하기 쉽습니다. 양자화(`quantize_dit: ffn|all`)는 8 GB와 6 GB 티어를 대상으로 하고, 16 GB와 12 GB 티어는 bf16 가중치를 유지한 채 뒤쪽 블록을 호스트 메모리에서 스트리밍합니다. 스텝 시간은 늘지만 가중치 정밀도는 떨어지지 않습니다. `nf4`가 가장 작은 형식이고 `fp8`이 더 안정적인 형식이며, conditioning 절반을 일부러 양자화하면 오차가 모든 블록으로 누적되므로, 따로 요청하지 않는 한 꺼 두는 것이 기본입니다.
+- **활성값 오프로드**: `vram.offload_activations: true`는 그래디언트 체크포인트 경계를 고정된 호스트 메모리에 기록하여 1024²에서 약 1 GB의 VRAM을 절약합니다. 대신 스텝 시간이 약 10분의 1 늘고, 그래디언트 체크포인팅이 필요하며, `torch.compile`은 꺼집니다.
 - **학습 범위**: LoRA 어댑터는 5B DiT(기본적으로 42개 레이어의 `q`, `k`, `v`, `o`, `ffn_up_gate`, `ffn_down` 및 선택적 `text_embedder`)에만 주입되며, Qwen3.5-9B 텍스트 인코더와 VAE는 동결됩니다.
 
 ## 라이선스 및 감사의 글
