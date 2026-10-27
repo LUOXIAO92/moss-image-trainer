@@ -626,6 +626,7 @@
  "err.config.te_config_no_config": "そのディレクトリに config.json がありません：{path}",
  "err.config.text_encoder_kind": "テキストエンコーダーには HF ディレクトリか .safetensors ファイルを指定してください：{path}",
  "err.config.text_encoder_no_config": "テキストエンコーダーのディレクトリに config.json がありません：{path}",
+ "err.config.train_seed": "train.seed は 0 から 2^63-1 の整数で指定してください。現在の値は {value} です",
  "err.config.uncond_layer_int": "uncond_skip_layers に整数でない値があります：{layer}",
  "err.config.uncond_layer_range": "uncond_skip_layers の {index} は 0..41 の範囲外です",
  "err.dataset.missing": "学習データセットのディレクトリが見つかりません：{path}",

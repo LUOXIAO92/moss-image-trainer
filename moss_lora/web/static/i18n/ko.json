@@ -626,6 +626,7 @@
  "err.config.te_config_no_config": "그 디렉터리에 config.json이 없습니다: {path}",
  "err.config.text_encoder_kind": "텍스트 인코더에는 HF 디렉터리나 .safetensors 파일을 지정해야 합니다: {path}",
  "err.config.text_encoder_no_config": "텍스트 인코더 디렉터리에 config.json이 없습니다: {path}",
+ "err.config.train_seed": "train.seed는 0에서 2^63-1 사이의 정수여야 합니다. 지금 값은 {value}입니다",
  "err.config.uncond_layer_int": "uncond_skip_layers에 정수가 아닌 값이 있습니다: {layer}",
  "err.config.uncond_layer_range": "uncond_skip_layers의 {index}가 0..41 범위를 벗어났습니다",
  "err.dataset.missing": "학습 데이터셋 디렉터리를 찾을 수 없습니다: {path}",

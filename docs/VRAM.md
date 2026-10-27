@@ -15,7 +15,7 @@ Four terms add up, and each has its own control.
 | Frozen DiT weights | `vram.quantize_dit`, `vram.quantize_dtype`, `vram.blocks_to_swap` |
 | Activations | the joint sequence length, fixed by `dataset.max_area`, and `vram.offload_activations` |
 | Optimizer state | the number of trainable parameters and `vram.optimizer_in_8bit` |
-| CUDA context | the driver, about 1.5 GB |
+| CUDA context | the driver, about 1.5 GB of CUDA-visible memory, part of it in shared system memory |
 
 The DiT weights are 9.5 GB in bf16, 2.5 GB at nf4, and 4.7 GB at fp8. Those figures cover the 42 blocks. The conditioning half (text projection, both modulation layers, time embedding, final projection) adds 0.6 GB and stays bf16 unless you ask for otherwise.
 
@@ -25,7 +25,7 @@ The activation term itself has two parts. Gradient checkpointing throws away the
 
 The optimizer keeps state for the trainable parameters only, which are the LoRA adapters. AdamW holds two fp32 moments per parameter, eight bytes per parameter in total; the 8-bit optimizer keeps each moment in eight bits. At the default rank of 32, the saving is about 0.2 GB, at a cost of two to three percent of wall time. The optimizer is the smallest of the four terms.
 
-The CUDA context is fixed. The driver charges about 1.5 GB before PyTorch allocates a single tensor, and every run pays it.
+The CUDA context is fixed. The CUDA runtime charges about 1.5 GB before PyTorch allocates a single tensor, and every run pays it. On Windows the display driver backs part of that context with shared system memory: `nvidia-smi` and Task Manager count roughly 0.5 GB of it as dedicated VRAM, and the rest never takes card memory.
 
 ## 2. Quantization
 
@@ -33,13 +33,13 @@ The CUDA context is fixed. The driver charges about 1.5 GB before PyTorch alloca
 
 | `quantize_dit` + `quantize_dtype` | All 42 blocks resident | All 42 blocks streamed | Streamed + activation offload |
 | --- | --- | --- | --- |
-| none (bf16) | 14.3 GB | 6.1 GB | 5.1 GB |
-| ffn + nf4 | 10.1 GB | 5.8 GB | 4.9 GB |
-| ffn + fp8 | 11.7 GB | 6.0 GB | 5.1 GB |
-| all + nf4 | 7.8 GB | 5.7 GB | 4.7 GB |
-| all + fp8 | 10.1 GB | 6.0 GB | 5.0 GB |
+| none (bf16) | 13.2 / 14.3 GB | 4.9 / 6.1 GB | 4.0 / 5.1 GB |
+| ffn + nf4 | 9.0 / 10.1 GB | 4.7 / 5.8 GB | 3.7 / 4.9 GB |
+| ffn + fp8 | 10.6 / 11.7 GB | 4.9 / 6.0 GB | 3.9 / 5.1 GB |
+| all + nf4 | 6.6 / 7.8 GB | 4.6 / 5.7 GB | 3.6 / 4.7 GB |
+| all + fp8 | 9.0 / 10.1 GB | 4.9 / 6.0 GB | 3.9 / 5.0 GB |
 
-Measured at 1024x1024, batch 1, no previews, bf16 weights, `compile: false`, allocator `expandable`. Figures are the CUDA runtime's device usage (`cudaMemGetInfo`), which is the budget an allocation is charged against and what `metrics.jsonl` records. On Windows and WSL, `nvidia-smi` shows about 1 GB less for the same run: it does not count the CUDA context, so a run at 4.4 GB here reads about 3.3 GB there. The 1 GB offset is constant, so the differences between settings are the same in both views. Resident runs drop by about 1 GB with the offload as well: `all` + nf4 goes from 7.8 to 6.8 GB.
+Measured at 1024x1024, batch 1, no previews, bf16 weights, `compile: false`, allocator `expandable`. Each cell is dedicated VRAM first — what `nvidia-smi` and Task Manager show, sampled every 100 ms during the run — then the CUDA pool counter (`cudaMemGetInfo`, the `device` field in `metrics.jsonl`). On Windows and WSL the CUDA counter reads about 1.1 GB higher, because the driver backs part of the CUDA context with shared system memory; on Linux the two counters agree. Resident runs drop by about 1 GB with the offload too: `all` + nf4 goes from 6.6 to 5.7 GB dedicated.
 
 Compared with bf16, the resident peak drops by about 4 GB with `ffn` + nf4 and about 6.5 GB with `all` + nf4. On the 32 GB reference card none of these settings made a step faster. The differences stayed within noise; quantization bought memory, not speed.
 
@@ -68,16 +68,16 @@ The copies cost time in proportion to the bytes moved. bf16 fully streamed was a
 
 `vram.offload_activations: true` moves the checkpoint boundaries of section 1 to pinned host memory. Each block's input leaves the card when the block finishes; the backward pass reads one boundary back per block and frees it again, so a step holds one boundary instead of 42. The setting needs gradient checkpointing, which every preset enables: without checkpointing the whole graph is retained, and the offload would pin tens of gigabytes of host memory instead of a bounded set. The trainer switches `torch.compile` off while it is on, because the hooks that move the tensors cannot be captured in a compiled graph.
 
-The saving is the boundary term, about 1 GB at 1024x1024: `all` + nf4 fully streamed goes from 5.7 to 4.7 GB, and bf16 fully streamed from 6.1 to 5.1 GB. Combining it with the 8-bit optimizer measured the lowest training peak in this guide:
+The saving is the boundary term, about 1 GB at 1024x1024: `all` + nf4 fully streamed goes from 4.6 to 3.6 GB dedicated, and bf16 fully streamed from 4.9 to 4.0 GB. Combining it with the 8-bit optimizer measured the lowest training peak in this guide:
 
-| Setting (1024x1024, batch 1) | Peak |
+| Setting (1024x1024, batch 1) | Dedicated / CUDA pool |
 | --- | --- |
-| `all` + nf4, 42 blocks streamed | 5.7 GB |
-| + activation offload | 4.7 GB |
-| + 8-bit optimizer | 5.3 GB |
-| + activation offload and 8-bit optimizer | 4.4 GB |
+| `all` + nf4, 42 blocks streamed | 4.6 GB / 5.7 GB |
+| + activation offload | 3.6 GB / 4.7 GB |
+| + 8-bit optimizer | 4.2 GB / 5.3 GB |
+| + activation offload and 8-bit optimizer | 3.2 GB / 4.4 GB |
 
-That 4.4 GB is close to the floor for this configuration: about 3.3 GB in `nvidia-smi`, and the difference between the two counters is the same fixed 1 GB everywhere in this guide. About 1 GB is the three streamed blocks, the LoRA weights, and their optimizer state; about 0.9 GB is the block-local activation that recomputation cannot remove; the remaining 2.5 GB is the CUDA context, the cuBLAS and FlashAttention workspaces, and the allocator's slack, none of which a training setting changes. Lowering `dataset.max_area` shrinks the middle term — at 768x768 the block-local activation is roughly halved — but the cache has to be rebuilt for the new size first.
+That 3.2 GB — 4.4 GB on the CUDA counter — is close to the floor for this configuration. About 1 GB is the three streamed blocks, the LoRA weights, and their optimizer state; about 0.9 GB is the block-local activation that recomputation cannot remove; the remaining 1.3 GB is the part of the CUDA context and the cuBLAS and FlashAttention workspaces that stay in dedicated memory, plus allocator slack. Lowering `dataset.max_area` shrinks the middle term — at 768x768 the block-local activation is roughly halved — but the cache has to be rebuilt for the new size first.
 
 The copies cost time. The offload adds about 2 GB of PCIe traffic per step (1 GB out, 1 GB back). A quantized streamed run hides most of it and pays about a tenth more per step; bf16 streaming already moves 11 GB of weights through PCIe per step, so the extra traffic shows up and cost closer to a third. It also pins about 1 GB of host memory while it runs.
 
@@ -105,7 +105,7 @@ A preview is the peak of the run, not the training step. Sampling adds its own a
 | 768x768 | fp32 | 6.9 GB | 0.64 |
 | 768x768 | fp16 | 6.0 GB | 0.65 |
 
-Measured with `all` + nf4 fully streamed, an 8-step distilled (DMD) LoRA, one image per pass (batch 1). Time is relative to the 1024x1024 fp32 case.
+Measured with `all` + nf4 fully streamed, an 8-step distilled (DMD) LoRA, one image per pass (batch 1). Time is relative to the 1024x1024 fp32 case. These rows were recorded with the CUDA pool counter; subtract about 1.1 GB for the dedicated figure Task Manager shows.
 
 Two settings move the peak. `preview.vae_dtype: fp16` halves the decode's memory and produces a visually identical image: the largest per-pixel difference measured was 1/255, the rounding of one 8-bit channel step. Smaller `preview.width` and `preview.height` cut both the sampler and the decode. At 1024, fp16 also cut the time per image by about a third; at 768 it saved memory but not time.
 
@@ -139,7 +139,7 @@ Preset `6`. The same settings as 8 GB, with a peak around 6 GB against a 6 GB ca
 
 ## 8. What these numbers are worth
 
-Training figures come from three-step probe runs on one 32 GB card: 1024x1024 images, batch 1, no previews, `compile: false`, allocator `expandable`, and the peak is reached by the second step. Preview figures come from one pass per row with the 8-step LoRA described above. The values are rounded: memory peaks keep one decimal in the tables, and the prose rounds them to whole numbers.
+Training figures come from three-step probe runs on one 32 GB card: 1024x1024 images, batch 1, no previews, `compile: false`, allocator `expandable`, and the peak is reached by the second step. Dedicated figures are `nvidia-smi` samples taken every 100 ms during the run; the CUDA pool figures come from the trainer's own counter. Preview figures come from one pass per row with the 8-step LoRA described above. The values are rounded: memory peaks keep one decimal in the tables, and the prose rounds them to whole numbers.
 
 A slower card takes longer per step. Narrower PCIe makes the streaming copies cost more, so the 20% penalty for bf16 streaming grows, and so does the activation offload's share. A machine with 16 GB of system memory is limited by pinned host memory before it is limited by the card.
 

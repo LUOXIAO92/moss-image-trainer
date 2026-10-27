@@ -53,6 +53,11 @@ def optimized_attention(q, k, v, heads, skip_reshape=True, mask=None,
             cu_seqlens,
             max_seqlens,
             max_seqlens,
+            # By default the backward accumulates dq with atomics, so two runs of
+            # the same step can differ in the last bits and drift apart over a
+            # run. The deterministic kernel costs about a tenth of the step time
+            # and is what makes train.seed reproduce a run end to end.
+            deterministic=True,
         )
         return out.reshape(1, length, heads * out.shape[-1])
     out = F.scaled_dot_product_attention(q, k, v, attn_mask=mask)

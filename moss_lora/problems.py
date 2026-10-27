@@ -92,6 +92,7 @@ CODES: dict[str, str] = {
     "err.config.te_config_no_config": "那个目录里没有 config.json：{path}",
     "err.config.text_encoder_kind": "文本编码器要填 HF 目录或 .safetensors 文件：{path}",
     "err.config.text_encoder_no_config": "文本编码器目录里没有 config.json：{path}",
+    "err.config.train_seed": "train.seed 必须是 0 到 2^63-1 的整数，现在填的是 {value}",
     "err.config.uncond_layer_int": "uncond_skip_layers 里有个值不是整数：{layer}",
     "err.config.uncond_layer_range": "uncond_skip_layers 里的 {index} 超出 0..41",
     "err.dataset.missing": "找不到训练集目录：{path}",

@@ -46,6 +46,23 @@ class TrainState:
     txt_tokens: int = 0
 
 
+def seed_runtime(seed: int) -> None:
+    """Bind every global RNG a training run draws from to one seed.
+
+    ``train.seed`` already seeds the CPU generator that picks batches and sigma.
+    Three other draws used to ride on whatever state the process happened to
+    have: adapter initialisation and LoRA dropout (global CPU/CUDA RNG) and the
+    noise tensor of each flow-matching step (global CUDA RNG). Two runs of the
+    same config therefore diverged from step one. Seeding both global states
+    here, before the transformer is built, makes the whole run a function of the
+    config; checkpoints then carry the CPU and CUDA states forward so a resumed
+    run replays the same stream.
+    """
+    torch.manual_seed(int(seed))
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(int(seed))
+
+
 class Trainer:
     def __init__(self, config: Config, log=print):
         self.config = config
@@ -73,6 +90,13 @@ class Trainer:
             raise SystemExit(
                 f"train.caption_dropout must be between 0 and 1, got {self.caption_dropout}"
             )
+        try:
+            self.seed = int(config.train.seed)
+        except (TypeError, ValueError):
+            raise SystemExit(
+                f"train.seed must be a whole number, got {config.train.seed!r}") from None
+        if self.seed < 0:
+            raise SystemExit(f"train.seed must be zero or greater, got {self.seed}")
         # The empty prompt is encoded once by ``encode-text``; training never
         # loads the text tower. Missing it is a cache problem, not a silent
         # "training without dropout" fallback.
@@ -165,6 +189,8 @@ class Trainer:
             self.log("precision: fp16 with fp16 accumulation")
 
     def load(self):
+        seed_runtime(self.seed)
+        self.log(f"seed: {self.seed} (batch sampling, sigma, noise, dropout, adapter init)")
         self._configure_precision()
         vram = self.config.vram
         scope = str(getattr(vram, "quantize_dit", "none") or "none").lower()
@@ -438,7 +464,7 @@ class Trainer:
         if not self.eval_items:
             return float("nan")
         subset = self.eval_items[: max(1, int(cfg.eval_batches))]
-        generator = torch.Generator("cpu").manual_seed(1234)  # same noise every eval
+        generator = torch.Generator("cpu").manual_seed(self.seed)  # same noise every eval
         was_training = self.model.training
         self.model.eval()
         total = 0.0
@@ -1130,6 +1156,20 @@ class Trainer:
             save_file(resume, resume_path, metadata={**meta, "has_state": "1"})
             self.log(f"training state {resume_path}")
 
+    def _restore_rng_state(self, data: dict) -> None:
+        """Restore the CPU sampler and every CUDA RNG a state file carries.
+
+        Both live in ``state.safetensors``, never in the weight-only checkpoint,
+        so a caller that resumes from the weights has to hand this the sibling
+        file. Restoring the CPU generator alone keeps the batches identical but
+        draws different noise, which only shows up as a drifting loss.
+        """
+        if "rng.cpu" in data:
+            self.generator.set_state(data["rng.cpu"].to(torch.uint8))
+        for key, value in data.items():
+            if key.startswith("rng.cuda."):
+                torch.cuda.set_rng_state(value.to(torch.uint8), int(key.rsplit(".", 1)[1]))
+
     def _load_checkpoint(self, path: str) -> int:
         from safetensors import safe_open
 
@@ -1168,11 +1208,7 @@ class Trainer:
             moment = self.optimizer.state.setdefault(params[int(index)], {})
             moment[name] = value.to(params[int(index)].device)
             restored += 1
-        if "rng.cpu" in data:
-            self.generator.set_state(data["rng.cpu"].to(torch.uint8))
-        for key, value in data.items():
-            if key.startswith("rng.cuda."):
-                torch.cuda.set_rng_state(value.to(torch.uint8), int(key.rsplit(".", 1)[1]))
+        self._restore_rng_state(data)
         if not restored:
             # weight-only checkpoints pair with one rolling state.safetensors
             folder = os.path.dirname(os.path.abspath(path))
@@ -1200,8 +1236,12 @@ class Trainer:
                         moment = self.optimizer.state.setdefault(params[int(index)], {})
                         moment[name] = value.to(params[int(index)].device)
                         restored += 1
-                    if "rng.cpu" in extra:
-                        self.generator.set_state(extra["rng.cpu"].to(torch.uint8))
+                    # The RNG lives with the optimizer state, not in the weight
+                    # file. Restoring only rng.cpu here (and forgetting every
+                    # rng.cuda.N) replays the same batches with different noise
+                    # after a resume, which is invisible in the log until the
+                    # losses diverge.
+                    self._restore_rng_state(extra)
         if restored:
             self.log(f"resumed optimizer state ({restored} tensors)")
         else:

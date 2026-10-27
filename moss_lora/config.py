@@ -363,6 +363,15 @@ class Config:
         if not 0.0 <= caption_dropout <= 1.0:
             problems.append(problem("err.config.caption_dropout",
                                     value=self.train.caption_dropout))
+        seed = self.train.seed
+        whole_seed = (isinstance(seed, int) and not isinstance(seed, bool)) or (
+            isinstance(seed, str) and seed.strip().isdigit())
+        try:
+            seed_value = int(seed) if whole_seed else -1
+        except (TypeError, ValueError):
+            seed_value = -1
+        if not 0 <= seed_value <= 2**63 - 1:
+            problems.append(problem("err.config.train_seed", value=self.train.seed))
         for key in ("text_batch", "vae_batch"):
             value = getattr(self.cache, key, 0) or 0
             if int(value) < 0:

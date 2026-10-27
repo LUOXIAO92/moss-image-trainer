@@ -136,6 +136,7 @@ lora:
   targets: [q, k, v, o, ffn_up_gate, ffn_down]
 train:
   steps: 1000
+  seed: 42
   batch_size: 1
   grad_accum: 1
   lr: 0.0001
@@ -151,6 +152,8 @@ vram:
 export:
   formats: [kohya]
 ```
+
+`train.seed` is the only seed a run needs: it drives batch sampling, sigma, the per-step flow-matching noise, caption dropout, and adapter initialisation. Checkpoints carry the RNG state forward, so a resumed run continues the same trajectory instead of replaying it. On one machine, two runs of the same config produce the same losses, because the FlashAttention-2 varlen backward runs in its deterministic mode, which costs about a tenth of the step time. `preview.seed` controls preview sampling and nothing in training.
 
 ## Captioning
 
