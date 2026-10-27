@@ -142,6 +142,7 @@ The 9 steps below form a one-way pipeline. Never start Step 7 (training) before 
   vram:
     gradient_checkpointing: true
     blocks_to_swap: 0         # tail N of 42 blocks stream from host memory; 0 = all resident
+    offload_activations: false  # checkpoint boundaries to pinned host memory; needs checkpointing
     optimizer_in_8bit: false
     quantize_dit: none        # none | ffn | all
     quantize_dtype: nf4       # nf4 (smallest) | fp8 (steadier)
@@ -372,7 +373,9 @@ mkdir -p "workspaces/$WORKSPACE"/{train_cache,reg_cache,runs,logs,exports}
 
 `blocks_to_swap: N` streams the trailing `N` of the 42 blocks and keeps the leading `42 - N` resident; `42` means nothing stays resident, `0` means everything does. The WebUI asks for the complement (resident layer count) and stores the same key. A one-block prefetch window uploads the next block while the current one computes, and released GPU buffers are pooled instead of freed, so a streamed step costs a little more than a resident one instead of stalling on every block or growing the reserved footprint step after step. Training is slower at the streaming tiers because of the copy latency; the 12 GB tier keeps bf16 weights and pays that cost instead of quantizing.
 
-A preset is a bundle of concrete values, written into the config once when a human picks it (the training page selector, `--preset`, or `apply_preset(config, tier)` in code). The trainer never resolves a preset, so a config without a `preset` key is a complete run and a field set by hand is never reinterpreted. There is no `auto`: nothing derives the tier from the installed card. A new run starts at the defaults (all 42 blocks resident, unquantized, checkpointing on, `compile: true`). If a step still runs out of memory, `_degrade_memory` raises `blocks_to_swap` by 8 and retries, so a marginal run finishes instead of dying; lower the resident layer count by hand when the first step already fails.
+`vram.offload_activations: true` moves the gradient-checkpoint boundaries — one tensor per block, about 1 GB at 1024x1024 — to pinned host memory and reads each one back when its block is recomputed. It requires `gradient_checkpointing`, turns `torch.compile` off, and costs about a tenth more step time on a quantized streamed run, more when the streaming copies already saturate PCIe. With it and the 8-bit optimizer, the 8 GB tier's training step measured about 4.4 GB, so the preview sets the run's peak.
+
+A preset is a bundle of concrete values, written into the config once when a human picks it (the training page selector, `--preset`, or `apply_preset(config, tier)` in code). The trainer never resolves a preset, so a config without a `preset` key is a complete run and a field set by hand is never reinterpreted. There is no `auto`: nothing derives the tier from the installed card. A new run starts at the defaults (all 42 blocks resident, unquantized, checkpointing on, `offload_activations: false`, `compile: true`). If a step still runs out of memory, `_degrade_memory` raises `blocks_to_swap` by 8 and retries, so a marginal run finishes instead of dying; lower the resident layer count by hand when the first step already fails.
 
 ### 5.2 Core Training Hyperparameter Decisions
 
@@ -414,7 +417,7 @@ A preset is a bundle of concrete values, written into the config once when a hum
    - **Fix**:
      - Latent caching OOM: Run `cli cache --config ... --batch-size 1`.
      - Text encoding OOM: Run `cli encode-text --config ... --quantize nf4 --batch-size 2`.
-     - Training OOM: raise `vram.blocks_to_swap` (e.g. `20`, or `42` for the whole stack) or lower `vram.quantize_dit` to `ffn`/`all`; `vram.gradient_checkpointing` must be `true` when `blocks_to_swap` is enabled. The trainer also raises `blocks_to_swap` by 8 per OOM on its own.
+     - Training OOM: raise `vram.blocks_to_swap` (e.g. `20`, or `42` for the whole stack) or lower `vram.quantize_dit` to `ffn`/`all`; `vram.gradient_checkpointing` must be `true` when `blocks_to_swap` is enabled. If it still does not fit, set `vram.offload_activations: true` (about 1 GB less at 1024x1024, needs checkpointing, compile goes off) or check `vram.optimizer_in_8bit`. The trainer also raises `blocks_to_swap` by 8 per OOM on its own.
 2. **Cache schema mismatch or missing index**
    - **Symptom**: `缓存未就绪：缺 index.json` (cache not ready: missing `index.json`) or `缓存格式不对：不是当前版本的索引` (invalid cache format: outdated index schema).
    - **Fix**: Check whether `"schema"` in `workspaces/<WORKSPACE>/train_cache/index.json` equals `2`. If missing or outdated, re-run `cli cache --config ...` followed by `cli encode-text --config ...` (no `--overwrite` needed; incremental logic backfills missing entries and rewrites the v2 index).

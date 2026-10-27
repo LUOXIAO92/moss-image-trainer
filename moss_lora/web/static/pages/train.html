@@ -226,6 +226,14 @@
                 <option value="false" data-i18n="common.off">关闭</option>
               </select>
             </label>
+            <label class="field" for="cfg-offload-activations">
+              <span class="field-label" data-i18n="train.vram.offloadActivations">激活值卸载</span>
+              <select id="cfg-offload-activations">
+                <option value="true" data-i18n="common.on">开启</option>
+                <option value="false" data-i18n="common.off">关闭</option>
+              </select>
+              <span class="field-help" data-i18n="train.vram.offloadHelp">把检查点边界写进锁页主机内存，每步慢约一成，换来 1024² 下约 1 GB 显存。需要梯度检查点。</span>
+            </label>
             <label class="field" for="cfg-quantize-dit">
               <span class="field-label" data-i18n="train.vram.quantize">DiT 量化</span>
               <select id="cfg-quantize-dit">

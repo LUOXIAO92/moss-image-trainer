@@ -9,9 +9,11 @@ quantity is ``max(train, preview)``.
 
 The coefficients that make the five rows land are the module constants in
 ``moss_lora.memory``: block weights 8.86 GiB bf16 (nf4 x0.28, fp8 x0.53),
-conditioning 0.62 GiB, activations 1.0 GiB per 4096 image tokens with
-checkpointing on (x3 without), LoRA 2.325M params per rank for six targets with
-8 B/param AdamW (3 B for the 8-bit optimizer, +4 B with EMA), workspace 0.5 GiB
+conditioning 0.62 GiB, activations split into a block-local 0.85 GiB at 4096 image
+tokens plus 42 checkpoint boundaries of 4096 tokens x 3072 hidden x 2 bytes (x3
+without checkpointing; boundaries dropped when ``vram.offload_activations`` moves
+them to host memory), LoRA 2.325M params per rank for six targets with 8 B/param
+AdamW (3 B for the 8-bit optimizer, +4 B with EMA), workspace 0.5 GiB
 plus 0.2 with torch.compile, sampler activations 0.5 GiB per megapixel per
 forward (x2 when guidance != 1; ``preview.batch`` multiplies it only when set),
 VAE decode 2.5 GiB per megapixel on the GPU (x0.5 for fp16, nothing on the CPU),
@@ -235,6 +237,24 @@ def check_adapter_path_not_read() -> None:
     assert any("adapter" in note for note in missing["notes"]), missing["notes"]
 
 
+def check_activation_offload() -> None:
+    base = {"vram": {"quantize_dit": "all", "quantize_dtype": "nf4",
+                     "blocks_to_swap": 42, "compile": False}}
+    loaded = estimate_vram(make(**base))
+    offloaded = estimate_vram(make(**{**base, "vram": {
+        **base["vram"], "offload_activations": True}}))
+    assert offloaded["train"] < loaded["train"], (offloaded["train"], loaded["train"])
+    # The boundary term is the only thing that moves: one preview forward has no
+    # autograd graph and no checkpoint boundaries to begin with.
+    assert offloaded["preview"] == loaded["preview"], (offloaded["preview"], loaded["preview"])
+    assert any("host memory" in note for note in offloaded["notes"]), offloaded["notes"]
+    # A longer sequence means more boundary bytes, so the saving grows with it.
+    long_seq = estimate_vram(make(**{**base, "dataset": {"max_area": 2048 * 2048}}))
+    long_off = estimate_vram(make(**{**base, "dataset": {"max_area": 2048 * 2048},
+                                    "vram": {**base["vram"], "offload_activations": True}}))
+    assert (long_seq["train"] - long_off["train"]) > (loaded["train"] - offloaded["train"])
+
+
 def main() -> int:
     failures = check_calibration()
     if failures:
@@ -248,6 +268,7 @@ def main() -> int:
     check_guidance()
     check_batch_factor()
     check_adapter_path_not_read()
+    check_activation_offload()
     print("\nvram estimate calibration passed")
     return 0
 

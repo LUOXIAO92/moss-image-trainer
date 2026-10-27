@@ -81,6 +81,7 @@ class Trainer:
             self._empty_context = self._load_empty_context()
             self.log(f"caption dropout: {self.caption_dropout:.3f} (unconditional branch cached)")
         self.eval_items: list = []
+        self.offload_activations = bool(getattr(config.vram, "offload_activations", False))
         self._check_sizing()
         self._split_eval()
         self.out_dir = os.path.join(config.output_dir, config.name)
@@ -187,6 +188,10 @@ class Trainer:
                 parameter.data = parameter.data.to(self.device)
         self.log(f"transformer ready: {self._memory_stats()['device']:.1f} GiB on the card")
         self._set_checkpointing(bool(self.config.vram.gradient_checkpointing))
+        if self.offload_activations:
+            if not bool(self.config.vram.gradient_checkpointing):
+                raise RuntimeError("vram.offload_activations needs vram.gradient_checkpointing")
+            self.log("activation offload: checkpoint boundaries live in pinned host memory")
         self._setup_block_swap()
         self._maybe_compile()
         self._set_batch_mode(True)
@@ -254,6 +259,14 @@ class Trainer:
 
         if self.device == "cuda" and importlib.util.find_spec("triton") is None:
             self.log("compile: skipped, Triton is not installed")
+            return
+        if self.offload_activations:
+            # The offload saves every checkpoint boundary through
+            # torch.autograd.graph.saved_tensors_hooks. torch.compile cannot put
+            # those saves inside a graph, so it would break the forward into one
+            # graph per block or fail outright; neither is worth the trade.
+            self.log("compile: skipped, the activation offload saves tensors through "
+                     "autograd hooks (vram.offload_activations)")
             return
         if int(getattr(self.config.vram, "blocks_to_swap", 0) or 0) > 0:
             # Streaming re-enters the model 84 times per step and records a CUDA
@@ -742,12 +755,29 @@ class Trainer:
                 if self._batch_mode == "packed"
                 else self.model.forward_padded
             )
-            prediction = forward(
-                xt,
-                float(sigma.item()) * 1000,
-                contexts,
-                checkpoint_blocks=bool(getattr(self.model, "gradient_checkpointing", False)),
-            )
+            if self.offload_activations:
+                # Hooks are active for the forward only. torch.utils.checkpoint
+                # and the streaming checkpoint both save their block inputs here,
+                # so those 42 boundaries leave the card as each block finishes and
+                # come back one at a time during the recompute. Backward runs
+                # outside the context: its recompute builds a graph whose saves are
+                # freed as it walks, and packing those to the host and straight
+                # back would be copy overhead with nothing to gain.
+                with torch.autograd.graph.save_on_cpu(pin_memory=True):
+                    prediction = forward(
+                        xt,
+                        float(sigma.item()) * 1000,
+                        contexts,
+                        checkpoint_blocks=bool(
+                            getattr(self.model, "gradient_checkpointing", False)),
+                    )
+            else:
+                prediction = forward(
+                    xt,
+                    float(sigma.item()) * 1000,
+                    contexts,
+                    checkpoint_blocks=bool(getattr(self.model, "gradient_checkpointing", False)),
+                )
             loss = sum(F.mse_loss(pred.float(), tgt) for pred, tgt in zip(prediction, target)) / len(prediction)
             self.scaler.scale(loss / cfg.grad_accum).backward()
             step_loss += float(loss.detach()) / cfg.grad_accum

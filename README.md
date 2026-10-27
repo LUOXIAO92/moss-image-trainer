@@ -22,7 +22,7 @@ The trainer splits the workflow into offline caching and online training so the 
 
 - **OS and Python**: Linux, WSL2, or Windows 10/11 with PowerShell 5.1+, and Python 3.11+.
 - **GPU and drivers**: NVIDIA GPU with `bfloat16` or `float16` support and CUDA drivers matching PyTorch 2.9+.
-- **VRAM settings, with presets as starting points**: every VRAM field is a plain value in the run's config, and the trainer reads those values as written. The preset selector in the WebUI (`32`, `24`, `16`, `12`, `8`, `6`) and `--preset` on the CLI fill in one tier's values once — gradient checkpointing, resident blocks, quantization scope and format, `torch.compile`, the 8-bit optimizer, and the preview VAE dtype — and then get out of the way. A new run starts at the defaults with no preset applied, nothing is derived from the card, and the trainer raises `blocks_to_swap` by itself only when a step runs out of memory.
+- **VRAM settings, with presets as starting points**: every VRAM field is a plain value in the run's config, and the trainer reads those values as written. The preset selector in the WebUI (`32`, `24`, `16`, `12`, `8`, `6`) and `--preset` on the CLI fill in one tier's values once — gradient checkpointing, resident blocks, activation offload, quantization scope and format, `torch.compile`, the 8-bit optimizer, and the preview VAE dtype — and then get out of the way. A new run starts at the defaults with no preset applied, nothing is derived from the card, and the trainer raises `blocks_to_swap` by itself only when a step runs out of memory.
 - **Local weights**: MOSS-Image DiT, Qwen3.5-9B text encoder (HuggingFace directory, or a ConvRot int8-quantized single-file `.safetensors`), and FLUX.2 VAE.
 
 To choose settings for a specific card, read the [VRAM guide](<docs/VRAM.md>). It gives the measured cost of quantization and block streaming, explains the allocator setting, and lists a preview size for each card class.
@@ -144,6 +144,7 @@ train:
   sample_every: 250
 vram:
   gradient_checkpointing: true
+  offload_activations: false
   blocks_to_swap: 0
   quantize_dit: none
   compile: true
@@ -290,7 +291,7 @@ See [docs/DESIGN.md](<docs/DESIGN.md>) for module boundaries, data flow, and fro
 ## Known Limitations
 
 - **Batch size and throughput**: A micro-batch is assembled by token budget, so images keep their own resolutions and `train.bin_tokens` (not `batch_size`) sets how much work one step does. Install FlashAttention-2 to switch the default from `padded` (token padding plus a key mask) to `packed` (varlen, no mask).
-- **Low-VRAM precision trade-offs**: `model.dtype: float16` with `vram.fp16_accumulate: true` is more prone to numerical instability than `bfloat16` at higher learning rates or long training runs. Quantization (`quantize_dit: ffn|all`) targets the 8 GB and 6 GB tiers; the 16 GB and 12 GB tiers keep bf16 weights and stream the trailing blocks from host memory instead, which costs step time but not weight precision. `nf4` is the smallest format and `fp8` the steadier one, and quantizing the conditioning half on purpose compounds error into every block, which is why it stays off unless asked for.
+- **Low-VRAM precision trade-offs**: `model.dtype: float16` with `vram.fp16_accumulate: true` is more prone to numerical instability than `bfloat16` at higher learning rates or long training runs. Quantization (`quantize_dit: ffn|all`) targets the 8 GB and 6 GB tiers; the 16 GB and 12 GB tiers keep bf16 weights and stream the trailing blocks from host memory instead, which costs step time but not weight precision. `nf4` is the smallest format and `fp8` the steadier one, and quantizing the conditioning half on purpose compounds error into every block, which is why it stays off unless asked for. `vram.offload_activations: true` writes the gradient-checkpoint boundaries to pinned host memory and saves roughly 1 GB of card memory at 1024x1024 for about a tenth more step time; it requires gradient checkpointing and turns `torch.compile` off.
 - **Training scope**: LoRA adapters attach only to the 5B DiT (`q`, `k`, `v`, `o`, `ffn_up_gate`, and `ffn_down` across 42 layers by default, plus optional `text_embedder`); the trainer freezes the Qwen3.5-9B text encoder and the VAE.
 
 ## License and Acknowledgements

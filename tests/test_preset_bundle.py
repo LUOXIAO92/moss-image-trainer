@@ -32,7 +32,8 @@ def check_bundle_shape() -> None:
     for tier in PRESET_TIERS:
         bundle = preset_bundle(tier)
         for key in ("gradient_checkpointing", "blocks_to_swap", "optimizer_in_8bit",
-                    "quantize_dit", "quantize_dtype", "quantize_conditioning", "compile"):
+                    "offload_activations", "quantize_dit", "quantize_dtype",
+                    "quantize_conditioning", "compile"):
             assert key in bundle, f"{tier}: missing {key}"
         assert "preview" in bundle and "vae_dtype" in bundle["preview"], tier
         assert 0 <= bundle["blocks_to_swap"] <= TRANSFORMER_BLOCKS, tier
@@ -138,6 +139,16 @@ def check_validation() -> None:
     config.preview.blocks_to_swap = TRANSFORMER_BLOCKS
     codes = {problem.code for problem in config.validate()}
     assert "err.config.preview_blocks_to_swap" not in codes, codes
+    # Offloading activations is only defined together with checkpointing: the
+    # boundaries it moves are the ones checkpointing keeps.
+    config = base()
+    config.vram.gradient_checkpointing = False
+    config.vram.offload_activations = True
+    codes = {problem.code for problem in config.validate()}
+    assert "err.config.offload_checkpointing" in codes, codes
+    config.vram.gradient_checkpointing = True
+    codes = {problem.code for problem in config.validate()}
+    assert "err.config.offload_checkpointing" not in codes, codes
 
 
 def main() -> int:

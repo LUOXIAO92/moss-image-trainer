@@ -73,6 +73,7 @@ CODES: dict[str, str] = {
     "err.config.lora_rank": "LoRA 的 rank 要大于 0",
     "err.config.optimizer": "优化器只有 adamw、adamw8bit、muon、adafactor，现在填的是 {value}",
     "err.config.blocks_to_swap": "常驻层数只能卸载 0–42 块，现在填的是 {value}",
+    "err.config.offload_checkpointing": "激活值卸载依赖梯度检查点：vram.gradient_checkpointing 也要打开",
     "err.config.preview_batch": "每次采样几条不能是负数",
     "err.config.preview_vae_device": "样图 VAE 只能解码到 gpu 或 cpu，现在填的是 {value}",
     "err.config.preview_vae_dtype": "样图 VAE 精度只有 fp32 或 fp16，现在填的是 {value}",

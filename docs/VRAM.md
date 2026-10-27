@@ -13,13 +13,15 @@ Four terms add up, and each has its own control.
 | Term | What sets it |
 | --- | --- |
 | Frozen DiT weights | `vram.quantize_dit`, `vram.quantize_dtype`, `vram.blocks_to_swap` |
-| Activations | the joint sequence length, fixed by `dataset.max_area` |
+| Activations | the joint sequence length, fixed by `dataset.max_area`, and `vram.offload_activations` |
 | Optimizer state | the number of trainable parameters and `vram.optimizer_in_8bit` |
 | CUDA context | the driver, about 1.5 GB |
 
 The DiT weights are 9.5 GB in bf16, 2.5 GB at nf4, and 4.7 GB at fp8. Those figures cover the 42 blocks. The conditioning half (text projection, both modulation layers, time embedding, final projection) adds 0.6 GB and stays bf16 unless you ask for otherwise.
 
 Activations follow the sequence the model sees. MOSS-Image is a single-stream DiT: image tokens and text tokens meet in one self-attention, so the term grows with their sum, not with the number of images alone. A 1024x1024 image produces about 4096 tokens (pixels divided by 256); a caption contributes tens of tokens. `dataset.max_area` caps the cached latent size, which fixes the image-token count before training starts. Raising it raises the activation term on every step; quantization and streaming leave that term alone.
+
+The activation term itself has two parts. Gradient checkpointing throws away the tensors inside each block and keeps only the block's input, so it can recompute the block in backward: that is 42 boundaries of `tokens x 3072 x 2` bytes, about 1 GB at 1024x1024. The other part is what one block holds while it computes — its projections and attention buffers — and recomputation cannot remove it. `vram.offload_activations: true` moves the first part to pinned host memory and leaves the second on the card; section 4 covers it.
 
 The optimizer keeps state for the trainable parameters only, which are the LoRA adapters. AdamW holds two fp32 moments per parameter, eight bytes per parameter in total; the 8-bit optimizer keeps each moment in eight bits. At the default rank of 32, the saving is about 0.2 GB, at a cost of two to three percent of wall time. The optimizer is the smallest of the four terms.
 
@@ -29,17 +31,17 @@ The CUDA context is fixed. The driver charges about 1.5 GB before PyTorch alloca
 
 `vram.quantize_dit` chooses how much of the frozen DiT to replace: `none` keeps bf16, `ffn` converts the two FFN projections in every block, and `all` converts QKVO and FFN. `vram.quantize_dtype` chooses the storage: `nf4` packs four bits per weight plus per-group scales, and `fp8` stores one byte plus one scale per output row. The adapter stays in the compute dtype; only frozen weights are rounded.
 
-| `quantize_dit` + `quantize_dtype` | All 42 blocks resident | All 42 blocks streamed |
-| --- | --- | --- |
-| none (bf16) | 14.8 GB | 6.3 GB |
-| ffn + nf4 | 10.2 GB | 6.2 GB |
-| ffn + fp8 | 12.1 GB | 7.0 GB |
-| all + nf4 | 8.2 GB | 6.1 GB |
-| all + fp8 | 10.9 GB | 6.4 GB |
+| `quantize_dit` + `quantize_dtype` | All 42 blocks resident | All 42 blocks streamed | Streamed + activation offload |
+| --- | --- | --- | --- |
+| none (bf16) | 14.3 GB | 6.1 GB | 5.1 GB |
+| ffn + nf4 | 10.1 GB | 5.8 GB | 4.9 GB |
+| ffn + fp8 | 11.7 GB | 6.0 GB | 5.1 GB |
+| all + nf4 | 7.8 GB | 5.7 GB | 4.7 GB |
+| all + fp8 | 10.1 GB | 6.0 GB | 5.0 GB |
 
-Measured at 1024x1024, batch 1, no previews, bf16 weights, `compile: false`, allocator `expandable`. Figures are driver peaks.
+Measured at 1024x1024, batch 1, no previews, bf16 weights, `compile: false`, allocator `expandable`. Figures are driver peaks. Resident runs drop by about 1 GB with the offload as well: `all` + nf4 goes from 7.8 to 6.8 GB.
 
-Compared with bf16, the resident peak drops by about 5 GB with `ffn` + nf4 and about 7 GB with `all` + nf4. On the 32 GB reference card none of these settings made a step faster. The differences stayed within noise; quantization bought memory, not speed.
+Compared with bf16, the resident peak drops by about 4 GB with `ffn` + nf4 and about 6.5 GB with `all` + nf4. On the 32 GB reference card none of these settings made a step faster. The differences stayed within noise; quantization bought memory, not speed.
 
 `nf4` is the smaller format and carries more quality risk. `fp8` costs more memory at the same scope and stays closer to bf16. When memory allows, prefer fp8. Between the 4-bit scopes, `ffn` rounds fewer matrices and is the safer choice; `all` trades more quality for another 2 GB. Leave `vram.quantize_conditioning` at `none`: it is off by default and unverified, and its rounding error feeds every block.
 
@@ -62,7 +64,24 @@ An unquantized run is the exception, because its blocks are bf16 wherever they l
 
 The copies cost time in proportion to the bytes moved. bf16 fully streamed was about 20% slower per step than bf16 resident. `all` + nf4 fully streamed was within 2% of resident, because it moves a quarter of the bytes. The lookahead overlaps each copy with the block's compute, so the penalty depends on bytes and PCIe width, not on the number of blocks.
 
-## 4. The allocator decides whether streaming saves card memory
+## 4. Activation offload
+
+`vram.offload_activations: true` moves the checkpoint boundaries of section 1 to pinned host memory. Each block's input leaves the card when the block finishes; the backward pass reads one boundary back per block and frees it again, so a step holds one boundary instead of 42. The setting needs gradient checkpointing, which every preset enables: without checkpointing the whole graph is retained, and the offload would pin tens of gigabytes of host memory instead of a bounded set. The trainer switches `torch.compile` off while it is on, because the hooks that move the tensors cannot be captured in a compiled graph.
+
+The saving is the boundary term, about 1 GB at 1024x1024: `all` + nf4 fully streamed goes from 5.7 to 4.7 GB, and bf16 fully streamed from 6.1 to 5.1 GB. Combining it with the 8-bit optimizer measured the lowest training peak in this guide:
+
+| Setting (1024x1024, batch 1) | Peak |
+| --- | --- |
+| `all` + nf4, 42 blocks streamed | 5.7 GB |
+| + activation offload | 4.7 GB |
+| + 8-bit optimizer | 5.3 GB |
+| + activation offload and 8-bit optimizer | 4.4 GB |
+
+That 4.4 GB is close to the floor for this configuration. About 1 GB is the three streamed blocks, the LoRA weights, and their optimizer state; about 0.9 GB is the block-local activation that recomputation cannot remove; the remaining 2.5 GB is the CUDA context, the cuBLAS and FlashAttention workspaces, and the allocator's slack, none of which a training setting changes. Lowering `dataset.max_area` shrinks the middle term — at 768x768 the block-local activation is roughly halved — but the cache has to be rebuilt for the new size first.
+
+The copies cost time. The offload adds about 2 GB of PCIe traffic per step (1 GB out, 1 GB back). A quantized streamed run hides most of it and pays about a tenth more per step; bf16 streaming already moves 11 GB of weights through PCIe per step, so the extra traffic shows up and cost closer to a third. It also pins about 1 GB of host memory while it runs.
+
+## 5. The allocator decides whether streaming saves card memory
 
 `runtime.allocator` lives in `settings.yaml`, not in the run config. `expandable` sets `expandable_segments:True` and lets PyTorch return the whole-block segments that streaming frees. `async` selects `backend:cudaMallocAsync`, which pools those segments per stream and hands nothing back; a streamed run then allocates less and occupies the same card. `off` leaves PyTorch's default allocator in place.
 
@@ -75,7 +94,7 @@ Step time was the same in both runs. Under `async` the streamed figure matched t
 
 Use `runtime.allocator: expandable`. It is the default. The trainer prints a warning when a streamed run starts under `cudaMallocAsync`, because the feature cannot do its job there.
 
-## 5. Preview images
+## 6. Preview images
 
 A preview is the peak of the run, not the training step. Sampling adds its own activations, and the VAE decoder runs at the end of the pass; a run that trains at about 6 GB can peak at about 9 GB when it draws a picture.
 
@@ -94,9 +113,9 @@ Two settings move the peak. `preview.vae_dtype: fp16` halves the decode's memory
 
 Step count dominates preview time. The same preview at 50 steps without the LoRA took about eight times as long as eight steps with it.
 
-## 6. Choosing a tier
+## 7. Choosing a tier
 
-A preset is a starting point, not a decision. Picking one — the selector on the training page, or `--preset` on the CLI — writes that tier's values into the config: quantization scope and format, streaming, gradient checkpointing, `torch.compile`, the 8-bit optimizer, and the preview VAE dtype. Nothing reads the tier afterwards; the run reads the fields, and every field stays editable. A new run starts at the defaults with no preset applied, and nothing is derived from the installed card. Every tier below keeps `preview.batch: 1`.
+A preset is a starting point, not a decision. Picking one — the selector on the training page, or `--preset` on the CLI — writes that tier's values into the config: activation offload, quantization scope and format, streaming, gradient checkpointing, `torch.compile`, the 8-bit optimizer, and the preview VAE dtype. Nothing reads the tier afterwards; the run reads the fields, and every field stays editable. A new run starts at the defaults with no preset applied, and nothing is derived from the installed card. Every tier below keeps `preview.batch: 1`.
 
 ### 24 GB and up
 
@@ -116,12 +135,12 @@ Preset `8`. `all` + nf4, all 42 blocks streamed, the 8-bit optimizer, `compile: 
 
 ### 6 GB
 
-Preset `6`. The same settings as 8 GB, with a peak around 6 GB against a 6 GB card. Lower `dataset.max_area` to 589824 (768x768), which nearly halves the activation term. Rebuild the latent cache and close other GPU users first. Preview at 768x768 with fp16, or 640x640 if that still runs out.
+Preset `6`. The same settings as 8 GB, with a peak around 6 GB against a 6 GB card. Lower `dataset.max_area` to 589824 (768x768), which nearly halves the activation term. Rebuild the latent cache and close other GPU users first. Preview at 768x768 with fp16, or 640x640 if that still runs out. Turning on `vram.offload_activations` brings the training step to about 4.4 GB, which leaves the preview as the only thing that has to fit.
 
-## 7. What these numbers are worth
+## 8. What these numbers are worth
 
-Training figures come from 101-step runs on one 32 GB card with a 1007 GB disk, a bf16 base model, 1024x1024 images, and batch 1. Preview figures come from one pass per row with the 8-step LoRA described above. The values are rounded: memory peaks keep one decimal in the tables, and the prose rounds them to whole numbers.
+Training figures come from three-step probe runs on one 32 GB card: 1024x1024 images, batch 1, no previews, `compile: false`, allocator `expandable`, and the peak is reached by the second step. Preview figures come from one pass per row with the 8-step LoRA described above. The values are rounded: memory peaks keep one decimal in the tables, and the prose rounds them to whole numbers.
 
-A slower card takes longer per step. Narrower PCIe makes the streaming copies cost more, so the 20% penalty for bf16 streaming grows. A machine with 16 GB of system memory is limited by pinned host memory before it is limited by the card.
+A slower card takes longer per step. Narrower PCIe makes the streaming copies cost more, so the 20% penalty for bf16 streaming grows, and so does the activation offload's share. A machine with 16 GB of system memory is limited by pinned host memory before it is limited by the card.
 
-The absolute figures belong to that one machine; the ordering of the choices transfers. bf16 costs the most and streams the worst, nf4 costs the least, `all` saves more than `ffn`, fp8 sits between, and `expandable` returns memory that `cudaMallocAsync` keeps. Choose a direction from the tables, then measure your own run; `metrics.jsonl` records the peak each run reaches.
+The absolute figures belong to that one machine; the ordering of the choices transfers. bf16 costs the most and streams the worst, nf4 costs the least, `all` saves more than `ffn`, fp8 sits between, the activation offload takes about 1 GB off every row, and `expandable` returns memory that `cudaMallocAsync` keeps. Choose a direction from the tables, then measure your own run; `metrics.jsonl` records the peak each run reaches.

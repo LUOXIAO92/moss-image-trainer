@@ -41,6 +41,7 @@ export const FIELD_DEFS = [
   { id: 'cfg-bin-tokens', path: 'train.bin_tokens', type: 'number', label: 'train.advanced.binSize', min: 0, integer: true, default: 0 },
   { id: 'cfg-resident-blocks', path: 'vram.blocks_to_swap', type: 'resident', label: 'train.vram.residentBlocks', min: 0, max: LAYER_COUNT, integer: true, default: 0 },
   { id: 'cfg-grad-ckpt', path: 'vram.gradient_checkpointing', type: 'bool', label: 'train.vram.checkpointing', default: true },
+  { id: 'cfg-offload-activations', path: 'vram.offload_activations', type: 'bool', label: 'train.vram.offloadActivations', default: false },
   { id: 'cfg-compile', path: 'vram.compile', type: 'bool', label: 'train.vram.compile', default: true },
   { id: 'cfg-optimizer-8bit', path: 'vram.optimizer_in_8bit', type: 'bool', label: 'train.vram.optimizer8bit', default: false },
   { id: 'cfg-quantize-dit', path: 'vram.quantize_dit', type: 'text', label: 'train.vram.quantize', default: 'none' },

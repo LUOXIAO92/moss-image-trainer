@@ -161,6 +161,12 @@ class VramConfig:
     # resolves a preset, so what the config says is what runs.
     gradient_checkpointing: bool = True
     blocks_to_swap: int = 0
+    # Move the tensors gradient checkpointing keeps between blocks (one per block,
+    # about 1 GiB at 1024x1024) to pinned host memory for the forward and load
+    # each one back when its block is recomputed. Needs gradient checkpointing:
+    # without it the whole graph is retained and the offload would pin tens of
+    # gigabytes of host memory instead of a known set of boundaries.
+    offload_activations: bool = False
     optimizer_in_8bit: bool = False
     # weight-only quantization of the frozen DiT: none (bf16) | ffn | all
     quantize_dit: str = "none"
@@ -377,6 +383,9 @@ class Config:
                                     value=self.vram.quantize_conditioning))
         if not 0 <= int(self.vram.blocks_to_swap or 0) <= TRANSFORMER_BLOCKS:
             problems.append(problem("err.config.blocks_to_swap", value=self.vram.blocks_to_swap))
+        if bool(getattr(self.vram, "offload_activations", False)) \
+                and not self.vram.gradient_checkpointing:
+            problems.append(problem("err.config.offload_checkpointing"))
         preview_blocks = getattr(self.preview, "blocks_to_swap", -1)
         if isinstance(preview_blocks, bool) or not isinstance(preview_blocks, int) \
                 or not -1 <= preview_blocks <= TRANSFORMER_BLOCKS:
@@ -452,9 +461,11 @@ def _build(cls, data: dict):
 # after applying a preset behaves exactly like a field you typed yourself.
 VRAM_PRESETS: dict[str, dict[str, Any]] = {
     "32": {"gradient_checkpointing": True, "blocks_to_swap": 0, "optimizer_in_8bit": False,
+           "offload_activations": False,
            "quantize_dit": "none", "quantize_dtype": "nf4", "quantize_conditioning": "none",
            "compile": True},
     "24": {"gradient_checkpointing": True, "blocks_to_swap": 0, "optimizer_in_8bit": False,
+           "offload_activations": False,
            "quantize_dit": "none", "quantize_dtype": "nf4", "quantize_conditioning": "none",
            "compile": True},
     # 16 GB and 12 GB: keep the base weights in bf16 and stream the tail instead
@@ -463,9 +474,11 @@ VRAM_PRESETS: dict[str, dict[str, Any]] = {
     # streams 6 of the 42 blocks, the 12 GB card 22. Both drop torch.compile,
     # which cannot trace the streaming copies.
     "16": {"gradient_checkpointing": True, "blocks_to_swap": 6, "optimizer_in_8bit": False,
+           "offload_activations": False,
            "quantize_dit": "none", "quantize_dtype": "nf4", "quantize_conditioning": "none",
            "compile": False},
     "12": {"gradient_checkpointing": True, "blocks_to_swap": 22, "optimizer_in_8bit": False,
+           "offload_activations": False,
            "quantize_dit": "none", "quantize_dtype": "nf4", "quantize_conditioning": "none",
            "compile": False},
     # 8 GB and below: the base weights leave bf16, the compiled block loop goes
@@ -473,9 +486,11 @@ VRAM_PRESETS: dict[str, dict[str, Any]] = {
     # streaming still needs about 8.4 GiB of card once the CUDA context is
     # counted, which is more than these cards have.
     "8": {"gradient_checkpointing": True, "blocks_to_swap": 42, "optimizer_in_8bit": True,
+          "offload_activations": False,
           "quantize_dit": "all", "quantize_dtype": "nf4", "quantize_conditioning": "none",
           "compile": False},
     "6": {"gradient_checkpointing": True, "blocks_to_swap": 42, "optimizer_in_8bit": True,
+          "offload_activations": False,
           "quantize_dit": "all", "quantize_dtype": "nf4", "quantize_conditioning": "none",
           "compile": False},
 }

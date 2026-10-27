@@ -83,9 +83,16 @@ CONDITIONING_BF16_GIB = 0.62
 QUANT_FACTORS = {"nf4": 0.28, "fp8": 0.53}
 FFN_WEIGHT_SHARE = 0.73
 
-# One full-size image (1024x1024 = 4096 latent tokens) with checkpointing on.
-ACTIVATION_GIB = 1.0
-TOKENS_PER_MEGAPIXEL = 4096
+# Activation memory with checkpointing on has two terms. The checkpoint keeps
+# every block's input -- the boundary it recomputes from -- until backward:
+# 42 blocks x tokens x 3072 hidden x 2 bytes, about 0.96 GiB at 4096 tokens. On
+# top of that a block holds its own projections and attention buffers while it
+# runs, about 0.85 GiB at the same length, and recomputation cannot remove that
+# term. ``vram.offload_activations`` moves the boundaries to pinned host memory,
+# so only the block-local term stays on the card.
+HIDDEN_SIZE = 3072
+BLOCK_TRANSIENT_GIB = 0.85
+ACTIVATION_TOKENS = 4096
 DEFAULT_MAX_AREA = 1024 * 1024
 
 # 42 blocks x 6 projections at rank 1 is about 2.3M parameters; the rank 16 run
@@ -195,10 +202,18 @@ def _activation_gib(config) -> tuple[float, int]:
         batch = max(1, _whole(getattr(config.train, "batch_size", 1) or 1))
         budget = batch * max(1, area // 256)  # 16x16 latent grid
     tokens = max(1, budget)
-    scale = (area / 1048576.0) * (tokens / TOKENS_PER_MEGAPIXEL)
+    scale = tokens / ACTIVATION_TOKENS
+    # fp32 weights would double the boundaries; the trainer's dtypes are bf16 or
+    # fp16 (2 bytes) in every preset, and fp32 runs are a debugging case.
+    dtype = str(getattr(getattr(config, "model", None), "dtype", "bfloat16") or "bfloat16")
+    item_bytes = 4 if dtype.lower() == "float32" else 2
+    boundary = TOTAL_BLOCKS * tokens * HIDDEN_SIZE * item_bytes / 2**30
+    activation = BLOCK_TRANSIENT_GIB * scale + boundary
     if not _checkpointing(config.vram):
-        scale *= 3.0
-    return ACTIVATION_GIB * scale, tokens
+        activation *= 3.0
+    elif bool(getattr(config.vram, "offload_activations", False)):
+        activation -= boundary
+    return activation, tokens
 
 
 def _lora_params(config) -> tuple[float, int, int]:
@@ -231,7 +246,12 @@ def _optimizer_bytes(config) -> float:
 
 
 def _workspace_gib(vram) -> tuple[float, bool]:
-    compiled = bool(getattr(vram, "compile", False))
+    # torch.compile is refused for a streamed run (the copy events cannot be
+    # traced) and for an activation offload (saves go through autograd hooks), so
+    # its workspace is only charged when the trainer will really compile.
+    streaming = int(getattr(vram, "blocks_to_swap", 0) or 0) > 0
+    offloading = bool(getattr(vram, "offload_activations", False))
+    compiled = bool(getattr(vram, "compile", False)) and not streaming and not offloading
     return WORKSPACE_GIB + (COMPILE_WORKSPACE_GIB if compiled else 0.0), compiled
 
 
@@ -308,7 +328,9 @@ def estimate_vram(config) -> dict:
         f"{quant_label}: {block_gib:.2f} GiB of block weights",
         f"conditioning: {conditioning_gib:.2f} GiB {conditioning_label}",
         (f"activations: {activation_gib:.2f} GiB for {tokens} tokens, "
-         f"gradient checkpointing {'on' if _checkpointing(vram) else 'off'}"),
+         f"gradient checkpointing {'on' if _checkpointing(vram) else 'off'}"
+         + (", block boundaries on host memory"
+            if bool(getattr(vram, "offload_activations", False)) else "")),
         (f"lora: {params / 1e6:.1f}M params at rank {rank} x {target_count} targets, "
          f"{bytes_per_param:.0f} B each with optimizer state"),
         f"workspace: {workspace_gib:.1f} GiB" + (", torch.compile on" if compiled else ""),
