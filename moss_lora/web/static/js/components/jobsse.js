@@ -267,6 +267,38 @@ export async function finishJob(status, message, detail = {}) {
   if (job.kind !== 'export') loadLoras().catch(() => {});
 }
 
+async function confirmInitLora(config) {
+  // Warm-starting from an existing adapter has two contracts: the rank must be
+  // the configured one, and a different alpha is only acceptable if the user
+  // knows lora_B will be rescaled to the configured alpha.
+  const path = String(config?.lora?.init_from || '').trim();
+  if (!path) return true;
+  let data;
+  try {
+    data = await api('/api/lora/inspect?path=' + encodeURIComponent(path));
+  } catch (error) {
+    showError(t('dash.train.loraInspectFailed'), describeError(error));
+    return false;
+  }
+  const configRank = Number(config?.lora?.rank || 0);
+  const ranks = (data.ranks || []).map(Number);
+  if (ranks.some((rank) => rank !== configRank)) {
+    showError(t('dash.train.loraRankMismatch', {
+      file: ranks.join(' / ') || '?',
+      config: configRank,
+    }));
+    return false;
+  }
+  const configAlpha = Number(config?.lora?.alpha || 0);
+  const alphas = (data.alphas || []).map(Number);
+  const differs = alphas.filter((alpha) => Math.abs(alpha - configAlpha) > 1e-6);
+  if (!differs.length) return true;
+  return window.confirm(t('dash.train.loraAlphaConfirm', {
+    file: differs.join(' / '),
+    config: configAlpha,
+  }));
+}
+
 export async function startJob(kind, options = {}) {
   if (!state.profileName) {
     showAlert({
@@ -313,8 +345,9 @@ export async function startJob(kind, options = {}) {
   updateJobUi();
   try {
     const yamlText = getCurrentYaml();
+    let parsedConfig;
     try {
-      parseYaml(yamlText);
+      parsedConfig = parseYaml(yamlText);
       clearYamlError();
     } catch (error) {
       showYamlError(error);
@@ -324,6 +357,7 @@ export async function startJob(kind, options = {}) {
       return false;
     }
     if (kind === 'train') {
+      if (!options.resume && !(await confirmInitLora(parsedConfig))) return false;
       // The dashboard GC selector is persisted right before the job starts, so
       // the child process sees the same allocator the user selected.
       const saved = await saveSettings({ silent: true });

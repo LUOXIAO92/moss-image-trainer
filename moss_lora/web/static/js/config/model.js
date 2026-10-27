@@ -32,6 +32,7 @@ export const FIELD_DEFS = [
   { id: 'cfg-grad-accum', path: 'train.grad_accum', type: 'number', label: 'train.params.accum', min: 1, integer: true, default: 1 },
   { id: 'cfg-rank', path: 'lora.rank', type: 'number', label: 'train.params.rank', min: 1, integer: true, default: 32 },
   { id: 'cfg-alpha', path: 'lora.alpha', type: 'number', label: 'train.params.alpha', min: 1, integer: true, default: 32 },
+  { id: 'cfg-lora-init', path: 'lora.init_from', type: 'text', label: 'train.params.initLora', default: '' },
   { id: 'cfg-seed-dit', path: 'train.seed', type: 'number', label: 'train.params.seed', min: 0, integer: true, default: 42, required: true },
   { id: 'cfg-save-every', path: 'train.save_every', type: 'number', label: 'train.intervals.save', min: 0, integer: true, default: 250 },
   { id: 'cfg-sample-every', path: 'train.sample_every', type: 'number', label: 'train.intervals.sample', min: 0, integer: true, default: 250 },

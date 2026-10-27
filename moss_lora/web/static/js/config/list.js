@@ -12,7 +12,6 @@ import { applyFrozenState, switchRun } from './file.js';
 import { $, escapeHtml, setHidden, setText } from '../core/dom.js';
 import { fmtInt } from '../core/fmt.js';
 import { t } from '../core/i18n.js';
-import { showAlert } from '../core/notify.js';
 import { state } from '../core/state.js';
 
 // The picker is async; keep the user's target selected while the config loads
@@ -125,16 +124,31 @@ function resumeInfo(entry) {
 }
 
 export function updateDashboardResumeState() {
-  const button = $('#btn-resume');
+  const button = $('#btn-train');
   if (!button) return;
   const entry = dashboardConfigEntry(state.activeRun);
   const info = resumeInfo(entry);
+  const checkbox = $('#chk-retrain');
   const running = state.job?.status === 'running' || Boolean(state.activeTraining);
+  // Checked means "start over". A run with nothing to resume is always a start
+  // over, so the checkbox has no effect there and is disabled instead.
+  const retrain = !info.resumable || Boolean(checkbox?.checked);
   button.dataset.resume = info.file;
-  button.dataset.resumable = info.resumable ? '1' : '0';
-  button.disabled = !info.resumable || running || state.busy || !state.profileName;
+  button.dataset.action = retrain ? 'retrain' : 'resume';
+  button.disabled = running || state.busy || !state.profileName || !entry;
   button.setAttribute('aria-disabled', String(button.disabled));
-  button.title = info.resumable ? t('dash.train.resumeHint') : t('dash.train.resumeUnavailableText');
+  button.title = retrain ? t('dash.train.retrainHint') : t('dash.train.resumeHint');
+  // A running job's label is progress text owned by updateJobUi(); only decide
+  // between Resume and Retrain when nothing is running.
+  if (!running) {
+    setText('#btn-train-text', !entry
+      ? t('train.selectConfig')
+      : (retrain ? t('dash.train.retrain') : t('dash.train.resume')));
+  }
+  if (checkbox) {
+    checkbox.disabled = !info.resumable || running || state.busy;
+    if (!info.resumable) checkbox.checked = false;
+  }
   setHidden('#dash-resume-line', !entry);
   if (!entry) {
     setText('#dash-resume-status', '--');
@@ -231,6 +245,11 @@ export async function ensureDashboardConfigSelection() {
   else renderDashboardConfigOptions();
 }
 
+function retrainWouldDiscard(entry, info) {
+  return Boolean(info.resumable) || Number(info.step || 0) > 0
+    || Number(info.checkpointStep || 0) > 0 || Boolean(entry?.checkpoint);
+}
+
 export async function startDashboardTraining(options = {}) {
   const target = $('#dash-config-select')?.value || '';
   if (!target) {
@@ -241,18 +260,22 @@ export async function startDashboardTraining(options = {}) {
     const ok = await selectDashboardConfig(target);
     if (!ok) return false;
   }
-  if (!options.resume) return startJob('train');
   const entry = dashboardConfigEntry(state.activeRun);
   const info = resumeInfo(entry);
-  if (!info.resumable) {
-    updateDashboardResumeState();
-    showAlert({
-      type: 'warn',
-      title: t('dash.train.resumeUnavailable'),
-      text: t('dash.train.resumeUnavailableText'),
-      timeout: 5000,
-    });
-    return false;
+  // The checkbox is the only switch: without it, a resumable run resumes and
+  // anything else starts over. options.retrain exists for callers with no DOM.
+  const retrain = !info.resumable || Boolean(options.retrain)
+    || Boolean($('#chk-retrain')?.checked);
+  if (retrain) {
+    if (retrainWouldDiscard(entry, info) && !window.confirm(t('dash.train.retrainConfirm'))) {
+      return false;
+    }
+    const started = await startJob('train');
+    if (started) {
+      const box = $('#chk-retrain');
+      if (box) box.checked = false;
+    }
+    return started;
   }
   // Resume never reruns the no-LoRA baseline: that is a fresh-run step and
   // would overwrite the baseline the user already has.

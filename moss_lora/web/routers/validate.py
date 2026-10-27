@@ -122,8 +122,16 @@ async def api_validate(request: Request):
     model_problems = [item for item in problems if item.code in model_codes]
     reg_problems = [item for item in problems if item.code in reg_codes]
     dataset_problems = [item for item in problems if item.code in dataset_codes]
+    lora_problems = [item for item in problems
+                     if item.code == "err.config.field_missing"
+                     and item.params.get("field") == "lora.init_from"]
     focus_field = ""
-    if model_problems:
+    if lora_problems:
+        # The warm-start file lives in the training settings, not with the
+        # model weights the generic field_missing branch points at.
+        next_tab = "train"
+        focus_field = "cfg-lora-init"
+    elif model_problems:
         for key, field_id in (("dit", "cfg-model-dit"), ("vae", "cfg-model-vae"), ("text_encoder", "cfg-model-te")):
             if not getattr(config.model, key, ""):
                 focus_field = field_id

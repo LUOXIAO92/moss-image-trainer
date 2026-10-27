@@ -6,7 +6,7 @@
 import { applySmoothWindow, drawChart } from './components/chart.js'; import { startJob, stopJob } from './components/jobsse.js';
 import { clearLog, copyLog, isLogNearBottom } from './components/logview.js'; import { drawMetricCards, positionWidgets, toggleMetricCard } from './components/metriccards.js';
 import { runPreflight } from './components/preflight.js'; import { closeConfigDialog, deleteCurrentRun, openNewRunDialog, saveConfig, submitConfigDialog, switchRun } from './config/file.js';
-import { addLayerRow, clearYamlError, focusYamlLine, markDirty, readLayerControlsIntoConfig, scheduleFormSync, setMode, showYamlError, syncAttentionControls, syncFormFromConfig, syncQuantizeControls, syncSaveStateControls, syncYamlScroll, updateCacheEffective, updateLrEffective, updateOutputPreview, applyPresetToForm, updateRegCacheEffective, updateRegCachePlaceholder, updateYamlLineCount } from './config/form.js'; import { selectDashboardConfig, startDashboardTraining } from './config/list.js';
+import { addLayerRow, clearYamlError, focusYamlLine, markDirty, readLayerControlsIntoConfig, scheduleFormSync, setMode, showYamlError, syncAttentionControls, syncFormFromConfig, syncQuantizeControls, syncSaveStateControls, syncYamlScroll, updateCacheEffective, updateLrEffective, updateOutputPreview, applyPresetToForm, updateRegCacheEffective, updateRegCachePlaceholder, updateYamlLineCount } from './config/form.js'; import { selectDashboardConfig, startDashboardTraining, updateDashboardResumeState } from './config/list.js';
 import { FIELD_DEFS, LAYER_COUNT } from './config/model.js'; import { closeProfileDialog, openProfileDialog, submitProfileDialog, switchProfile } from './config/profiles.js';
 import { setFieldError, validateField } from './config/validate.js'; import { dumpYaml, parseYaml } from './config/yaml.js';
 import { copyText } from './core/clipboard.js'; import { $, $$, setHidden, setText } from './core/dom.js';
@@ -128,8 +128,8 @@ export function bindEvents() {
     setTimeout(() => focusField('cfg-model-dit'), 120);
   });
   $('#btn-setup-refresh')?.addEventListener('click', () => runSetupCheck());
-  $('#btn-start')?.addEventListener('click', () => startDashboardTraining().catch((error) => showError(t('common.msg63'), describeError(error))));
-  $('#btn-resume')?.addEventListener('click', () => startDashboardTraining({ resume: true }).catch((error) => showError(t('common.msg63'), describeError(error))));
+  $('#btn-train')?.addEventListener('click', () => startDashboardTraining().catch((error) => showError(t('common.msg63'), describeError(error))));
+  $('#chk-retrain')?.addEventListener('change', () => updateDashboardResumeState());
   $('#btn-stop')?.addEventListener('click', () => stopJob());
   $('#btn-preflight')?.addEventListener('click', async () => {
     const button = $('#btn-preflight');

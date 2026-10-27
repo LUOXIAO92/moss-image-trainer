@@ -121,6 +121,7 @@ The 9 steps below form a one-way pipeline. Never start Step 7 (training) before 
     layers: []
     include_text_embedder: false
     init: kaiming
+    init_from: ""             # optional adapter.safetensors to warm-start from; rank must match
   train:
     steps: 1000
     batch_size: 1

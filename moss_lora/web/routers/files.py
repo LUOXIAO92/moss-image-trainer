@@ -47,6 +47,30 @@ def _fs_entries(directory: str) -> list[dict]:
         entries.append({"name": name, "path": full, "is_dir": is_dir, "size_mb": round(size / 2**20, 1)})
     return entries
 
+@router.get("/api/lora/inspect")
+def api_lora_inspect(path: str = ""):
+    """Rank and alpha summary of a LoRA file, for the warm-start confirmation."""
+    full = os.path.abspath(os.path.expanduser(path or ""))
+    if not path or not os.path.isfile(full):
+        raise fail(404, "err.lora.file_missing", path=path)
+    try:
+        from safetensors.torch import load_file
+
+        from ...lora_file import lora_alphas, lora_modules
+
+        checkpoint = load_file(full)
+        modules = lora_modules(checkpoint)
+    except Exception as exc:  # unreadable, not safetensors, corrupt header
+        raise fail(400, "err.lora.unreadable", path=path, error=str(exc)) from None
+    if not modules:
+        raise fail(400, "err.lora.no_modules", path=path)
+    alphas = lora_alphas(checkpoint)
+    ranks = sorted({int(down.shape[0]) for down, _up in modules.values()})
+    alpha_values = sorted({round(float(alphas.get(name, down.shape[0])), 6)
+                           for name, (down, _up) in modules.items()})
+    return {"path": full, "modules": len(modules), "ranks": ranks, "alphas": alpha_values}
+
+
 @router.get("/api/files")
 def api_files(path: str):
     """Serve images and LoRAs from anywhere on disk (local tool, read-only)."""

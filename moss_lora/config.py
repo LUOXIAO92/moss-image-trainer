@@ -98,6 +98,10 @@ class LoraConfig:
     layers: list = field(default_factory=list)
     include_text_embedder: bool = False
     init: str = "kaiming"       # kaiming | zero
+    # Optional LoRA file to warm-start the adapter from. The rank has to match
+    # ``rank`` above; the file's alpha is rescaled onto the configured alpha so
+    # the loaded model computes what the file computes. Empty = fresh adapter.
+    init_from: str = ""
     bias: str = "none"
 
 
@@ -401,6 +405,10 @@ class Config:
             problems.append(problem("err.config.preview_blocks_to_swap", value=preview_blocks))
         if str(self.lora.init).lower() not in ("kaiming", "zero"):
             problems.append(problem("err.config.lora_init", value=self.lora.init))
+        init_from = expand(str(getattr(self.lora, "init_from", "") or ""))
+        if init_from and not os.path.isfile(init_from):
+            problems.append(problem("err.config.field_missing",
+                                    field="lora.init_from", path=init_from))
         preview = self.preview
         for name in ("steps", "width", "height", "seed"):
             if not isinstance(getattr(preview, name), int):

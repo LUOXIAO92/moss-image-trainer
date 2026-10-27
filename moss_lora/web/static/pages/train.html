@@ -170,6 +170,14 @@
               <span class="field-label" data-i18n="train.params.alpha">缩放 alpha</span>
               <input id="cfg-alpha" type="number" min="1" step="1" inputmode="numeric">
             </label>
+            <div class="field span2">
+              <label class="field-label" for="cfg-lora-init"><span data-i18n="train.params.initLora">加载已有 LoRA</span> <em data-i18n="common.optional">可选</em></label>
+              <span class="input-row">
+                <input id="cfg-lora-init" type="text" spellcheck="false" autocomplete="off" placeholder="/path/to/adapter.safetensors" data-i18n-placeholder="train.params.initLoraPlaceholder" aria-describedby="cfg-lora-init-help">
+                <button class="btn btn-ghost btn-sm" type="button" data-path-browse="cfg-lora-init" data-path-mode="file" data-i18n="common.browse">浏览</button>
+              </span>
+              <span class="field-help" id="cfg-lora-init-help" data-i18n="train.params.initLoraHelp">先从这个文件初始化适配器，再继续训练。rank 必须和上面的 rank 一致；alpha 不一致时会按比例缩放 lora_B，让加载后的输出与文件一致。</span>
+            </div>
             <label class="field" for="cfg-seed-dit">
               <span class="field-label" data-i18n="train.params.seed">训练种子</span>
               <input id="cfg-seed-dit" type="number" min="0" step="1" inputmode="numeric">
@@ -453,11 +461,14 @@
               <input id="cfg-preview-resident" type="number" min="-1" max="42" step="1" inputmode="numeric" placeholder="-1" aria-describedby="cfg-preview-resident-help">
               <span class="field-help" id="cfg-preview-resident-help" data-i18n="train.preview.residentHelp">-1 = 跟随训练</span>
             </label>
-            <label class="field span2" for="cfg-preview-lora">
-              <span class="field-label" data-i18n="train.preview.lora">加速 LoRA</span>
-              <input id="cfg-preview-lora" type="text" spellcheck="false" autocomplete="off" placeholder="/path/to/turbo.safetensors" aria-describedby="cfg-preview-lora-help">
+            <div class="field span2">
+              <label class="field-label" for="cfg-preview-lora"><span data-i18n="train.preview.lora">加速 LoRA</span></label>
+              <span class="input-row">
+                <input id="cfg-preview-lora" type="text" spellcheck="false" autocomplete="off" placeholder="/path/to/turbo.safetensors" aria-describedby="cfg-preview-lora-help">
+                <button class="btn btn-ghost btn-sm" type="button" data-path-browse="cfg-preview-lora" data-path-mode="file" data-i18n="common.browse">浏览</button>
+              </span>
               <span class="field-help" id="cfg-preview-lora-help" data-i18n="train.preview.loraHelp">只在生成样图时叠加，不影响训练。蒸馏 LoRA 一般 4–8 步、引导强度 1，预览的显存和时间都能降一个数量级。</span>
-            </label>
+            </div>
             <label class="field" for="cfg-preview-lora-scale">
               <span class="field-label" data-i18n="train.preview.loraScale">加速 LoRA 强度</span>
               <input id="cfg-preview-lora-scale" type="number" min="0" step="0.05" inputmode="decimal" placeholder="1.0" aria-describedby="cfg-preview-lora-scale-help">

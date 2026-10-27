@@ -27,7 +27,9 @@ def main() -> int:
     assert 'id="dash-run"' not in html
     assert 'for="dash-run"' not in html
     assert html.count('id="dash-config-select"') == 1
-    assert 'id="btn-resume"' in html
+    assert 'id="btn-train"' in html
+    assert 'id="chk-retrain"' in html
+    assert 'id="btn-resume"' not in html, "resume is one primary action now, not a second button"
     assert 'id="dash-resume-status"' in html
 
     # Exact selector only; #dash-run-status and #dash-run-name are still valid
@@ -40,6 +42,13 @@ def main() -> int:
     assert "resume: options.resume" in jobsse_js
     assert "baseline: options.baseline" in jobsse_js
     assert "state.dashboard.run" in dashboard_js
+
+    # The single button is driven by the checkbox and the backend verdict.
+    list_js = read("js/config/list.js")
+    assert "chk-retrain" in list_js
+    assert "updateDashboardResumeState" in events_js
+    assert "resume: info.file || 'latest'" in list_js
+    assert "startJob('train')" in list_js
 
     print("dashboard picker/resume wiring ok")
     return 0

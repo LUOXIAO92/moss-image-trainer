@@ -242,10 +242,8 @@ export function updateJobUi() {
   const blocked = !state.profileName;
   const missingDashboardConfig = currentTab() === 'dashboard' && !hasDashboardConfigSelection();
   const startDisabled = running || state.busy || blocked || missingDashboardConfig;
-  for (const selector of ['#btn-start']) {
-    const button = $(selector);
-    if (button) button.disabled = startDisabled;
-  }
+  const trainButton = $('#btn-train');
+  if (trainButton) trainButton.disabled = startDisabled;
   for (const button of $$('[data-caption-job]')) button.disabled = startDisabled;
   updateCaptionStartState();
   updateCacheStartState();
@@ -254,10 +252,11 @@ export function updateJobUi() {
   const activeProgress = active && (active.step != null || active.total != null)
     ? t('job.progressParen', { step: active.step ?? '?', total: active.total ?? '?' })
     : '';
-  const activeText = active
-    ? t('job.trainingActive', { run: active.run, progress: activeProgress })
-    : (!running && missingDashboardConfig ? t('train.selectConfig') : t('dash.train.start'));
-  setText('#btn-start-text', activeText);
+  // While a run is active the label carries its progress; otherwise
+  // updateDashboardResumeState() owns it (Resume vs Retrain).
+  if (active) {
+    setText('#btn-train-text', t('job.trainingActive', { run: active.run, progress: activeProgress }));
+  }
   if (active && sameRun && state.job?.status === 'running' && state.job.kind === 'train'
       && active.step != null && $('#dash-run-status')) {
     // Same key the dashboard render uses, refreshed on the 1.2 s job poll so

@@ -24,7 +24,7 @@ from torch.nn import functional as F
 
 from . import runtime
 from .cache import empty_text_path, preview_cache_state
-from .config import Config
+from .config import Config, expand
 from .sigma import SigmaSampler
 from .weights import LatentCodec, load_transformer, load_vae
 
@@ -212,6 +212,9 @@ class Trainer:
         for parameter in self.model.parameters():
             if parameter.requires_grad:
                 parameter.data = parameter.data.to(self.device)
+        init_from = str(getattr(self.config.lora, "init_from", "") or "").strip()
+        if init_from:
+            self._load_init_lora(init_from)
         self.log(f"transformer ready: {self._memory_stats()['device']:.1f} GiB on the card")
         self._set_checkpointing(bool(self.config.vram.gradient_checkpointing))
         if self.offload_activations:
@@ -556,6 +559,72 @@ class Trainer:
             self.log("block swap: this allocator keeps the freed blocks reserved, so the "
                      "card footprint will stay near a resident run's; set "
                      "runtime.allocator: expandable in settings.yaml to get the memory back")
+
+    def _load_init_lora(self, path: str) -> None:
+        """Warm-start the fresh adapter from an existing LoRA file.
+
+        ``lora_modules`` normalises kohya, PEFT and ComfyUI/diffusers names onto
+        this model's module paths. The file's rank has to equal the configured
+        rank: the adapter parameters the optimizer will update were just created
+        with that shape. Its alpha is folded into ``lora_B`` so the loaded model
+        computes what the file computed before the configured alpha takes over.
+        Modules the file does not carry keep the fresh initialization, which is
+        how a ten-layer adapter can seed a full-stack run.
+        """
+        from .lora_file import lora_alphas, lora_modules
+
+        full = expand(path)
+        if not os.path.isfile(full):
+            raise SystemExit(f"lora.init_from not found: {full}")
+        checkpoint = load_file(full)
+        modules = lora_modules(checkpoint)
+        if not modules:
+            raise SystemExit(f"lora.init_from has no LoRA tensors: {full}")
+        alphas = lora_alphas(checkpoint)
+        params = dict(self.model.named_parameters())
+        rank = int(self.config.lora.rank)
+        alpha = float(self.config.lora.alpha)
+        loaded = 0
+        skipped = 0
+        mismatched: list[str] = []
+        rescaled: set[float] = set()
+        for name, (down, up) in sorted(modules.items()):
+            weight_a = params.get(f"base_model.model.{name}.lora_A.default.weight")
+            weight_b = params.get(f"base_model.model.{name}.lora_B.default.weight")
+            if weight_a is None or weight_b is None:
+                skipped += 1
+                continue
+            file_rank = int(down.shape[0])
+            if (file_rank != rank or tuple(weight_a.shape) != tuple(down.shape)
+                    or tuple(weight_b.shape) != tuple(up.shape)):
+                mismatched.append(f"{name} (file rank {file_rank}, config {rank})")
+                continue
+            file_alpha = float(alphas.get(name, file_rank))
+            scale = file_alpha / alpha if alpha else 1.0
+            with torch.no_grad():
+                weight_a.copy_(down.to(weight_a.device, weight_a.dtype))
+                if abs(scale - 1.0) < 1e-9:
+                    weight_b.copy_(up.to(weight_b.device, weight_b.dtype))
+                else:
+                    weight_b.copy_((up.float() * scale).to(weight_b.device, weight_b.dtype))
+            if abs(scale - 1.0) >= 1e-9:
+                rescaled.add(file_alpha)
+            loaded += 1
+        if mismatched:
+            detail = "; ".join(mismatched[:3])
+            if len(mismatched) > 3:
+                detail += f" (+{len(mismatched) - 3} more)"
+            raise SystemExit(
+                "lora.init_from rank mismatch; set lora.rank to the file's rank: " + detail)
+        if not loaded:
+            raise SystemExit(f"lora.init_from matched no adapter modules: {full}")
+        note = f"init lora: {loaded} modules from {os.path.basename(full)}"
+        if skipped:
+            note += f", {skipped} not in this model"
+        if rescaled:
+            values = ", ".join(f"{value:g}" for value in sorted(rescaled))
+            note += f", B rescaled from alpha {values} to {alpha:g}"
+        self.log(note)
 
     def _attach_lora(self):
         from peft import LoraConfig, get_peft_model
@@ -1246,6 +1315,8 @@ class Trainer:
             self.log(f"resumed optimizer state ({restored} tensors)")
         else:
             self.log("checkpoint has no optimizer state; resuming weights only")
+        if str(getattr(self.config.lora, "init_from", "") or "").strip():
+            self.log("resume: checkpoint weights override lora.init_from")
         self.log(f"resumed from {path} at step {step}")
         return step
 
