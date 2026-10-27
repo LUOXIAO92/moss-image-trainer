@@ -39,7 +39,7 @@ The CUDA context is fixed. The driver charges about 1.5 GB before PyTorch alloca
 | all + nf4 | 7.8 GB | 5.7 GB | 4.7 GB |
 | all + fp8 | 10.1 GB | 6.0 GB | 5.0 GB |
 
-Measured at 1024x1024, batch 1, no previews, bf16 weights, `compile: false`, allocator `expandable`. Figures are driver peaks. Resident runs drop by about 1 GB with the offload as well: `all` + nf4 goes from 7.8 to 6.8 GB.
+Measured at 1024x1024, batch 1, no previews, bf16 weights, `compile: false`, allocator `expandable`. Figures are the CUDA runtime's device usage (`cudaMemGetInfo`), which is the budget an allocation is charged against and what `metrics.jsonl` records. On Windows and WSL, `nvidia-smi` shows about 1 GB less for the same run: it does not count the CUDA context, so a run at 4.4 GB here reads about 3.3 GB there. The 1 GB offset is constant, so the differences between settings are the same in both views. Resident runs drop by about 1 GB with the offload as well: `all` + nf4 goes from 7.8 to 6.8 GB.
 
 Compared with bf16, the resident peak drops by about 4 GB with `ffn` + nf4 and about 6.5 GB with `all` + nf4. On the 32 GB reference card none of these settings made a step faster. The differences stayed within noise; quantization bought memory, not speed.
 
@@ -77,7 +77,7 @@ The saving is the boundary term, about 1 GB at 1024x1024: `all` + nf4 fully stre
 | + 8-bit optimizer | 5.3 GB |
 | + activation offload and 8-bit optimizer | 4.4 GB |
 
-That 4.4 GB is close to the floor for this configuration. About 1 GB is the three streamed blocks, the LoRA weights, and their optimizer state; about 0.9 GB is the block-local activation that recomputation cannot remove; the remaining 2.5 GB is the CUDA context, the cuBLAS and FlashAttention workspaces, and the allocator's slack, none of which a training setting changes. Lowering `dataset.max_area` shrinks the middle term — at 768x768 the block-local activation is roughly halved — but the cache has to be rebuilt for the new size first.
+That 4.4 GB is close to the floor for this configuration: about 3.3 GB in `nvidia-smi`, and the difference between the two counters is the same fixed 1 GB everywhere in this guide. About 1 GB is the three streamed blocks, the LoRA weights, and their optimizer state; about 0.9 GB is the block-local activation that recomputation cannot remove; the remaining 2.5 GB is the CUDA context, the cuBLAS and FlashAttention workspaces, and the allocator's slack, none of which a training setting changes. Lowering `dataset.max_area` shrinks the middle term — at 768x768 the block-local activation is roughly halved — but the cache has to be rebuilt for the new size first.
 
 The copies cost time. The offload adds about 2 GB of PCIe traffic per step (1 GB out, 1 GB back). A quantized streamed run hides most of it and pays about a tenth more per step; bf16 streaming already moves 11 GB of weights through PCIe per step, so the extra traffic shows up and cost closer to a third. It also pins about 1 GB of host memory while it runs.
 
@@ -98,7 +98,7 @@ Use `runtime.allocator: expandable`. It is the default. The trainer prints a war
 
 A preview is the peak of the run, not the training step. Sampling adds its own activations, and the VAE decoder runs at the end of the pass; a run that trains at about 6 GB can peak at about 9 GB when it draws a picture.
 
-| Preview size | `preview.vae_dtype` | Driver peak | Time per image |
+| Preview size | `preview.vae_dtype` | Peak (CUDA) | Time per image |
 | --- | --- | --- | --- |
 | 1024x1024 | fp32 | 9.3 GB | 1.0 |
 | 1024x1024 | fp16 | 7.8 GB | 0.65 |
