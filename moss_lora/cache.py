@@ -168,6 +168,19 @@ def _text_len(path: str) -> int:
 PREVIEW_NAME = "preview.safetensors"
 PREVIEW_VERSION = "1"
 
+# The unconditional branch for caption dropout. It is encoded once per cache,
+# not stored on every item: every sample drops to the same empty prompt.
+EMPTY_TEXT_NAME = "empty_text.safetensors"
+EMPTY_TEXT_VERSION = "1"
+
+
+def empty_text_path(cache_dir: str) -> str:
+    return os.path.join(cache_dir, EMPTY_TEXT_NAME)
+
+
+def empty_text_metadata() -> dict[str, str]:
+    return {"version": EMPTY_TEXT_VERSION, "prompt": ""}
+
 
 def preview_path(cache_dir: str) -> str:
     return os.path.join(cache_dir, PREVIEW_NAME)

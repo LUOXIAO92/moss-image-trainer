@@ -35,6 +35,7 @@ def problem(code: str, **params) -> Problem:
 
 CODES: dict[str, str] = {
     "err.cache.dir_empty": "没有设置缓存目录，没法检查缓存",
+    "err.cache.empty_text": "{dir} 里没有空提示词编码；caption_dropout 大于 0 时需要它。重跑一次 encode-text 补齐",
     "err.cache.legacy": "{dir} 里的缓存是旧格式，训练集和正则集混在一起，去“缓存”页重新生成一次",
     "err.cache.missing_text": "{dir} 里的缓存缺了 {missing} 条文本编码（一共 {items} 条），去“缓存”页勾上“文本编码”补一遍",
     "err.cache.not_built": "{dir} 还没有生成缓存，先去“缓存”页生成一遍",
@@ -59,6 +60,7 @@ CODES: dict[str, str] = {
     "err.config.batch_size": "batch_size 和 grad_accum 都要大于 0",
     "err.config.bin_tokens": "bin_tokens 不能小于 0（0 表示自动）",
     "err.config.cache_batch": "缓存批次的 {field} 要填 0（自动）或正整数",
+    "err.config.caption_dropout": "train.caption_dropout 必须在 0 到 1 之间，现在填的是 {value}",
     "err.config.caption_source": "提示词来源只有 tag_caption、official_long、official_medium、official_short 四种，现在填的是 {value}",
     "err.config.dataset_path_empty": "配置里的 dataset.path 是空的",
     "err.config.field_empty": "配置里的 {field} 没填",

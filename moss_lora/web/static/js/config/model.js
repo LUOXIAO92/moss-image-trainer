@@ -53,7 +53,7 @@ export const FIELD_DEFS = [
   { id: 'cfg-sigma-uniform-mix', path: 'train.sigma.uniform_mix', type: 'float', label: 'train.defaults.sigmaUniformMix', default: 0.01 },
   { id: 'cfg-weight-decay', path: 'train.weight_decay', type: 'float', label: 'train.defaults.weightDecay', min: 0, default: 0.01 },
   { id: 'cfg-max-grad-norm', path: 'train.max_grad_norm', type: 'float', label: 'train.defaults.maxGradNorm', min: 0, default: 1.0 },
-  { id: 'cfg-caption-dropout', path: 'train.caption_dropout', type: 'float', label: 'train.defaults.captionDropout', min: 0, default: 0.05 },
+  { id: 'cfg-caption-dropout', path: 'train.caption_dropout', type: 'float', label: 'train.defaults.captionDropout', min: 0, max: 1, default: 0.0 },
   { id: 'cfg-ema', path: 'train.ema', type: 'float', label: 'train.defaults.ema', min: 0, default: 0 },
   { id: 'cfg-eval-batches', path: 'train.eval_batches', type: 'number', label: 'train.defaults.evalBatches', min: 0, integer: true, default: 8 },
   { id: 'cfg-eval-holdout', path: 'train.eval_holdout', type: 'float', label: 'train.defaults.evalHoldout', min: 0, default: 0.05 },

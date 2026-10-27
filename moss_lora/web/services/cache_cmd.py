@@ -118,9 +118,10 @@ def _cache_summary(config: Config) -> dict:
     preview_path = os.path.join(cache_dir, "preview.safetensors")
     index_ready = os.path.isfile(index_path)
     preview_ready = os.path.isfile(preview_path)
-    from ...cache import preview_cache_state, reg_cache_dir
+    from ...cache import empty_text_path, preview_cache_state, reg_cache_dir
 
     reg_dir = reg_cache_dir(config)
+    empty_ready = os.path.isfile(empty_text_path(cache_dir))
     info = {
         "items": 0,
         "ready": index_ready,
@@ -129,6 +130,7 @@ def _cache_summary(config: Config) -> dict:
         "reg_dir": reg_dir,
         "reg_dir_rel": _rel(reg_dir),
         "index_ready": index_ready,
+        "empty_text_ready": empty_ready,
         # preview.safetensors 只用于预览图，缺了不影响训练，前端不要当成阻塞项；
         # 但向量过期时预览会画成别的提示词，所以状态单独报给预检。
         "preview_ready": preview_ready,
@@ -185,5 +187,13 @@ def _cache_summary(config: Config) -> dict:
     info["sizing"] = cached or None
     info["stale_sizing"] = cached != expected
     if info["stale_sizing"]:
+        info["ready"] = False
+    try:
+        dropout = float(getattr(config.train, "caption_dropout", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        dropout = 0.0
+    info["caption_dropout"] = dropout
+    info["missing_empty_text"] = dropout > 0 and not empty_ready
+    if info["missing_empty_text"]:
         info["ready"] = False
     return info

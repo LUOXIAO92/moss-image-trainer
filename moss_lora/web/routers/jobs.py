@@ -201,6 +201,8 @@ async def api_start(request: Request):
         if summary.get("missing_text"):
             raise fail(400, "err.cache.missing_text", dir=cache_dir,
                        missing=summary["missing_text"], items=summary["items"])
+        if summary.get("missing_empty_text"):
+            raise fail(400, "err.cache.empty_text", dir=cache_dir)
         # A fresh run starts a new log; resume keeps the earlier session.
         log_name = run_id
         run_label = run_id

@@ -199,6 +199,8 @@ Both styles share `<stem>_moss-image-trainer.json` (`schema: 2`) and leave the o
 
 Batch size is a cache setting rather than an implicit guess: `cache.text_batch` and `cache.vae_batch` pin it (`0` sizes it from free VRAM), and the batch that built a cache is recorded in `train_cache/index.json` under `batch`. VAE latents do not depend on the batch, because `LatentCodec` runs convolutions in true fp32; text embeddings do, so pin the text batch when a cache must be reproducible.
 
+`train.caption_dropout` is a real per-sample caption dropout rate in `[0, 1]`; it defaults to `0`. `encode-text` writes the unconditional prompt to `empty_text.safetensors` beside the cache. When the rate is greater than zero, training replaces that fraction of caption embeddings with this cached empty prompt; when it is zero, captions are never replaced. Enabling dropout on an older cache requires one `encode-text` pass to add the empty prompt.
+
 ## Interface Language
 
 The WebUI includes built-in Simplified Chinese (`zh`), English (`en`), Japanese (`ja`), and Korean (`ko`) dictionaries (`moss_lora/web/static/i18n/<code>.json`) and switches languages from the top bar without reloading the page.

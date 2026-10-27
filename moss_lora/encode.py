@@ -17,8 +17,24 @@ import time
 import torch
 from safetensors.torch import load_file, save_file
 
-from .cache import preview_metadata, preview_path
+from .cache import (empty_text_metadata, empty_text_path, preview_metadata,
+                    preview_path)
 from .config import Config, expand
+
+
+def write_empty_text(cache_dir: str, encode) -> None:
+    """Cache the unconditional prompt used by caption dropout.
+
+    Training has no text encoder, so the empty prompt has to be encoded with
+    the same text tower as the captions. One file per cache is enough: every
+    dropped sample shares it.
+    """
+    embeds, mask = encode([""])
+    save_file(
+        {"embeds": embeds, "mask": mask},
+        empty_text_path(cache_dir),
+        metadata=empty_text_metadata(),
+    )
 
 
 def _text_encoder(config: Config, text_model: str):
@@ -108,7 +124,11 @@ def run_encode_text(
     # 文本都齐了但 preview 还缺时也要继续跑：preview 只在提示词变更/缺失时需要重做
     preview_file = os.path.join(cache_dir, "preview.safetensors")
     want_preview = bool(config.preview.prompts) and (overwrite or not os.path.exists(preview_file))
-    if not pending and not preview_only and not want_preview:
+    # Keep the unconditional branch in every cache. It costs one prompt while
+    # the encoder is already resident and makes caption_dropout usable later
+    # without rebuilding the caption embeddings.
+    want_empty = overwrite or not os.path.exists(empty_text_path(cache_dir))
+    if not pending and not preview_only and not want_preview and not want_empty:
         return 0
 
     encoder = _text_encoder(config, text_model)
@@ -135,6 +155,9 @@ def run_encode_text(
     encode = lambda texts: encoder.encode(texts, batch_size=batch_size)  # noqa: E731
     if preview_only:
         pending = []
+    if want_empty:
+        write_empty_text(cache_dir, encode)
+        log("empty prompt: cached for caption dropout")
 
     pending.sort(key=lambda item: len(caption(item)))
     start = time.time()

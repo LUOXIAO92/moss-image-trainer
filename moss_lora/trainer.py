@@ -23,7 +23,7 @@ from safetensors.torch import load_file, save_file
 from torch.nn import functional as F
 
 from . import runtime
-from .cache import preview_cache_state
+from .cache import empty_text_path, preview_cache_state
 from .config import Config
 from .sigma import SigmaSampler
 from .weights import LatentCodec, load_transformer, load_vae
@@ -62,6 +62,24 @@ class Trainer:
         with open(os.path.join(self.cache_dir, "index.json"), encoding="utf-8") as f:
             self.index = json.load(f)
         self.items = list(self.index["items"])
+        try:
+            self.caption_dropout = float(getattr(config.train, "caption_dropout", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            raise SystemExit(
+                f"train.caption_dropout must be a number between 0 and 1, got "
+                f"{getattr(config.train, 'caption_dropout', None)!r}"
+            ) from None
+        if not 0.0 <= self.caption_dropout <= 1.0:
+            raise SystemExit(
+                f"train.caption_dropout must be between 0 and 1, got {self.caption_dropout}"
+            )
+        # The empty prompt is encoded once by ``encode-text``; training never
+        # loads the text tower. Missing it is a cache problem, not a silent
+        # "training without dropout" fallback.
+        self._empty_context = None
+        if self.caption_dropout > 0:
+            self._empty_context = self._load_empty_context()
+            self.log(f"caption dropout: {self.caption_dropout:.3f} (unconditional branch cached)")
         self.eval_items: list = []
         self._check_sizing()
         self._split_eval()
@@ -567,7 +585,39 @@ class Trainer:
             total += tokens
         return picks or [pool[order[0]]]
 
-    def _load_packed(self, entries):
+    def _load_empty_context(self):
+        """The cached unconditional prompt, moved to the training device.
+
+        ``encode-text`` writes ``empty_text.safetensors`` with the same text
+        tower that produced the captions. Requiring that file keeps caption
+        dropout honest: a missing file is an actionable cache error, not a
+        silent fallback to conditional-only training.
+        """
+        path = empty_text_path(self.cache_dir)
+        if not os.path.isfile(path):
+            raise SystemExit(
+                f"caption_dropout is {self.caption_dropout:g} but the cache has no empty prompt: {path}\n"
+                "重跑一次编码，让缓存写入空提示词：\n"
+                "  python -m moss_lora.cli encode-text --config <yaml>"
+            )
+        data = load_file(path, device="cpu")
+        embeds = data.get("embeds")
+        mask = data.get("mask")
+        if embeds is None or mask is None:
+            raise SystemExit(
+                f"empty prompt cache is missing embeds/mask: {path}\n"
+                "重跑 encode-text 重新生成它。"
+            )
+        if embeds.ndim == 3:
+            embeds = embeds[0]
+        if mask.ndim == 2:
+            mask = mask[0]
+        keep = int(mask.sum())
+        if keep <= 0:
+            raise SystemExit(f"empty prompt cache has no valid tokens: {path}")
+        return embeds[:keep].unsqueeze(0).to(self.device, self.dtype)
+
+    def _load_packed(self, entries, drop_rng=None):
         """每样本保留自己的尺寸和真实文本长度（不 padding、不裁剪）。"""
         latents, contexts = [], []
         for entry in entries:
@@ -588,6 +638,14 @@ class Trainer:
             contexts.append(
                 data["text_embeds"][:keep].unsqueeze(0).to(self.device, self.dtype)
             )
+        empty = getattr(self, "_empty_context", None)
+        dropout = float(getattr(self, "caption_dropout", 0.0) or 0.0)
+        if empty is not None and contexts and dropout > 0:
+            draws = torch.rand(len(contexts), generator=drop_rng)
+            contexts = [
+                empty if float(draw) < dropout else context
+                for draw, context in zip(draws, contexts)
+            ]
         return latents, contexts
 
     def _load_batch(self, entries):
@@ -663,7 +721,7 @@ class Trainer:
         txt_tokens = 0
         for _ in range(cfg.grad_accum):
             entries = self._sample_by_tokens(rng, self._bin_budget())
-            latents, contexts = self._load_packed(entries)
+            latents, contexts = self._load_packed(entries, drop_rng=rng)
             # Single-stream self-attention: the captions ride in the same sequence
             # as the image tokens, so the length that drives activation memory and
             # attention cost is image tokens *plus* text tokens. Text is small

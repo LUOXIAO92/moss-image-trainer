@@ -141,7 +141,7 @@ class TrainConfig:
     warmup: float = 50
     lr_scheduler: str = "constant"  # constant | cosine
     sigma: SigmaConfig = field(default_factory=SigmaConfig)
-    caption_dropout: float = 0.05
+    caption_dropout: float = 0.0
     seed: int = 42
     save_every: int = 250
     sample_every: int = 250
@@ -350,6 +350,13 @@ class Config:
                 problems.append(problem("err.config.lora_layer_range", index=index))
         if self.train.batch_size <= 0 or self.train.grad_accum <= 0:
             problems.append(problem("err.config.batch_size"))
+        try:
+            caption_dropout = float(self.train.caption_dropout or 0.0)
+        except (TypeError, ValueError):
+            caption_dropout = -1.0
+        if not 0.0 <= caption_dropout <= 1.0:
+            problems.append(problem("err.config.caption_dropout",
+                                    value=self.train.caption_dropout))
         for key in ("text_batch", "vae_batch"):
             value = getattr(self.cache, key, 0) or 0
             if int(value) < 0:
