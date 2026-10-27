@@ -45,17 +45,25 @@ CONDITIONING_MARKERS = (
 )
 
 
-class FP8Linear(nn.Module):
+class FP8Linear(nn.Linear):
     """Frozen linear stored as fp8 e4m3 with one scale per output row.
 
     The weight is dequantized to the activation dtype per forward pass. That
     keeps the stored footprint at one byte per parameter and costs one cast of
     the block's largest matrix, which is why this is usable for training and not
     only for inference.
+
+    It subclasses ``nn.Linear`` on purpose: PEFT decides whether an adapter can
+    attach with ``isinstance(target, torch.nn.Linear)``, and a plain ``nn.Module``
+    here made ``quantize_dtype: fp8`` unusable -- every scope that fp8 replaces
+    is also a LoRA target. ``nn.Linear.__init__`` runs on the meta device so the
+    subclass wiring costs no allocation; the real weight replaces it below.
     """
 
     def __init__(self, linear: nn.Linear, compute_dtype: torch.dtype = torch.bfloat16):
-        super().__init__()
+        super().__init__(linear.in_features, linear.out_features,
+                         bias=linear.bias is not None, device="meta",
+                         dtype=compute_dtype)
         self.compute_dtype = compute_dtype
         weight = linear.weight.detach().float()
         scale = weight.abs().amax(dim=1, keepdim=True).clamp_min(1e-8) / FP8_MAX
@@ -144,7 +152,9 @@ def _frozen_linears(
     """
     targets = []
     for name, module in model.named_modules():
-        if not isinstance(module, nn.Linear) or any(token in name for token in skip):
+        if not isinstance(module, nn.Linear) or isinstance(module, FP8Linear):
+            continue
+        if any(token in name for token in skip):
             continue
         module.weight.requires_grad = False  # base weights are frozen either way
         if only is not None and not any(marker in name for marker in only):

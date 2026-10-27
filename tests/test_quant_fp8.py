@@ -85,11 +85,49 @@ def check_unknown_scope_is_a_noop():
     print("unknown scope ok")
 
 
+def check_peft_attaches():
+    """An fp8-replaced projection must still accept a LoRA adapter.
+
+    PEFT decides with ``isinstance(target, torch.nn.Linear)``, and every scope
+    fp8 replaces is also a LoRA target. When FP8Linear was a plain nn.Module the
+    adapter injection raised, so ``quantize_dtype: fp8`` could not train at all.
+    """
+    from peft import LoraConfig, get_peft_model
+
+    class Block(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.proj = nn.Module()
+            self.proj.q = nn.Linear(16, 16)
+            self.proj.ffn_down = nn.Linear(32, 16)
+
+    class Toy(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.layers = nn.ModuleList([Block(), Block()])
+
+    model = Toy()
+    assert quant.quantize_fp8(model, "all") == 4
+    config = LoraConfig(r=8, lora_alpha=8,
+                        target_modules=r"layers\.\d+\.proj\.(q|ffn_down)$")
+    model = get_peft_model(model, config)
+    x = torch.randn(2, 16, requires_grad=True)
+    model.layers[0].proj.q(x).sum().backward()
+    assert x.grad is not None, "the frozen fp8 weight stopped the input gradient"
+    trainable = [name for name, parameter in model.named_parameters() if parameter.requires_grad]
+    # 2 blocks x 2 targeted projections x (lora_A, lora_B)
+    assert len(trainable) == 8, trainable
+    base = model.base_model.model.layers[0].proj.q.base_layer
+    assert isinstance(base, quant.FP8Linear), type(base)
+    print("peft adapter attaches to fp8 Linears")
+
+
 def main() -> int:
     check_buffer_and_precision()
     check_backward_to_input()
     check_scope_rules()
     check_unknown_scope_is_a_noop()
+    check_peft_attaches()
     print("fp8 quantization checks passed")
     return 0
 
