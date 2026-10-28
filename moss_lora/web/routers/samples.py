@@ -11,9 +11,9 @@ router = APIRouter()
 
 
 @router.get("/api/thumb")
-def api_thumb(path: str, w: int = 384, workspace: str = ""):
+def api_thumb(path: str, w: int = 384, workspace: str = "", v: str = ""):
     """Small cached WebP thumbnail; the original is only loaded in the modal."""
-    return thumb_response(path, w, workspace)
+    return thumb_response(path, w, workspace, v)
 
 
 @router.get("/api/samples")

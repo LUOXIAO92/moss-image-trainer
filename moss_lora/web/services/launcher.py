@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -15,7 +16,7 @@ import traceback
 import yaml
 
 from ... import runtime
-from ..deps import ROOT, STEP_RE
+from ..deps import ROOT, STEP_RE, _rel
 from ..jobs import Job
 from .cache_cmd import CACHE_PARTS
 from ..errors import fail
@@ -182,6 +183,36 @@ def _persist_job(job: Job, force: bool = False) -> None:
         pass
 
 
+def _preview_event(job: Job, line: str) -> dict:
+    """Turn the trainer's ``preview -> [...]`` line into a samples event.
+
+    The trainer logs this line only after every image in the batch is written,
+    so the paths are complete files. Sending them with the event lets the page
+    add the new cells without refetching the dashboard, and without ever
+    listing a directory at a moment when a sample is still being encoded.
+    """
+    event = {"type": "samples", "line": line}
+    match = re.search(r"preview -> (\[[^\]]*\])", line)
+    if not match:
+        return event
+    try:
+        raw = ast.literal_eval(match.group(1))
+    except (SyntaxError, ValueError):
+        return event
+    if not isinstance(raw, list):
+        return event
+    paths = [_rel(str(item)) for item in raw if re.search(r"step\d+_\d+\.png$", str(item))]
+    if not paths:
+        return event
+    event["paths"] = paths
+    step = re.search(r"step(\d+)_", os.path.basename(paths[0]))
+    if step:
+        event["step"] = int(step.group(1))
+    if job.workspace and job.run_name:
+        event["run"] = f"{job.workspace}/{job.run_name}"
+    return event
+
+
 def _stream_command(job: Job, command: list[str], log_handle, parse_steps: bool) -> int:
     """Run one child process, stream it into the job log, and return its code."""
     job.push({"type": "start", "command": " ".join(command)})
@@ -220,7 +251,7 @@ def _stream_command(job: Job, command: list[str], log_handle, parse_steps: bool)
                     job.push(event)
                     continue
                 if "preview ->" in line:
-                    job.push({"type": "samples", "line": line})
+                    job.push(_preview_event(job, line))
             job.push({"type": "log", "line": line})
         code = job.process.wait()
         job.signal = signal_name(code)

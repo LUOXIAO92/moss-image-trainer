@@ -25,6 +25,7 @@ import glob
 import json
 import os
 import time
+import uuid
 
 # A heartbeat older than this means the process is alive but not reporting:
 # either it is inside a long phase (sampling, export) or it is wedged.
@@ -56,6 +57,29 @@ def write_json_atomic(path: str, data: dict) -> None:
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(temp, path)
+
+
+def save_image_atomic(path: str, image) -> None:
+    """Write a PIL image through a temporary sibling, then rename.
+
+    The dashboard lists ``samples/`` and asks for a thumbnail as soon as a name
+    appears. ``Image.save`` writes in place, so a reader could catch a file
+    halfway through and PIL answered "image file is truncated"; the rename
+    publishes the name only once the bytes are complete.
+    """
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    temp = f"{path}.{os.getpid()}.{uuid.uuid4().hex[:6]}.tmp"
+    try:
+        image.save(temp, format="PNG")
+        os.replace(temp, path)
+    finally:
+        if os.path.exists(temp):
+            try:
+                os.remove(temp)
+            except OSError:
+                pass
 
 
 def read_json(path: str) -> dict | None:

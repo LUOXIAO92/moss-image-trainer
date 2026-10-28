@@ -13,14 +13,16 @@ from __future__ import annotations
 
 from fastapi import HTTPException
 
-from ..problems import CODES, Problem, problem, render  # noqa: F401  (re-exported)
+from ..problems import (CODES, Problem, json_safe, problem,  # noqa: F401  (re-exported)
+                        render)
 
-__all__ = ["CODES", "Problem", "error_detail", "fail", "problem", "render"]
+__all__ = ["CODES", "Problem", "error_detail", "fail", "json_safe", "problem", "render"]
 
 
 def error_detail(code: str, **params) -> dict:
     """The JSON body every error carries: code, parameters, fallback message."""
-    return {"code": code, "params": params, "message": render(code, params)}
+    safe = json_safe(params)
+    return {"code": code, "params": safe, "message": render(code, safe)}
 
 
 def fail(status: int, code: str, headers: dict | None = None, **params) -> HTTPException:

@@ -16,12 +16,12 @@ import { showAlert, showError, showSuccess } from '../core/notify.js';
 import { isCaptionJob, state } from '../core/state.js';
 import { currentTab, focusLogPanel } from '../main.js';
 import { loadCache, readCacheSelection, stopCacheBuild, updateCacheStartState } from '../pages/cache.js';
-import { loadActiveTraining, loadDashboard } from '../pages/dashboard.js';
+import { loadActiveTraining, loadDashboard, applySampleEvent } from '../pages/dashboard.js';
 import { readCaptionSelection, refreshDatasetAfterCaption, updateCaptionStartState } from '../pages/dataset.js';
 import { loadLoras, updateExportStatus } from '../pages/export.js';
 import { loadSamples } from '../pages/samples.js';
 import { focusField, saveSettings } from '../pages/settings.js';
-import { startSamplePolling, stopSamplePolling } from '../pages/train.js';
+import { refreshTrainSamples, startSamplePolling, stopSamplePolling } from '../pages/train.js';
 import { loadWorkspaceRuns } from '../pages/workspace.js';
 
 function closeStream() {
@@ -155,10 +155,17 @@ function handleJobEvent(event) {
         updateJobUi();
       }
       break;
-    case 'samples':
+    case 'samples': {
       pushLog(event.line || t('job.msg12'), 'ok');
-      if (currentTab() === 'dashboard') loadDashboard(state.dashboard.run, { silent: true }).catch(() => {});
+      // The event carries the finished files: patch those cells only. A full
+      // dashboard reload is the fallback for a payload it cannot apply
+      // (baseline images, an unselected run, an older server).
+      if (!applySampleEvent(event) && currentTab() === 'dashboard') {
+        loadDashboard(state.dashboard.run, { silent: true }).catch(() => {});
+      }
+      if (currentTab() === 'train') refreshTrainSamples().catch(() => {});
       break;
+    }
     case 'stage':
       if (state.job) state.job.stage = event.stage || '';
       if (event.stage === 'baseline' && event.status === 'running') {

@@ -1683,7 +1683,7 @@ class Trainer:
         for index, image in enumerate(images):
             pixels = ((image.clamp(-1, 1) + 1) * 127.5).to(torch.uint8).permute(1, 2, 0).cpu().numpy()
             target = os.path.join(target_dir, f"{stem}_{index}.png")
-            Image.fromarray(pixels).save(target)
+            runtime.save_image_atomic(target, Image.fromarray(pixels))
             paths.append(target)
         self.log(f"preview -> {paths} ({time.perf_counter() - started:.1f}s)")
         return paths
@@ -1710,7 +1710,7 @@ class Trainer:
         for index, frame in enumerate(frames):
             sheet.paste(frame, ((index % columns) * width, (index // columns) * height))
         path = os.path.join(sample_dir, "trajectory.png")
-        sheet.save(path)
+        runtime.save_image_atomic(path, sheet)
         self.log(f"trajectory -> {path}")
         return path
 

@@ -22,15 +22,34 @@ class Problem(NamedTuple):
     params: dict
 
     def render(self) -> str:
-        return render(self.code, self.params)
+        return render(self.code, json_safe(self.params))
 
     def detail(self) -> dict:
         """The payload an HTTP error body carries."""
-        return {"code": self.code, "params": self.params, "message": self.render()}
+        safe = json_safe(self.params)
+        return {"code": self.code, "params": safe, "message": render(self.code, safe)}
 
 
 def problem(code: str, **params) -> Problem:
     return Problem(code, params)
+
+
+def json_safe(value):
+    """A parameter a JSON response can carry.
+
+    Parameters reach the browser inside ``detail.params``, but callers pass
+    whatever explains the failure -- often the exception object itself. Such a
+    value renders fine (``str``) yet makes ``JSONResponse`` raise while
+    serializing the error body, which turns a plain 404 into an ASGI-level
+    failure that kills the response. Coerce here, once, so every surface agrees.
+    """
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, dict):
+        return {str(key): json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [json_safe(item) for item in value]
+    return str(value)
 
 
 CODES: dict[str, str] = {

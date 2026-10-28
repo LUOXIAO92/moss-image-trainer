@@ -598,12 +598,14 @@ def cmd_sample(args):
     )
     from PIL import Image
 
+    from . import runtime
+
     os.makedirs(args.out, exist_ok=True)
     tag = "base" if args.base else (os.path.basename(args.checkpoint).split(".")[0] if args.checkpoint else "lora")
     for index, image in enumerate(images):
         pixels = ((image.clamp(-1, 1) + 1) * 127.5).to(torch.uint8).permute(1, 2, 0).cpu().numpy()
         path = os.path.join(args.out, f"{tag}_{index:02d}.png")
-        Image.fromarray(pixels).save(path)
+        runtime.save_image_atomic(path, Image.fromarray(pixels))
         print(path)
     return 0
 

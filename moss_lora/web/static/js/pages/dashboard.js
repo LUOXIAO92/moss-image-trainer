@@ -433,7 +433,33 @@ export function initSampleCompareSelection() {
     if (state.layoutLoaded) saveDashboardLayout();
   }
   renderSampleRunMenu();
-  if (changed || dataChanged) loadSampleCompareData().catch(() => {});
+  // While the job's event stream is live it delivers each finished preview, so
+  // the poll must not rebuild the grid: that rebuild is what listed a sample
+  // file the trainer was still encoding.
+  const streamOwnsSamples = Boolean(state.es) && state.job?.status === 'running' && state.job?.kind === 'train';
+  if (changed || (dataChanged && !streamOwnsSamples)) loadSampleCompareData().catch(() => {});
+}
+
+export function applySampleEvent(event) {
+  // The trainer logs a preview batch only after every file is written, so these
+  // paths point at complete images and need no directory listing.
+  const paths = (Array.isArray(event?.paths) ? event.paths : []).filter((path) => sampleStepInfo(path));
+  if (!paths.length) return false;
+  const run = runShortName(event.run || state.job?.label || '');
+  if (!run) return false;
+  const entry = (state.sampleCompareData || []).find((item) => runShortName(item.name) === run);
+  if (!entry) return false;
+  const known = new Set(entry.samples || []);
+  const added = paths.filter((path) => !known.has(path));
+  if (!added.length) return false;
+  entry.samples = [...(entry.samples || []), ...added];
+  if (state.dashboard.data && runShortName(state.dashboard.data.run) === run) {
+    state.dashboard.data.samples = [...(state.dashboard.data.samples || []), ...added];
+  }
+  // Let the next full snapshot reconcile once the stream stops owning the grid.
+  state.sampleCompareSignature = '';
+  renderSampleCompareGrid();
+  return true;
 }
 
 function renderSampleRunMenu() {

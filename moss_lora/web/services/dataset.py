@@ -73,7 +73,44 @@ def _thumb_cache_dir(full: str, workspace: str = "") -> str:
             return os.path.join(runs_dir, *run_parts, ".thumbs")
     return os.path.join(ws_dir, ".thumbs")
 
-def thumb_response(path: str, w: int = 384, workspace: str = ""):
+def _stat_key(path: str) -> tuple:
+    stat = os.stat(path)
+    return stat.st_mtime_ns, stat.st_size
+
+
+def _render_thumbnail(full: str, out: str, width: int) -> None:
+    """Decode, shrink and store one thumbnail, retrying if the source moved.
+
+    A sample used to be written in place, so a poll could read it mid-write and
+    PIL answered "image file is truncated". The trainer now publishes sample
+    files with a rename, but a retry still covers a dataset image being copied
+    in, and costs nothing when the file is stable.
+    """
+    from PIL import Image, ImageOps
+
+    for attempt in (1, 2):
+        before = _stat_key(full)
+        temp = f"{out}.{uuid.uuid4().hex[:6]}.tmp"
+        try:
+            with Image.open(full) as image:
+                image = ImageOps.exif_transpose(image)
+                image.thumbnail((width, width), Image.Resampling.LANCZOS)
+                if image.mode not in ("RGB", "RGBA"):
+                    image = image.convert("RGB")
+                image.save(temp, "WEBP", quality=82, method=4)
+                os.replace(temp, out)
+                return
+        except Exception:
+            if os.path.exists(temp):
+                try:
+                    os.remove(temp)
+                except OSError:
+                    pass
+            if attempt == 2 or _stat_key(full) == before:
+                raise
+
+
+def thumb_response(path: str, w: int = 384, workspace: str = "", v: str = ""):
     """Small cached WebP thumbnail; the original is only loaded in the modal."""
     full = path if os.path.isabs(path) else os.path.abspath(os.path.join(ROOT, path))
     image_ext = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
@@ -81,7 +118,7 @@ def thumb_response(path: str, w: int = 384, workspace: str = ""):
         raise fail(404, "err.file.not_found")
     width = max(64, min(1024, int(w)))
     try:
-        from PIL import Image, ImageOps
+        from PIL import Image  # noqa: F401  (fail fast when Pillow is missing)
 
         stat = os.stat(full)
         key = hashlib.sha1(
@@ -91,20 +128,16 @@ def thumb_response(path: str, w: int = 384, workspace: str = ""):
         os.makedirs(thumb_dir, exist_ok=True)
         out = os.path.join(thumb_dir, f"{key}.webp")
         if not os.path.exists(out):
-            with Image.open(full) as image:
-                image = ImageOps.exif_transpose(image)
-                image.thumbnail((width, width), Image.Resampling.LANCZOS)
-                if image.mode not in ("RGB", "RGBA"):
-                    image = image.convert("RGB")
-                tmp = f"{out}.{uuid.uuid4().hex[:6]}.tmp"
-                image.save(tmp, "WEBP", quality=82, method=4)
-                os.replace(tmp, out)
-        # the on-disk key covers mtime, but the URL only has the path: after a
-        # re-render the browser would serve the old picture for a day
+            _render_thumbnail(full, out, width)
+        # ``v`` is the page-load stamp the browser sends: within one page view
+        # a thumbnail cannot change, so it may live in the cache instead of
+        # being revalidated on every dashboard poll. Without it (a direct URL,
+        # another client) keep the honest no-cache answer.
+        cache = "private, max-age=86400, immutable" if v else "no-cache"
         return FileResponse(out, media_type="image/webp",
-                            headers={"Cache-Control": "no-cache"})
+                            headers={"Cache-Control": cache})
     except Exception as exc:
-        raise fail(404, "err.thumbnail.failed", error=exc)
+        raise fail(404, "err.thumbnail.failed", error=str(exc))
 
 def samples_list(dir: str = "", workspace: str = ""):
     scope = _resolve_workspace(workspace)
